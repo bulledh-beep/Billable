@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1024px;
+    height: 1024px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    overflow: hidden;
+  }
+  .icon {
+    width: 1024px;
+    height: 1024px;
+    position: relative;
+    background: linear-gradient(145deg, #1A1A1E 0%, #0F0F11 50%, #0A0A0C 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  /* Subtle top-left glow */
+  .icon::before {
+    content: '';
+    position: absolute;
+    top: 80px;
+    left: 80px;
+    width: 400px;
+    height: 400px;
+    background: radial-gradient(circle, rgba(245, 166, 35, 0.06) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .clock-container {
+    position: relative;
+    width: 600px;
+    height: 600px;
+  }
+  /* Outer ring */
+  .outer-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 3px solid rgba(245, 166, 35, 0.15);
+  }
+  /* Clock face ring */
+  .clock-face {
+    position: absolute;
+    inset: 24px;
+    border-radius: 50%;
+    border: 6px solid rgba(240, 237, 232, 0.12);
+    background: rgba(255, 255, 255, 0.02);
+  }
+  /* Hour markers */
+  .marker {
+    position: absolute;
+    width: 4px;
+    height: 28px;
+    background: rgba(240, 237, 232, 0.3);
+    border-radius: 2px;
+    left: 50%;
+    top: 36px;
+    transform-origin: 50% 264px;
+    margin-left: -2px;
+  }
+  .marker.major {
+    width: 6px;
+    height: 40px;
+    background: rgba(240, 237, 232, 0.55);
+    margin-left: -3px;
+    border-radius: 3px;
+  }
+  .marker.twelve {
+    background: #F5A623;
+    box-shadow: 0 0 12px rgba(245, 166, 35, 0.4);
+  }
+  /* Center dot */
+  .center-dot {
+    position: absolute;
+    width: 28px;
+    height: 28px;
+    background: #F5A623;
+    border-radius: 50%;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 20px rgba(245, 166, 35, 0.5);
+    z-index: 10;
+  }
+  .center-dot::after {
+    content: '';
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    background: #0F0F11;
+    border-radius: 50%;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+  }
+  /* Hour hand */
+  .hour-hand {
+    position: absolute;
+    width: 10px;
+    height: 160px;
+    background: rgba(240, 237, 232, 0.85);
+    border-radius: 5px;
+    top: 50%;
+    left: 50%;
+    transform-origin: 50% 12px;
+    transform: translate(-50%, -100%) rotate(60deg);
+    z-index: 5;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+  /* Minute hand */
+  .minute-hand {
+    position: absolute;
+    width: 7px;
+    height: 220px;
+    background: #F5A623;
+    border-radius: 4px;
+    top: 50%;
+    left: 50%;
+    transform-origin: 50% 12px;
+    transform: translate(-50%, -100%) rotate(-30deg);
+    z-index: 6;
+    box-shadow: 0 2px 12px rgba(245, 166, 35, 0.3);
+  }
+  /* Dollar sign indicator */
+  .dollar {
+    position: absolute;
+    bottom: 140px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+    font-size: 60px;
+    font-weight: 700;
+    color: rgba(245, 166, 35, 0.35);
+    letter-spacing: -1px;
+  }
+</style>
+</head>
+<body>
+  <div class="icon">
+    <div class="clock-container">
+      <div class="outer-ring"></div>
+      <div class="clock-face">
+        <!-- Hour markers -->
+        <div class="marker major twelve" style="transform: rotate(0deg)"></div>
+        <div class="marker" style="transform: rotate(30deg)"></div>
+        <div class="marker" style="transform: rotate(60deg)"></div>
+        <div class="marker major" style="transform: rotate(90deg)"></div>
+        <div class="marker" style="transform: rotate(120deg)"></div>
+        <div class="marker" style="transform: rotate(150deg)"></div>
+        <div class="marker major" style="transform: rotate(180deg)"></div>
+        <div class="marker" style="transform: rotate(210deg)"></div>
+        <div class="marker" style="transform: rotate(240deg)"></div>
+        <div class="marker major" style="transform: rotate(270deg)"></div>
+        <div class="marker" style="transform: rotate(300deg)"></div>
+        <div class="marker" style="transform: rotate(330deg)"></div>
+        <!-- Hands -->
+        <div class="hour-hand"></div>
+        <div class="minute-hand"></div>
+        <div class="center-dot"></div>
+        <!-- Dollar indicator -->
+        <div class="dollar">$</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
