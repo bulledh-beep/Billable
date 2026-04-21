@@ -137,10 +137,34 @@ export function createClient(data: any) {
 }
 
 export function updateClient(id: number, data: any) {
-  const fields = Object.keys(data).filter(k => k !== 'id' && k !== 'created_at')
+  const existing = db.prepare('SELECT * FROM clients WHERE id = ?').get(id) as any
+  if (!existing) return null
+
+  const fields = Object.keys(data).filter(k => k !== 'id' && k !== 'created_at' && k !== 'cascaded_projects')
   const sets = fields.map(f => `${f} = @${f}`).join(', ')
-  db.prepare(`UPDATE clients SET ${sets} WHERE id = @id`).run({ ...data, id })
-  return db.prepare('SELECT * FROM clients WHERE id = ?').get(id)
+  if (sets) {
+    db.prepare(`UPDATE clients SET ${sets} WHERE id = @id`).run({ ...data, id })
+  }
+
+  // If the default hourly rate changed, cascade the new rate to this client's
+  // projects that were still inheriting the old rate. Past invoice amounts are
+  // locked into invoice_items (unit_price), so this only affects future
+  // invoicing of unbilled time — exactly "unpaid instances".
+  let cascadedProjects = 0
+  if (
+    data.default_rate !== undefined &&
+    Number(data.default_rate) !== Number(existing.default_rate)
+  ) {
+    const result = db.prepare(`
+      UPDATE projects
+      SET rate = ?
+      WHERE client_id = ? AND rate = ?
+    `).run(data.default_rate, id, existing.default_rate)
+    cascadedProjects = result.changes
+  }
+
+  const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(id) as any
+  return { ...client, cascaded_projects: cascadedProjects }
 }
 
 export function deleteClient(id: number) {

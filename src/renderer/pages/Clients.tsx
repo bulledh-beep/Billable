@@ -53,8 +53,13 @@ export default function Clients() {
   const handleSave = async () => {
     if (!form.name.trim()) return toast.error('Name is required')
     if (editClient) {
-      await window.api.clients.update(editClient.id, form)
-      toast.success('Client updated')
+      const result: any = await window.api.clients.update(editClient.id, form)
+      const cascaded = result?.cascaded_projects || 0
+      if (cascaded > 0) {
+        toast.success(`Client updated · ${cascaded} project${cascaded === 1 ? '' : 's'} repriced`)
+      } else {
+        toast.success('Client updated')
+      }
     } else {
       await window.api.clients.create(form)
       toast.success('Client created')
@@ -212,6 +217,11 @@ export default function Clients() {
                 value={form.default_rate || ''}
                 onChange={e => setForm(f => ({ ...f, default_rate: parseFloat(e.target.value) || 0 }))}
               />
+              {editClient && form.default_rate !== editClient.default_rate && (
+                <p className="text-xs text-accent/80 mt-1">
+                  Projects still using {formatMoney(editClient.default_rate)}/hr will be updated. Already-invoiced time keeps its original rate.
+                </p>
+              )}
             </div>
             <div>
               <label className="text-xs font-medium text-text-secondary mb-1.5 block">Currency</label>
