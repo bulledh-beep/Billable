@@ -57,6 +57,15 @@ export interface Invoice {
   notes: string
   pdf_path: string | null
   created_at: string
+  // Tax / payment fields (added Phase 1)
+  tax_year?: number | null
+  payment_date?: string | null
+  payment_method?: string | null
+  currency?: string
+  gst_hst_applicable?: number
+  gst_hst_number?: string | null
+  gst_hst_rate?: number
+  gst_hst_amount?: number
   // Joined fields
   client_name?: string
   client_company?: string
@@ -64,6 +73,45 @@ export interface Invoice {
   client_address?: string
   project_name?: string
   items?: InvoiceItem[]
+}
+
+export type CanadianProvince =
+  | 'AB' | 'BC' | 'MB' | 'NB' | 'NL' | 'NS' | 'NT' | 'NU' | 'ON' | 'PE' | 'QC' | 'SK' | 'YT'
+
+export interface TaxSettings {
+  id: number
+  business_name: string
+  business_address: string
+  gst_hst_number: string
+  gst_hst_registered: number
+  province: CanadianProvince | ''
+  fiscal_year_start: string // 'MM-DD'
+  default_tax_rate: number
+  income_tax_bracket: number
+  currency: 'CAD' | 'USD'
+  updated_at: string
+}
+
+export type ExpenseCategory =
+  | 'equipment'
+  | 'software'
+  | 'home_office'
+  | 'phone_internet'
+  | 'travel'
+  | 'meals'
+  | 'professional_development'
+  | 'other'
+
+export interface Expense {
+  id: number
+  date: string
+  category: ExpenseCategory
+  description: string
+  amount: number
+  tax_year: number
+  receipt_note: string
+  receipt_id: number | null
+  created_at: string
 }
 
 export interface InvoiceItem {
@@ -149,4 +197,13 @@ export type IpcChannels = {
   // Dialog
   'dialog:open-file': (options: any) => string | null
   'dialog:save-file': (options: any) => string | null
+  // Tax
+  'tax:get-settings': () => TaxSettings
+  'tax:save-settings': (data: Partial<TaxSettings>) => TaxSettings
+  // Expenses
+  'expense:list': (taxYear?: number) => Expense[]
+  'expense:get': (id: number) => Expense | null
+  'expense:create': (data: Partial<Expense>) => Expense
+  'expense:update': (id: number, data: Partial<Expense>) => Expense
+  'expense:delete': (id: number) => void
 }

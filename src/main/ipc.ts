@@ -112,6 +112,17 @@ export function registerIpcHandlers(timerManager: TimerManager) {
     return result.filePath
   })
 
+  // ========== Tax Settings ==========
+  ipcMain.handle('tax:get-settings', () => db.getTaxSettings())
+  ipcMain.handle('tax:save-settings', (_, data) => db.saveTaxSettings(data))
+
+  // ========== Expenses ==========
+  ipcMain.handle('expense:list', (_, taxYear?: number) => db.listExpenses(taxYear))
+  ipcMain.handle('expense:get', (_, id: number) => db.getExpense(id))
+  ipcMain.handle('expense:create', (_, data) => db.createExpense(data))
+  ipcMain.handle('expense:update', (_, id: number, data) => db.updateExpense(id, data))
+  ipcMain.handle('expense:delete', (_, id: number) => db.deleteExpense(id))
+
   // ========== Dialogs ==========
   ipcMain.handle('dialog:open-file', async (_, options) => {
     const win = BrowserWindow.getFocusedWindow()

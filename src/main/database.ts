@@ -12,9 +12,71 @@ export function initDatabase(): Database.Database {
   db.pragma('foreign_keys = ON')
 
   createTables()
+  runMigrations()
   seedDefaults()
 
   return db
+}
+
+// Idempotent migrations — safe to re-run on every app launch.
+function runMigrations() {
+  // ----- Phase 1: tax & expense tracking -----
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tax_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      business_name TEXT DEFAULT '',
+      business_address TEXT DEFAULT '',
+      gst_hst_number TEXT DEFAULT '',
+      gst_hst_registered INTEGER DEFAULT 0,
+      province TEXT DEFAULT '',
+      fiscal_year_start TEXT DEFAULT '01-01',
+      default_tax_rate REAL DEFAULT 0,
+      income_tax_bracket REAL DEFAULT 25,
+      currency TEXT DEFAULT 'CAD',
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'other',
+      description TEXT DEFAULT '',
+      amount REAL DEFAULT 0,
+      tax_year INTEGER NOT NULL,
+      receipt_note TEXT DEFAULT '',
+      receipt_id INTEGER,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+  `)
+
+  // Seed the single tax_settings row if missing
+  db.prepare(`
+    INSERT OR IGNORE INTO tax_settings (id, business_name) VALUES (1, '')
+  `).run()
+
+  // Add new tax/payment columns to invoices (idempotent)
+  addColumnIfMissing('invoices', 'tax_year', 'INTEGER')
+  addColumnIfMissing('invoices', 'payment_date', 'TEXT')
+  addColumnIfMissing('invoices', 'payment_method', 'TEXT')
+  addColumnIfMissing('invoices', 'currency', "TEXT DEFAULT 'CAD'")
+  addColumnIfMissing('invoices', 'gst_hst_applicable', 'INTEGER DEFAULT 0')
+  addColumnIfMissing('invoices', 'gst_hst_number', 'TEXT')
+  addColumnIfMissing('invoices', 'gst_hst_rate', 'REAL DEFAULT 0')
+  addColumnIfMissing('invoices', 'gst_hst_amount', 'REAL DEFAULT 0')
+
+  // Backfill tax_year for any existing invoices
+  db.prepare(`
+    UPDATE invoices
+    SET tax_year = CAST(strftime('%Y', issue_date) AS INTEGER)
+    WHERE tax_year IS NULL
+  `).run()
+}
+
+function addColumnIfMissing(table: string, column: string, def: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+  if (!cols.some(c => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`)
+  }
 }
 
 export function getDatabase(): Database.Database {
@@ -610,6 +672,81 @@ export function getUnbilledEntriesForProjects(projectIds: number[]) {
     WHERE te.project_id IN (${placeholders}) AND te.is_invoiced = 0 AND te.is_billable = 1 AND te.end_time IS NOT NULL
     ORDER BY p.name, te.start_time
   `).all(...projectIds)
+}
+
+// ============ Tax Settings ============
+
+export function getTaxSettings() {
+  return db.prepare('SELECT * FROM tax_settings WHERE id = 1').get() as any
+}
+
+export function saveTaxSettings(data: any) {
+  const existing = getTaxSettings()
+  const merged = { ...existing, ...data, id: 1, updated_at: new Date().toISOString() }
+  // Restrict to known columns
+  const fields = [
+    'business_name', 'business_address', 'gst_hst_number', 'gst_hst_registered',
+    'province', 'fiscal_year_start', 'default_tax_rate', 'income_tax_bracket',
+    'currency', 'updated_at',
+  ] as const
+
+  const sets = fields.map(f => `${f} = @${f}`).join(', ')
+  const payload: any = { id: 1 }
+  for (const f of fields) payload[f] = merged[f]
+
+  db.prepare(`UPDATE tax_settings SET ${sets} WHERE id = @id`).run(payload)
+  return getTaxSettings()
+}
+
+// ============ Expenses ============
+
+export function listExpenses(taxYear?: number) {
+  if (taxYear) {
+    return db.prepare(`
+      SELECT * FROM expenses WHERE tax_year = ? ORDER BY date DESC, id DESC
+    `).all(taxYear)
+  }
+  return db.prepare('SELECT * FROM expenses ORDER BY date DESC, id DESC').all()
+}
+
+export function getExpense(id: number) {
+  return db.prepare('SELECT * FROM expenses WHERE id = ?').get(id)
+}
+
+export function createExpense(data: any) {
+  const date = data.date || new Date().toISOString().slice(0, 10)
+  const taxYear = data.tax_year || new Date(date).getFullYear()
+  const stmt = db.prepare(`
+    INSERT INTO expenses (date, category, description, amount, tax_year, receipt_note, receipt_id)
+    VALUES (@date, @category, @description, @amount, @tax_year, @receipt_note, @receipt_id)
+  `)
+  const result = stmt.run({
+    date,
+    category: data.category || 'other',
+    description: data.description || '',
+    amount: data.amount || 0,
+    tax_year: taxYear,
+    receipt_note: data.receipt_note || '',
+    receipt_id: data.receipt_id || null,
+  })
+  return getExpense(result.lastInsertRowid as number)
+}
+
+export function updateExpense(id: number, data: any) {
+  const fields = Object.keys(data).filter(k => k !== 'id' && k !== 'created_at')
+  if (fields.length === 0) return getExpense(id)
+  // Re-derive tax_year if date changed
+  if (data.date && !data.tax_year) {
+    data.tax_year = new Date(data.date).getFullYear()
+    fields.push('tax_year')
+  }
+  const sets = fields.map(f => `${f} = @${f}`).join(', ')
+  db.prepare(`UPDATE expenses SET ${sets} WHERE id = @id`).run({ ...data, id })
+  return getExpense(id)
+}
+
+export function deleteExpense(id: number) {
+  db.prepare('DELETE FROM expenses WHERE id = ?').run(id)
 }
 
 export { db }

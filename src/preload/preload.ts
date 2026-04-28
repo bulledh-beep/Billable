@@ -64,6 +64,19 @@ const api = {
     openFile: (options: any) => ipcRenderer.invoke('dialog:open-file', options),
     saveFile: (options: any) => ipcRenderer.invoke('dialog:save-file', options),
   },
+  // Tax settings
+  tax: {
+    getSettings: () => ipcRenderer.invoke('tax:get-settings'),
+    saveSettings: (data: any) => ipcRenderer.invoke('tax:save-settings', data),
+  },
+  // Expenses
+  expenses: {
+    list: (taxYear?: number) => ipcRenderer.invoke('expense:list', taxYear),
+    get: (id: number) => ipcRenderer.invoke('expense:get', id),
+    create: (data: any) => ipcRenderer.invoke('expense:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('expense:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('expense:delete', id),
+  },
   // Events from main process
   on: (channel: string, callback: (...args: any[]) => void) => {
     const subscription = (_event: any, ...args: any[]) => callback(...args)

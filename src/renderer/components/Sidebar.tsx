@@ -8,7 +8,7 @@ import {
   FileText,
   BarChart3,
   Settings,
-  Play,
+  Receipt,
   Square,
 } from 'lucide-react'
 
@@ -26,6 +26,10 @@ const navItems = [
   { to: '/time', icon: Clock, label: 'Time' },
   { to: '/invoices', icon: FileText, label: 'Invoices' },
   { to: '/reports', icon: BarChart3, label: 'Reports' },
+]
+
+const businessItems = [
+  { to: '/tax-settings', icon: Receipt, label: 'Tax Settings' },
 ]
 
 export default function Sidebar({ isRunning, elapsed, activeProjectName, onStopTimer }: SidebarProps) {
@@ -51,6 +55,22 @@ export default function Sidebar({ isRunning, elapsed, activeProjectName, onStopT
             key={to}
             to={to}
             end={to === '/'}
+            className={({ isActive }) =>
+              `sidebar-link ${isActive ? 'active' : ''}`
+            }
+          >
+            <Icon className="w-4.5 h-4.5 flex-shrink-0" style={{ width: 18, height: 18 }} />
+            <span>{label}</span>
+          </NavLink>
+        ))}
+
+        <div className="pt-4 pb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
+          Business
+        </div>
+        {businessItems.map(({ to, icon: Icon, label }) => (
+          <NavLink
+            key={to}
+            to={to}
             className={({ isActive }) =>
               `sidebar-link ${isActive ? 'active' : ''}`
             }
