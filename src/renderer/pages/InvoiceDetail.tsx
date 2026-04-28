@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Download, Send, Check, AlertTriangle, Trash2, Pencil } from 'lucide-react'
+import { ArrowLeft, Download, Send, Check, AlertTriangle, Trash2, Pencil, CreditCard } from 'lucide-react'
 import StatusBadge from '../components/StatusBadge'
 import ConfirmDialog from '../components/ConfirmDialog'
-import { formatMoney, formatDate } from '../utils/format'
-import type { Invoice, Settings } from '@shared/types'
+import Modal from '../components/Modal'
+import { formatMoney, formatDate, todayISO } from '../utils/format'
+import type { Invoice, Settings, PaymentMethod } from '@shared/types'
 import toast from 'react-hot-toast'
 
 export default function InvoiceDetail() {
@@ -15,6 +16,10 @@ export default function InvoiceDetail() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [showDelete, setShowDelete] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [showPaidModal, setShowPaidModal] = useState(false)
+  const [paymentDate, setPaymentDate] = useState<string>(todayISO())
+  const [paymentMethodChoice, setPaymentMethodChoice] = useState<string>('')
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
 
   useEffect(() => {
     if (id) loadInvoice(parseInt(id))
@@ -29,12 +34,37 @@ export default function InvoiceDetail() {
   const loadSettings = async () => {
     const s = await window.api.settings.get()
     setSettings(s)
+    try {
+      const methods: PaymentMethod[] = JSON.parse(s.payment_methods || '[]')
+      setPaymentMethods(methods)
+      const def = methods.find(m => m.name === s.default_payment_method) || methods[0]
+      if (def) setPaymentMethodChoice(def.name)
+    } catch {
+      setPaymentMethods([])
+    }
   }
 
   const updateStatus = async (status: string) => {
     if (!invoice) return
     await window.api.invoices.update(invoice.id, { status })
     toast.success(`Invoice marked as ${status}`)
+    loadInvoice(invoice.id)
+  }
+
+  const openPaidModal = () => {
+    setPaymentDate(todayISO())
+    setShowPaidModal(true)
+  }
+
+  const confirmPaid = async () => {
+    if (!invoice) return
+    await window.api.invoices.update(invoice.id, {
+      status: 'paid',
+      payment_date: paymentDate,
+      payment_method: paymentMethodChoice || null,
+    })
+    toast.success('Invoice marked as paid')
+    setShowPaidModal(false)
     loadInvoice(invoice.id)
   }
 
@@ -64,6 +94,7 @@ export default function InvoiceDetail() {
 
   const items = invoice.items || []
   const taxAmount = invoice.subtotal * (invoice.tax_rate / 100)
+  const gstAmount = (invoice.gst_hst_applicable ? invoice.subtotal * ((invoice.gst_hst_rate || 0) / 100) : 0)
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-8">
@@ -91,7 +122,7 @@ export default function InvoiceDetail() {
             </button>
           )}
           {(invoice.status === 'sent' || invoice.status === 'overdue') && (
-            <button onClick={() => updateStatus('paid')} className="btn-primary flex items-center gap-2">
+            <button onClick={openPaidModal} className="btn-primary flex items-center gap-2">
               <Check className="w-4 h-4" /> Mark Paid
             </button>
           )}
@@ -120,6 +151,23 @@ export default function InvoiceDetail() {
         </div>
       </div>
 
+      {/* Payment Info Panel — shown when paid */}
+      {invoice.status === 'paid' && invoice.payment_date && (
+        <div className="glass-panel border border-status-paid/30 bg-status-paid/[0.04] p-4 mb-4 flex items-center gap-3">
+          <Check className="w-5 h-5 text-status-paid flex-shrink-0" />
+          <div className="flex-1">
+            <div className="text-sm font-medium text-text-primary">
+              Payment received {formatDate(invoice.payment_date)}
+            </div>
+            {invoice.payment_method && (
+              <div className="text-xs text-text-tertiary mt-0.5">
+                via {invoice.payment_method}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Invoice Preview */}
       <div className="glass-panel overflow-hidden">
         {/* Accent Bar */}
@@ -135,6 +183,9 @@ export default function InvoiceDetail() {
                   {settings.business_address && <p className="text-sm text-text-tertiary whitespace-pre-line">{settings.business_address}</p>}
                   {settings.business_email && <p className="text-sm text-text-tertiary">{settings.business_email}</p>}
                   {settings.tax_id && <p className="text-sm text-text-tertiary">Tax ID: {settings.tax_id}</p>}
+                  {invoice.gst_hst_applicable && invoice.gst_hst_number && (
+                    <p className="text-sm text-text-tertiary font-mono">GST/HST: {invoice.gst_hst_number}</p>
+                  )}
                 </>
               )}
             </div>
@@ -186,9 +237,15 @@ export default function InvoiceDetail() {
                 <span className="text-text-secondary">Subtotal</span>
                 <span className="font-mono text-text-primary">{formatMoney(invoice.subtotal)}</span>
               </div>
+              {invoice.gst_hst_applicable && (invoice.gst_hst_rate || 0) > 0 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-text-secondary">GST/HST ({invoice.gst_hst_rate}%)</span>
+                  <span className="font-mono text-text-primary">{formatMoney(gstAmount)}</span>
+                </div>
+              )}
               {invoice.tax_rate > 0 && (
                 <div className="flex justify-between text-sm">
-                  <span className="text-text-secondary">Tax ({invoice.tax_rate}%)</span>
+                  <span className="text-text-secondary">Other Tax ({invoice.tax_rate}%)</span>
                   <span className="font-mono text-text-primary">{formatMoney(taxAmount)}</span>
                 </div>
               )}
@@ -208,6 +265,60 @@ export default function InvoiceDetail() {
           )}
         </div>
       </div>
+
+      <Modal
+        isOpen={showPaidModal}
+        onClose={() => setShowPaidModal(false)}
+        title="Mark Invoice as Paid"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Payment Date</label>
+            <input
+              className="input-field"
+              type="date"
+              value={paymentDate}
+              onChange={e => setPaymentDate(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Payment Method</label>
+            {paymentMethods.length > 0 ? (
+              <select
+                className="input-field"
+                value={paymentMethodChoice}
+                onChange={e => setPaymentMethodChoice(e.target.value)}
+              >
+                <option value="">Select method…</option>
+                {paymentMethods.map((m, i) => (
+                  <option key={i} value={m.name}>{m.name}</option>
+                ))}
+                <option value="Cheque">Cheque</option>
+                <option value="Cash">Cash</option>
+                <option value="Credit Card">Credit Card</option>
+                <option value="Other">Other</option>
+              </select>
+            ) : (
+              <input
+                className="input-field"
+                value={paymentMethodChoice}
+                onChange={e => setPaymentMethodChoice(e.target.value)}
+                placeholder="e.g. e-Transfer, Cheque, PayPal"
+              />
+            )}
+            <p className="text-[10px] text-text-tertiary mt-1">
+              Configure default methods in Settings → Payment Methods.
+            </p>
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <button onClick={() => setShowPaidModal(false)} className="btn-secondary">Cancel</button>
+            <button onClick={confirmPaid} className="btn-primary flex items-center gap-2">
+              <CreditCard className="w-4 h-4" /> Confirm Paid
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <ConfirmDialog
         isOpen={showDelete}

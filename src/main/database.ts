@@ -432,16 +432,42 @@ export function createInvoice(data: any) {
   const settings = getSettings()
   const invoiceNumber = `${settings.invoice_prefix}${settings.invoice_next_number}`
 
+  // Derive tax_year from issue_date if not provided
+  const taxYear = invoiceData.tax_year ||
+    (invoiceData.issue_date ? new Date(invoiceData.issue_date).getFullYear() : new Date().getFullYear())
+
   const stmt = db.prepare(`
-    INSERT INTO invoices (project_id, client_id, invoice_number, issue_date, due_date, status, subtotal, tax_rate, total, notes)
-    VALUES (@project_id, @client_id, @invoice_number, @issue_date, @due_date, @status, @subtotal, @tax_rate, @total, @notes)
+    INSERT INTO invoices (
+      project_id, client_id, invoice_number, issue_date, due_date, status,
+      subtotal, tax_rate, total, notes,
+      tax_year, currency,
+      gst_hst_applicable, gst_hst_number, gst_hst_rate, gst_hst_amount
+    )
+    VALUES (
+      @project_id, @client_id, @invoice_number, @issue_date, @due_date, @status,
+      @subtotal, @tax_rate, @total, @notes,
+      @tax_year, @currency,
+      @gst_hst_applicable, @gst_hst_number, @gst_hst_rate, @gst_hst_amount
+    )
   `)
 
   const result = stmt.run({
-    ...invoiceData,
+    project_id: invoiceData.project_id ?? null,
+    client_id: invoiceData.client_id,
     invoice_number: invoiceNumber,
+    issue_date: invoiceData.issue_date,
+    due_date: invoiceData.due_date,
     status: invoiceData.status || 'draft',
+    subtotal: invoiceData.subtotal || 0,
+    tax_rate: invoiceData.tax_rate || 0,
+    total: invoiceData.total || 0,
     notes: invoiceData.notes || '',
+    tax_year: taxYear,
+    currency: invoiceData.currency || 'CAD',
+    gst_hst_applicable: invoiceData.gst_hst_applicable ? 1 : 0,
+    gst_hst_number: invoiceData.gst_hst_number || null,
+    gst_hst_rate: invoiceData.gst_hst_rate || 0,
+    gst_hst_amount: invoiceData.gst_hst_amount || 0,
   })
 
   // Insert line items
@@ -474,7 +500,21 @@ export function createInvoice(data: any) {
 
 export function updateInvoice(id: number, data: any) {
   const { items, ...invoiceData } = data
-  const fields = Object.keys(invoiceData).filter(k => k !== 'id' && k !== 'created_at' && k !== 'client_name' && k !== 'client_company' && k !== 'client_email' && k !== 'client_address' && k !== 'project_name')
+
+  // Re-derive tax_year if issue_date changed and tax_year wasn't explicitly set
+  if (invoiceData.issue_date && invoiceData.tax_year === undefined) {
+    invoiceData.tax_year = new Date(invoiceData.issue_date).getFullYear()
+  }
+  // Auto-stamp payment_date when transitioning to paid (if not explicitly set)
+  if (invoiceData.status === 'paid' && invoiceData.payment_date === undefined) {
+    invoiceData.payment_date = new Date().toISOString().slice(0, 10)
+  }
+
+  const exclude = new Set([
+    'id', 'created_at', 'client_name', 'client_company', 'client_email',
+    'client_address', 'project_name', 'items',
+  ])
+  const fields = Object.keys(invoiceData).filter(k => !exclude.has(k))
   if (fields.length > 0) {
     const sets = fields.map(f => `${f} = @${f}`).join(', ')
     db.prepare(`UPDATE invoices SET ${sets} WHERE id = @id`).run({ ...invoiceData, id })

@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
 import { formatMoney, todayISO, addDays } from '../utils/format'
-import type { Client, Project, Settings, PaymentMethod } from '@shared/types'
+import type { Client, Project, Settings, PaymentMethod, TaxSettings } from '@shared/types'
 import toast from 'react-hot-toast'
 
 interface LineItem {
@@ -35,17 +35,23 @@ export default function InvoiceCreate() {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('')
   const [saving, setSaving] = useState(false)
+  const [gstApplicable, setGstApplicable] = useState(false)
+  const [gstRate, setGstRate] = useState(0)
+  const [gstNumber, setGstNumber] = useState('')
+  const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null)
 
   useEffect(() => { loadData() }, [])
 
   const loadData = async () => {
-    const [c, p, s] = await Promise.all([
+    const [c, p, s, tax] = await Promise.all([
       window.api.clients.list(),
       window.api.projects.list(),
       window.api.settings.get(),
+      window.api.tax.getSettings(),
     ])
     setClients(c)
     setProjects(p)
+    setTaxSettings(tax)
 
     // Load payment methods
     const methods: PaymentMethod[] = JSON.parse(s.payment_methods || '[]')
@@ -66,6 +72,9 @@ export default function InvoiceCreate() {
       setDueDateOption('custom')
       setTaxRate(inv.tax_rate || 0)
       setNotes(inv.notes || '')
+      setGstApplicable(!!inv.gst_hst_applicable)
+      setGstRate(inv.gst_hst_rate || 0)
+      setGstNumber(inv.gst_hst_number || tax?.gst_hst_number || '')
       setItems((inv.items || []).map((it: any) => ({
         description: it.description,
         quantity: it.quantity,
@@ -76,6 +85,13 @@ export default function InvoiceCreate() {
       const matchedMethod = methods.find(m => (inv.notes || '').includes(m.name))
       if (matchedMethod) setSelectedPaymentMethod(matchedMethod.name)
       return
+    }
+
+    // Create mode: inherit GST/HST defaults from tax settings
+    if (tax?.gst_hst_registered) {
+      setGstApplicable(true)
+      setGstRate(tax.default_tax_rate || 0)
+      setGstNumber(tax.gst_hst_number || '')
     }
 
     // Create mode: pre-select default payment method
@@ -192,7 +208,8 @@ export default function InvoiceCreate() {
 
   const subtotal = items.reduce((sum, item) => sum + item.total, 0)
   const taxAmount = subtotal * (taxRate / 100)
-  const total = subtotal + taxAmount
+  const gstAmount = gstApplicable ? subtotal * (gstRate / 100) : 0
+  const total = subtotal + taxAmount + gstAmount
 
   const handleSave = async () => {
     if (!clientId) return toast.error('Select a client')
@@ -200,6 +217,13 @@ export default function InvoiceCreate() {
 
     setSaving(true)
     try {
+      const taxPayload = {
+        gst_hst_applicable: gstApplicable ? 1 : 0,
+        gst_hst_number: gstApplicable ? gstNumber : null,
+        gst_hst_rate: gstApplicable ? gstRate : 0,
+        gst_hst_amount: gstApplicable ? gstAmount : 0,
+        currency: taxSettings?.currency || 'CAD',
+      }
       if (isEdit && editId) {
         await window.api.invoices.update(parseInt(editId), {
           client_id: clientId,
@@ -211,6 +235,7 @@ export default function InvoiceCreate() {
           total,
           notes,
           items,
+          ...taxPayload,
         })
         toast.success('Invoice updated')
         navigate(`/invoices/${editId}`)
@@ -226,6 +251,7 @@ export default function InvoiceCreate() {
           total,
           notes,
           items,
+          ...taxPayload,
         })
         toast.success('Invoice created')
         navigate('/invoices')
@@ -329,9 +355,59 @@ export default function InvoiceCreate() {
             </div>
           )}
 
+          <div className="glass-panel p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs font-medium text-text-primary">GST / HST</div>
+                {taxSettings?.gst_hst_registered ? (
+                  <div className="text-[10px] text-text-tertiary mt-0.5">
+                    From your tax settings ({taxSettings.province || '—'})
+                  </div>
+                ) : (
+                  <div className="text-[10px] text-text-tertiary mt-0.5">
+                    Not registered — toggle on to apply
+                  </div>
+                )}
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={gstApplicable}
+                  onChange={e => setGstApplicable(e.target.checked)}
+                  className="rounded border-white/20 bg-surface-300 text-accent focus:ring-accent"
+                />
+                <span className="text-xs font-medium text-text-secondary">Apply</span>
+              </label>
+            </div>
+            {gstApplicable && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-medium text-text-tertiary mb-1 block">Rate (%)</label>
+                  <input
+                    className="input-field"
+                    type="number"
+                    step="0.01"
+                    value={gstRate || ''}
+                    onChange={e => setGstRate(parseFloat(e.target.value) || 0)}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-medium text-text-tertiary mb-1 block">GST/HST #</label>
+                  <input
+                    className="input-field font-mono"
+                    value={gstNumber}
+                    onChange={e => setGstNumber(e.target.value)}
+                    placeholder="123456789 RT0001"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
           <div>
-            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Tax Rate (%)</label>
+            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Other Tax Rate (%)</label>
             <input className="input-field" type="number" step="0.01" value={taxRate || ''} onChange={e => setTaxRate(parseFloat(e.target.value) || 0)} />
+            <p className="text-[10px] text-text-tertiary mt-1">For non-GST taxes (PST, sales tax outside Canada, etc.)</p>
           </div>
 
           <div>
@@ -398,9 +474,15 @@ export default function InvoiceCreate() {
               <span className="text-text-secondary">Subtotal</span>
               <span className="font-mono text-text-primary">{formatMoney(subtotal)}</span>
             </div>
+            {gstApplicable && gstRate > 0 && (
+              <div className="flex justify-between text-sm">
+                <span className="text-text-secondary">GST/HST ({gstRate}%)</span>
+                <span className="font-mono text-text-primary">{formatMoney(gstAmount)}</span>
+              </div>
+            )}
             {taxRate > 0 && (
               <div className="flex justify-between text-sm">
-                <span className="text-text-secondary">Tax ({taxRate}%)</span>
+                <span className="text-text-secondary">Other Tax ({taxRate}%)</span>
                 <span className="font-mono text-text-primary">{formatMoney(taxAmount)}</span>
               </div>
             )}

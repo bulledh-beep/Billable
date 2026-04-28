@@ -73,11 +73,12 @@ export async function generateInvoicePDF(invoiceId: number): Promise<string> {
 function generateInvoiceHTML(invoice: any, settings: any): string {
   const items = invoice.items || []
   const accentColor = '#F5A623'
+  const currency = invoice.currency || settings.default_currency || 'USD'
 
   const formatMoney = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: settings.default_currency || 'USD',
+      currency,
     }).format(amount)
   }
 
@@ -91,6 +92,10 @@ function generateInvoiceHTML(invoice: any, settings: any): string {
   `).join('')
 
   const taxAmount = invoice.subtotal * (invoice.tax_rate / 100)
+  const gstApplicable = !!invoice.gst_hst_applicable
+  const gstRate = invoice.gst_hst_rate || 0
+  const gstAmount = gstApplicable ? invoice.subtotal * (gstRate / 100) : 0
+  const isPaid = invoice.status === 'paid'
 
   return `<!DOCTYPE html>
 <html>
@@ -108,11 +113,20 @@ function generateInvoiceHTML(invoice: any, settings: any): string {
   </style>
 </head>
 <body>
-  <div style="padding: 0;">
+  <div style="padding: 0; position: relative;">
     <!-- Accent Bar -->
     <div style="height: 4px; background: ${accentColor};"></div>
 
-    <div style="padding: 48px;">
+    ${isPaid ? `
+    <!-- PAID watermark — diagonal stamp on paid invoices -->
+    <div style="position: absolute; top: 280px; left: 50%; transform: translate(-50%, 0) rotate(-18deg); pointer-events: none; opacity: 0.10; z-index: 1;">
+      <div style="font-size: 180px; font-weight: 800; letter-spacing: 12px; color: #16a34a; border: 8px solid #16a34a; padding: 14px 36px; border-radius: 8px;">
+        PAID
+      </div>
+    </div>
+    ` : ''}
+
+    <div style="padding: 48px; position: relative; z-index: 2;">
       <!-- Header -->
       <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 48px;">
         <div>
@@ -121,6 +135,7 @@ function generateInvoiceHTML(invoice: any, settings: any): string {
           <p style="font-size: 13px; color: #6b7280; white-space: pre-line;">${escapeHtml(settings.business_address || '')}</p>
           ${settings.business_email ? `<p style="font-size: 13px; color: #6b7280;">${escapeHtml(settings.business_email)}</p>` : ''}
           ${settings.tax_id ? `<p style="font-size: 13px; color: #6b7280;">Tax ID: ${escapeHtml(settings.tax_id)}</p>` : ''}
+          ${gstApplicable && invoice.gst_hst_number ? `<p style="font-size: 13px; color: #6b7280; font-family: 'SF Mono', monospace;">GST/HST: ${escapeHtml(invoice.gst_hst_number)}</p>` : ''}
         </div>
         <div style="text-align: right;">
           <h1 style="font-size: 36px; font-weight: 700; color: ${accentColor}; letter-spacing: 2px;">INVOICE</h1>
@@ -175,9 +190,15 @@ function generateInvoiceHTML(invoice: any, settings: any): string {
             <span style="color: #6b7280;">Subtotal</span>
             <span style="font-family: 'SF Mono', monospace;">${formatMoney(invoice.subtotal)}</span>
           </div>
+          ${gstApplicable && gstRate > 0 ? `
+          <div style="display: flex; justify-content: space-between; padding: 8px 0; font-size: 14px;">
+            <span style="color: #6b7280;">GST/HST (${gstRate}%)</span>
+            <span style="font-family: 'SF Mono', monospace;">${formatMoney(gstAmount)}</span>
+          </div>
+          ` : ''}
           ${invoice.tax_rate > 0 ? `
           <div style="display: flex; justify-content: space-between; padding: 8px 0; font-size: 14px;">
-            <span style="color: #6b7280;">Tax (${invoice.tax_rate}%)</span>
+            <span style="color: #6b7280;">${gstApplicable ? 'Other Tax' : 'Tax'} (${invoice.tax_rate}%)</span>
             <span style="font-family: 'SF Mono', monospace;">${formatMoney(taxAmount)}</span>
           </div>
           ` : ''}
@@ -188,9 +209,17 @@ function generateInvoiceHTML(invoice: any, settings: any): string {
         </div>
       </div>
 
+      ${isPaid && invoice.payment_date ? `
+      <div style="margin-top: 48px; padding: 16px 20px; background: #f0fdf4; border-left: 3px solid #16a34a; border-radius: 4px;">
+        <p style="font-size: 13px; color: #15803d; font-weight: 600;">
+          Payment received on ${escapeHtml(invoice.payment_date)}${invoice.payment_method ? ` via ${escapeHtml(invoice.payment_method)}` : ''}.
+        </p>
+      </div>
+      ` : ''}
+
       <!-- Notes -->
       ${invoice.notes ? `
-      <div style="margin-top: 48px; padding: 20px; background: #f9fafb; border-radius: 8px;">
+      <div style="margin-top: ${isPaid ? '20px' : '48px'}; padding: 20px; background: #f9fafb; border-radius: 8px;">
         <h3 style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #9ca3af; margin-bottom: 8px;">Notes & Payment Instructions</h3>
         <p style="font-size: 13px; color: #4b5563; white-space: pre-line;">${escapeHtml(invoice.notes)}</p>
       </div>
