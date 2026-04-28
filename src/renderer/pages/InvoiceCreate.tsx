@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
 import { formatMoney, todayISO, addDays } from '../utils/format'
@@ -16,6 +16,8 @@ interface LineItem {
 export default function InvoiceCreate() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const { id: editId } = useParams()
+  const isEdit = !!editId
   const presetProjectId = searchParams.get('project_id')
   const presetProjectIds = searchParams.get('project_ids')
 
@@ -32,6 +34,7 @@ export default function InvoiceCreate() {
   const [items, setItems] = useState<LineItem[]>([])
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('')
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => { loadData() }, [])
 
@@ -48,7 +51,34 @@ export default function InvoiceCreate() {
     const methods: PaymentMethod[] = JSON.parse(s.payment_methods || '[]')
     setPaymentMethods(methods)
 
-    // Pre-select default payment method
+    if (isEdit && editId) {
+      // Edit mode: hydrate from the existing invoice
+      const inv: any = await window.api.invoices.get(parseInt(editId))
+      if (!inv) {
+        toast.error('Invoice not found')
+        navigate('/invoices')
+        return
+      }
+      setClientId(inv.client_id)
+      if (inv.project_id) setProjectId(inv.project_id)
+      setIssueDate(inv.issue_date.slice(0, 10))
+      setDueDate(inv.due_date.slice(0, 10))
+      setDueDateOption('custom')
+      setTaxRate(inv.tax_rate || 0)
+      setNotes(inv.notes || '')
+      setItems((inv.items || []).map((it: any) => ({
+        description: it.description,
+        quantity: it.quantity,
+        unit_price: it.unit_price,
+        total: it.total,
+      })))
+      // Try to detect which saved payment method matches the notes (best-effort)
+      const matchedMethod = methods.find(m => (inv.notes || '').includes(m.name))
+      if (matchedMethod) setSelectedPaymentMethod(matchedMethod.name)
+      return
+    }
+
+    // Create mode: pre-select default payment method
     const defaultMethod = methods.find(m => m.name === s.default_payment_method) || methods[0]
     if (defaultMethod) {
       setSelectedPaymentMethod(defaultMethod.name)
@@ -164,25 +194,48 @@ export default function InvoiceCreate() {
   const taxAmount = subtotal * (taxRate / 100)
   const total = subtotal + taxAmount
 
-  const handleCreate = async () => {
+  const handleSave = async () => {
     if (!clientId) return toast.error('Select a client')
     if (items.length === 0) return toast.error('Add at least one line item')
 
-    await window.api.invoices.create({
-      client_id: clientId,
-      project_id: multiProjectIds.length > 0 ? null : (projectId || null),
-      project_ids: multiProjectIds.length > 0 ? multiProjectIds : (projectId ? [projectId] : []),
-      issue_date: issueDate,
-      due_date: dueDate,
-      subtotal,
-      tax_rate: taxRate,
-      total,
-      notes,
-      items,
-    })
-
-    toast.success('Invoice created')
-    navigate('/invoices')
+    setSaving(true)
+    try {
+      if (isEdit && editId) {
+        await window.api.invoices.update(parseInt(editId), {
+          client_id: clientId,
+          project_id: projectId || null,
+          issue_date: issueDate,
+          due_date: dueDate,
+          subtotal,
+          tax_rate: taxRate,
+          total,
+          notes,
+          items,
+        })
+        toast.success('Invoice updated')
+        navigate(`/invoices/${editId}`)
+      } else {
+        await window.api.invoices.create({
+          client_id: clientId,
+          project_id: multiProjectIds.length > 0 ? null : (projectId || null),
+          project_ids: multiProjectIds.length > 0 ? multiProjectIds : (projectId ? [projectId] : []),
+          issue_date: issueDate,
+          due_date: dueDate,
+          subtotal,
+          tax_rate: taxRate,
+          total,
+          notes,
+          items,
+        })
+        toast.success('Invoice created')
+        navigate('/invoices')
+      }
+    } catch (err: any) {
+      console.error('Failed to save invoice:', err)
+      toast.error(`Failed to save: ${err.message || 'Unknown error'}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const clientProjects = projects.filter(p => p.client_id === clientId)
@@ -190,13 +243,13 @@ export default function InvoiceCreate() {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-8">
       <button
-        onClick={() => navigate('/invoices')}
+        onClick={() => navigate(isEdit ? `/invoices/${editId}` : '/invoices')}
         className="flex items-center gap-1.5 text-sm text-text-secondary hover:text-text-primary transition-colors mb-6"
       >
-        <ArrowLeft className="w-4 h-4" /> Invoices
+        <ArrowLeft className="w-4 h-4" /> {isEdit ? 'Invoice' : 'Invoices'}
       </button>
 
-      <h1 className="text-2xl font-bold text-text-primary mb-6">Create Invoice</h1>
+      <h1 className="text-2xl font-bold text-text-primary mb-6">{isEdit ? 'Edit Invoice' : 'Create Invoice'}</h1>
 
       <div className="grid grid-cols-2 gap-8">
         {/* Left Column - Details */}
@@ -358,8 +411,15 @@ export default function InvoiceCreate() {
           </div>
 
           <div className="flex justify-end gap-3 mt-6">
-            <button onClick={() => navigate('/invoices')} className="btn-secondary">Cancel</button>
-            <button onClick={handleCreate} className="btn-primary">Create Invoice</button>
+            <button
+              onClick={() => navigate(isEdit ? `/invoices/${editId}` : '/invoices')}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button onClick={handleSave} disabled={saving} className="btn-primary">
+              {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Invoice'}
+            </button>
           </div>
         </div>
       </div>

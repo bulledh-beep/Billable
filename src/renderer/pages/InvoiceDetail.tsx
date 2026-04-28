@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Download, Send, Check, AlertTriangle, Trash2 } from 'lucide-react'
+import { ArrowLeft, Download, Send, Check, AlertTriangle, Trash2, Pencil } from 'lucide-react'
 import StatusBadge from '../components/StatusBadge'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { formatMoney, formatDate } from '../utils/format'
@@ -106,6 +106,13 @@ export default function InvoiceDetail() {
             className="btn-secondary flex items-center gap-2"
           >
             <Download className="w-4 h-4" /> {exporting ? 'Exporting...' : 'Export PDF'}
+          </button>
+          <button
+            onClick={() => navigate(`/invoices/${invoice.id}/edit`)}
+            className="btn-secondary flex items-center gap-2"
+            title="Edit invoice"
+          >
+            <Pencil className="w-4 h-4" /> Edit
           </button>
           <button onClick={() => setShowDelete(true)} className="btn-danger p-2">
             <Trash2 className="w-4 h-4" />

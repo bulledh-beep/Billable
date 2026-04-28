@@ -64,6 +64,7 @@ export default function App() {
             } />
             <Route path="/invoices" element={<Invoices />} />
             <Route path="/invoices/new" element={<InvoiceCreate />} />
+            <Route path="/invoices/:id/edit" element={<InvoiceCreate />} />
             <Route path="/invoices/:id" element={<InvoiceDetail />} />
             <Route path="/reports" element={<Reports isTimerRunning={isRunning} />} />
             <Route path="/settings" element={<SettingsPage />} />
