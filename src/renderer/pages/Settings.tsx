@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Save, Download, Upload, Plus, Trash2 } from 'lucide-react'
+import { Save, Download, Upload, Plus, Trash2, RefreshCw, ExternalLink } from 'lucide-react'
 import type { Settings, PaymentMethod } from '@shared/types'
 import ThemeToggle from '../components/ThemeToggle'
+import { useUpdater } from '../hooks/useUpdater'
 import toast from 'react-hot-toast'
 
 const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.06 } } }
@@ -11,6 +12,7 @@ const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [dirty, setDirty] = useState(false)
+  const updater = useUpdater()
 
   useEffect(() => { loadSettings() }, [])
 
@@ -276,6 +278,82 @@ export default function SettingsPage() {
             Auto follows your macOS appearance setting.
           </span>
         </div>
+      </motion.div>
+
+      {/* Updates */}
+      <motion.div variants={item} className="glass-panel p-6 mb-6">
+        <h2 className="text-sm font-semibold text-text-primary mb-1">Updates</h2>
+        <p className="text-xs text-text-tertiary mb-4">
+          Billable checks GitHub for new releases on launch.
+        </p>
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <div className="text-xs text-text-secondary">
+              Current: <span className="font-mono text-text-primary">v{updater.status?.current_version || '—'}</span>
+              {updater.status?.latest_version && (
+                <>
+                  {' · '}Latest: <span className="font-mono text-text-primary">v{updater.status.latest_version}</span>
+                </>
+              )}
+            </div>
+            {updater.status?.last_checked_at && (
+              <div className="text-[10px] text-text-tertiary mt-0.5">
+                Last checked {new Date(updater.status.last_checked_at).toLocaleString()}
+              </div>
+            )}
+            {updater.status?.update_available && (
+              <div className="text-[11px] text-accent mt-1.5 font-medium">
+                Update available — v{updater.status.latest_version} is ready to download
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => updater.checkNow().catch(() => {})}
+              disabled={updater.checking}
+              className="btn-secondary flex items-center gap-2 text-xs"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${updater.checking ? 'animate-spin' : ''}`} />
+              {updater.checking ? 'Checking…' : 'Check Now'}
+            </button>
+            {updater.status?.update_available && (
+              <button
+                onClick={updater.download}
+                disabled={updater.downloadState === 'downloading'}
+                className="btn-primary flex items-center gap-2 text-xs"
+              >
+                <Download className="w-3.5 h-3.5" />
+                {updater.downloadState === 'downloading'
+                  ? `Downloading ${updater.progress?.percent ?? 0}%`
+                  : updater.downloadState === 'done'
+                    ? 'Downloaded'
+                    : 'Download Update'}
+              </button>
+            )}
+          </div>
+        </div>
+        {updater.status?.update_available && updater.status.release_notes && (
+          <details className="mt-4 group">
+            <summary className="cursor-pointer text-xs text-text-secondary hover:text-text-primary transition-colors flex items-center gap-1.5">
+              <span className="group-open:hidden">Show release notes</span>
+              <span className="hidden group-open:inline">Hide release notes</span>
+              {updater.status.release_url && (
+                <a
+                  href={updater.status.release_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="ml-2 text-text-tertiary hover:text-accent inline-flex items-center gap-1"
+                  onClick={e => e.stopPropagation()}
+                >
+                  on GitHub <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
+            </summary>
+            <pre className="mt-2 p-3 rounded-lg bg-surface-200 text-[11px] text-text-secondary whitespace-pre-wrap font-mono leading-relaxed max-h-60 overflow-y-auto">
+              {updater.status.release_notes}
+            </pre>
+          </details>
+        )}
       </motion.div>
 
       {/* Data */}

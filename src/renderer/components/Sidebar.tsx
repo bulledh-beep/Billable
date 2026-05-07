@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import ProfileSwitcher from './ProfileSwitcher'
 import ThemeToggle from './ThemeToggle'
+import UpdateBanner from './UpdateBanner'
 
 interface SidebarProps {
   isRunning: boolean
@@ -57,6 +58,9 @@ export default function Sidebar({ isRunning, elapsed, activeProjectName, onStopT
         isTimerRunning={isRunning}
         onStopTimer={onStopTimer as unknown as () => Promise<unknown>}
       />
+
+      {/* Update banner (only shown when an update is available) */}
+      <UpdateBanner />
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">

@@ -11,7 +11,8 @@
     "build:dir": "vite build && electron-builder --mac dir --config",
     "build:vite": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

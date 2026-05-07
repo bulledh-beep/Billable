@@ -10,6 +10,7 @@ import {
   listProfiles, getActiveProfile, createProfile, renameProfile,
   updateProfileColor, deleteProfile, setActiveProfileId,
 } from './profiles'
+import { checkForUpdates, downloadAndOpenUpdate, getCachedStatus } from './updater'
 
 export function registerIpcHandlers(timerManager: TimerManager) {
   // ========== Clients ==========
@@ -205,6 +206,17 @@ export function registerIpcHandlers(timerManager: TimerManager) {
   ipcMain.handle('profile:delete', (_, id: string) => {
     deleteProfile(id)
     return { profiles: listProfiles(), active: getActiveProfile() }
+  })
+
+  // ========== Updater ==========
+  ipcMain.handle('updater:current-version', () => app.getVersion())
+  ipcMain.handle('updater:cached', () => getCachedStatus())
+  ipcMain.handle('updater:check', async (_, force: boolean = false) => {
+    return await checkForUpdates(force)
+  })
+  ipcMain.handle('updater:download', async (event, url: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender) || undefined
+    return await downloadAndOpenUpdate(url, win)
   })
 
   // ========== Dialogs ==========

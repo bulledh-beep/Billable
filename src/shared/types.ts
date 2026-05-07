@@ -151,6 +151,24 @@ export interface Profile {
   created_at: string
 }
 
+export interface UpdateStatus {
+  current_version: string
+  latest_version: string | null
+  update_available: boolean
+  release_url: string | null
+  release_notes: string | null
+  download_url: string | null
+  download_size_bytes: number | null
+  published_at: string | null
+  last_checked_at: string
+}
+
+export interface UpdateProgress {
+  received: number
+  total: number
+  percent: number
+}
+
 export interface ProfileListResponse {
   profiles: Profile[]
   active: Profile | null

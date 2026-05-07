@@ -64,6 +64,13 @@ const api = {
     openFile: (options: any) => ipcRenderer.invoke('dialog:open-file', options),
     saveFile: (options: any) => ipcRenderer.invoke('dialog:save-file', options),
   },
+  // Updater
+  updater: {
+    currentVersion: () => ipcRenderer.invoke('updater:current-version'),
+    cached: () => ipcRenderer.invoke('updater:cached'),
+    check: (force?: boolean) => ipcRenderer.invoke('updater:check', force ?? false),
+    download: (url: string) => ipcRenderer.invoke('updater:download', url),
+  },
   // Profiles
   profile: {
     list: () => ipcRenderer.invoke('profile:list'),
