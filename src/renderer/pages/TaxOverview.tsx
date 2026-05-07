@@ -109,11 +109,19 @@ export default function TaxOverview() {
 
   if (!overview || !taxSettings) return null
 
-  // Net business income = paid - GST owed - expenses
+  // Realized: net business income from PAID invoices only
   const netIncome = overview.total_paid - overview.gst_collected_paid - overview.total_expenses
   const incomeTaxRate = taxSettings.income_tax_bracket || 0
   const incomeTaxEstimate = Math.max(0, netIncome) * (incomeTaxRate / 100)
   const totalSetAside = overview.gst_collected_paid + incomeTaxEstimate
+
+  // Projected: what to expect if everything currently invoiced (paid + outstanding) gets paid
+  const projectedNetIncome =
+    overview.total_invoiced - overview.gst_collected_total - overview.total_expenses
+  const projectedIncomeTax = Math.max(0, projectedNetIncome) * (incomeTaxRate / 100)
+  const projectedTotalSetAside = overview.gst_collected_total + projectedIncomeTax
+  const hasUnpaidInvoiced = overview.total_invoiced > overview.total_paid
+
   const money = (amount: number) => formatMoney(amount, taxSettings.currency || 'CAD')
 
   // Build a 12-month chart series
@@ -166,8 +174,19 @@ export default function TaxOverview() {
               {money(totalSetAside)}
             </div>
             <p className="text-xs text-text-tertiary mt-2 max-w-md">
-              Income tax estimate at {incomeTaxRate}% of net business income, plus any GST/HST you've collected and owe to the CRA.
+              Based on invoices you've already been paid for. Mark invoices as paid (Invoices page) to grow this number.
             </p>
+            {hasUnpaidInvoiced && (
+              <div className="mt-3 pt-3 border-t border-accent/15 flex items-center gap-2">
+                <span className="text-[10px] uppercase tracking-wider text-text-tertiary">Projected if all paid</span>
+                <span className="font-mono text-base font-semibold text-text-primary">
+                  {money(projectedTotalSetAside)}
+                </span>
+                <span className="text-[10px] text-text-tertiary">
+                  ({money(overview.total_invoiced - overview.total_paid)} still uncollected)
+                </span>
+              </div>
+            )}
           </div>
           <div className="text-right text-xs space-y-1">
             <div className="flex justify-between gap-6">
@@ -178,6 +197,18 @@ export default function TaxOverview() {
               <span className="text-text-tertiary">GST/HST to remit</span>
               <span className="font-mono text-text-primary">{money(overview.gst_collected_paid)}</span>
             </div>
+            {hasUnpaidInvoiced && (
+              <div className="pt-2 mt-2 border-t border-white/[0.04]">
+                <div className="flex justify-between gap-6">
+                  <span className="text-text-tertiary">Projected income tax</span>
+                  <span className="font-mono text-text-secondary">{money(projectedIncomeTax)}</span>
+                </div>
+                <div className="flex justify-between gap-6">
+                  <span className="text-text-tertiary">Projected GST</span>
+                  <span className="font-mono text-text-secondary">{money(overview.gst_collected_total)}</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -194,6 +225,11 @@ export default function TaxOverview() {
             <p><span className="font-mono text-text-primary">Net business income</span> = paid invoices − GST/HST collected on those invoices − deductible expenses</p>
             <p><span className="font-mono text-text-primary">Income tax estimate</span> = max(0, net business income) × your income tax bracket %</p>
             <p><span className="font-mono text-text-primary">Total to set aside</span> = income tax estimate + GST/HST collected (since GST belongs to the CRA, not you)</p>
+            {hasUnpaidInvoiced && (
+              <p className="pt-2 border-t border-white/[0.04]">
+                <span className="font-mono text-text-primary">Projected if all paid</span> uses the same formula but counts every invoice (draft, sent, overdue, paid) — useful for planning ahead.
+              </p>
+            )}
             <p className="text-text-tertiary pt-2 border-t border-white/[0.04]">
               This is a planning aid only. Actual taxes depend on your full return — CPP contributions, deductions, credits, and other income sources. Consult a CPA before filing.
             </p>

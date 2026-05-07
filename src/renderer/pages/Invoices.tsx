@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo } from 'react'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { Plus, FileText, Search, Download } from 'lucide-react'
+import { Plus, FileText, Search, Download, Send, Check } from 'lucide-react'
 import EmptyState from '../components/EmptyState'
 import StatusBadge from '../components/StatusBadge'
+import MarkPaidModal from '../components/MarkPaidModal'
 import { formatMoney, formatDate } from '../utils/format'
 import type { Invoice } from '@shared/types'
 import toast from 'react-hot-toast'
@@ -17,6 +18,7 @@ export default function Invoices() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [yearFilter, setYearFilter] = useState<'all' | number>('all')
   const [search, setSearch] = useState('')
+  const [paidModal, setPaidModal] = useState<{ id: number; number: string } | null>(null)
 
   useEffect(() => { loadData() }, [])
 
@@ -60,6 +62,22 @@ export default function Invoices() {
       .reduce((s: number, i: any) => s + (i.total || 0), 0)
     return { totalInvoiced, totalGST, totalPaid, totalOutstanding }
   }, [filtered])
+
+  const handleMarkSent = async (invoice: any, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      await window.api.invoices.update(invoice.id, { status: 'sent' })
+      toast.success(`${invoice.invoice_number} marked as sent`)
+      loadData()
+    } catch (err: any) {
+      toast.error(`Failed: ${err.message || err}`)
+    }
+  }
+
+  const openMarkPaid = (invoice: any, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setPaidModal({ id: invoice.id, number: invoice.invoice_number })
+  }
 
   const handleExportCSV = async () => {
     if (filtered.length === 0) {
@@ -177,7 +195,7 @@ export default function Invoices() {
             <div
               key={invoice.id}
               onClick={() => navigate(`/invoices/${invoice.id}`)}
-              className="glass-panel-hover p-4 flex items-center gap-4 cursor-pointer"
+              className="glass-panel-hover p-4 flex items-center gap-4 cursor-pointer group"
             >
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3">
@@ -196,7 +214,30 @@ export default function Invoices() {
                   )}
                 </div>
               </div>
-              <div className="text-right">
+
+              {/* Inline status actions — visible on hover for non-paid invoices */}
+              <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                {invoice.status === 'draft' && (
+                  <button
+                    onClick={(e) => handleMarkSent(invoice, e)}
+                    className="px-2.5 py-1 rounded-md text-xs font-medium text-text-secondary hover:text-status-sent hover:bg-status-sent/10 transition-colors flex items-center gap-1.5"
+                    title="Mark as sent"
+                  >
+                    <Send className="w-3 h-3" /> Sent
+                  </button>
+                )}
+                {(invoice.status === 'sent' || invoice.status === 'overdue' || invoice.status === 'draft') && (
+                  <button
+                    onClick={(e) => openMarkPaid(invoice, e)}
+                    className="px-2.5 py-1 rounded-md text-xs font-medium text-text-secondary hover:text-status-paid hover:bg-status-paid/10 transition-colors flex items-center gap-1.5"
+                    title="Mark as paid"
+                  >
+                    <Check className="w-3 h-3" /> Paid
+                  </button>
+                )}
+              </div>
+
+              <div className="text-right min-w-[120px]">
                 <div className="font-mono text-sm font-medium text-text-primary">{formatMoney(invoice.total)}</div>
                 <div className="text-xs text-text-tertiary">
                   {invoice.status === 'paid' && invoice.payment_date
@@ -208,6 +249,16 @@ export default function Invoices() {
           ))}
         </motion.div>
       )}
+
+      <MarkPaidModal
+        invoiceId={paidModal?.id ?? null}
+        invoiceNumber={paidModal?.number}
+        onClose={() => setPaidModal(null)}
+        onMarked={() => {
+          setPaidModal(null)
+          loadData()
+        }}
+      />
     </motion.div>
   )
 }

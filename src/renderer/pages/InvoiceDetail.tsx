@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Download, Send, Check, AlertTriangle, Trash2, Pencil, CreditCard } from 'lucide-react'
+import { ArrowLeft, Download, Send, Check, AlertTriangle, Trash2, Pencil } from 'lucide-react'
 import StatusBadge from '../components/StatusBadge'
 import ConfirmDialog from '../components/ConfirmDialog'
-import Modal from '../components/Modal'
-import { formatMoney, formatDate, todayISO } from '../utils/format'
-import type { Invoice, Settings, PaymentMethod } from '@shared/types'
+import MarkPaidModal from '../components/MarkPaidModal'
+import { formatMoney, formatDate } from '../utils/format'
+import type { Invoice, Settings } from '@shared/types'
 import toast from 'react-hot-toast'
 
 export default function InvoiceDetail() {
@@ -16,10 +16,7 @@ export default function InvoiceDetail() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [showDelete, setShowDelete] = useState(false)
   const [exporting, setExporting] = useState(false)
-  const [showPaidModal, setShowPaidModal] = useState(false)
-  const [paymentDate, setPaymentDate] = useState<string>(todayISO())
-  const [paymentMethodChoice, setPaymentMethodChoice] = useState<string>('')
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
+  const [paidModalOpen, setPaidModalOpen] = useState(false)
 
   useEffect(() => {
     if (id) loadInvoice(parseInt(id))
@@ -34,14 +31,6 @@ export default function InvoiceDetail() {
   const loadSettings = async () => {
     const s = await window.api.settings.get()
     setSettings(s)
-    try {
-      const methods: PaymentMethod[] = JSON.parse(s.payment_methods || '[]')
-      setPaymentMethods(methods)
-      const def = methods.find(m => m.name === s.default_payment_method) || methods[0]
-      if (def) setPaymentMethodChoice(def.name)
-    } catch {
-      setPaymentMethods([])
-    }
   }
 
   const updateStatus = async (status: string) => {
@@ -51,21 +40,9 @@ export default function InvoiceDetail() {
     loadInvoice(invoice.id)
   }
 
-  const openPaidModal = () => {
-    setPaymentDate(todayISO())
-    setShowPaidModal(true)
-  }
-
-  const confirmPaid = async () => {
-    if (!invoice) return
-    await window.api.invoices.update(invoice.id, {
-      status: 'paid',
-      payment_date: paymentDate,
-      payment_method: paymentMethodChoice || null,
-    })
-    toast.success('Invoice marked as paid')
-    setShowPaidModal(false)
-    loadInvoice(invoice.id)
+  const handlePaidMarked = () => {
+    setPaidModalOpen(false)
+    if (invoice) loadInvoice(invoice.id)
   }
 
   const handleExportPDF = async () => {
@@ -122,7 +99,7 @@ export default function InvoiceDetail() {
             </button>
           )}
           {(invoice.status === 'sent' || invoice.status === 'overdue') && (
-            <button onClick={openPaidModal} className="btn-primary flex items-center gap-2">
+            <button onClick={() => setPaidModalOpen(true)} className="btn-primary flex items-center gap-2">
               <Check className="w-4 h-4" /> Mark Paid
             </button>
           )}
@@ -266,59 +243,12 @@ export default function InvoiceDetail() {
         </div>
       </div>
 
-      <Modal
-        isOpen={showPaidModal}
-        onClose={() => setShowPaidModal(false)}
-        title="Mark Invoice as Paid"
-        size="sm"
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Payment Date</label>
-            <input
-              className="input-field"
-              type="date"
-              value={paymentDate}
-              onChange={e => setPaymentDate(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Payment Method</label>
-            {paymentMethods.length > 0 ? (
-              <select
-                className="input-field"
-                value={paymentMethodChoice}
-                onChange={e => setPaymentMethodChoice(e.target.value)}
-              >
-                <option value="">Select method…</option>
-                {paymentMethods.map((m, i) => (
-                  <option key={i} value={m.name}>{m.name}</option>
-                ))}
-                <option value="Cheque">Cheque</option>
-                <option value="Cash">Cash</option>
-                <option value="Credit Card">Credit Card</option>
-                <option value="Other">Other</option>
-              </select>
-            ) : (
-              <input
-                className="input-field"
-                value={paymentMethodChoice}
-                onChange={e => setPaymentMethodChoice(e.target.value)}
-                placeholder="e.g. e-Transfer, Cheque, PayPal"
-              />
-            )}
-            <p className="text-[10px] text-text-tertiary mt-1">
-              Configure default methods in Settings → Payment Methods.
-            </p>
-          </div>
-          <div className="flex justify-end gap-3 pt-2">
-            <button onClick={() => setShowPaidModal(false)} className="btn-secondary">Cancel</button>
-            <button onClick={confirmPaid} className="btn-primary flex items-center gap-2">
-              <CreditCard className="w-4 h-4" /> Confirm Paid
-            </button>
-          </div>
-        </div>
-      </Modal>
+      <MarkPaidModal
+        invoiceId={paidModalOpen ? invoice.id : null}
+        invoiceNumber={invoice.invoice_number}
+        onClose={() => setPaidModalOpen(false)}
+        onMarked={handlePaidMarked}
+      />
 
       <ConfirmDialog
         isOpen={showDelete}
