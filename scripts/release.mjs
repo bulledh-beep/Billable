@@ -86,16 +86,26 @@ try {
 // ----- 3. Build -----
 run('npm run build')
 
-// ----- 4. Locate the DMG -----
+// ----- 4. Locate the DMG matching THIS version -----
 const releaseDir = path.join(ROOT, 'release')
-const dmgs = fs.readdirSync(releaseDir).filter(f => f.endsWith('.dmg'))
-if (dmgs.length === 0) {
+const allDmgs = fs.readdirSync(releaseDir).filter(f => f.endsWith('.dmg'))
+if (allDmgs.length === 0) {
   fail('No .dmg found in release/ — build may have failed silently.')
 }
 
-// Prefer arch-specific arm64 DMG if present
-const armDmg = dmgs.find(f => /arm64/i.test(f))
-const dmgFile = armDmg || dmgs[0]
+// Match the version explicitly so we don't pick up stale DMGs from previous builds.
+const versionedDmgs = allDmgs.filter(f => f.includes(version))
+if (versionedDmgs.length === 0) {
+  fail(
+    `No DMG matching version ${version} found in release/. ` +
+    `Found: ${allDmgs.join(', ')}. ` +
+    `The build may have failed or produced a different version.`
+  )
+}
+
+// Prefer arch-specific arm64 DMG if present, otherwise first matching DMG
+const armDmg = versionedDmgs.find(f => /arm64/i.test(f))
+const dmgFile = armDmg || versionedDmgs[0]
 const dmgPath = path.join(releaseDir, dmgFile)
 console.log(`\n📦 Built ${dmgFile} (${(fs.statSync(dmgPath).size / 1024 / 1024).toFixed(1)} MB)`)
 
