@@ -60,6 +60,14 @@
     user-select: text;
   }
 
+  /* Disable default macOS link-dragging on anchors, images, and dnd-prone elements.
+     Otherwise dragging a sidebar nav link surfaces the underlying file:// URL as
+     a ghost tooltip — see Electron + React Router on a file:// protocol. */
+  a, img {
+    -webkit-user-drag: none;
+    user-drag: none;
+  }
+
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
