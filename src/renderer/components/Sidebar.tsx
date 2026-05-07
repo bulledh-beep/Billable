@@ -13,6 +13,7 @@ import {
   Square,
 } from 'lucide-react'
 import ProfileSwitcher from './ProfileSwitcher'
+import ThemeToggle from './ThemeToggle'
 
 interface SidebarProps {
   isRunning: boolean
@@ -39,7 +40,7 @@ export default function Sidebar({ isRunning, elapsed, activeProjectName, onStopT
   const location = useLocation()
 
   return (
-    <aside className="w-56 flex-shrink-0 bg-surface border-r border-white/[0.04] flex flex-col h-full">
+    <aside className="w-56 flex-shrink-0 bg-surface border-r border-rim/[0.04] flex flex-col h-full">
       {/* Traffic light spacer — drag-only, no content */}
       <div className="drag-region h-[52px] flex-shrink-0" />
 
@@ -124,8 +125,12 @@ export default function Sidebar({ isRunning, elapsed, activeProjectName, onStopT
         </motion.div>
       )}
 
-      {/* Settings */}
-      <div className="px-3 pb-4">
+      {/* Settings + Theme */}
+      <div className="px-3 pb-4 space-y-1.5">
+        <div className="flex items-center justify-between gap-2 px-1">
+          <span className="text-[10px] uppercase tracking-wider text-text-tertiary">Theme</span>
+          <ThemeToggle compact />
+        </div>
         <NavLink
           to="/settings"
           className={({ isActive }) =>

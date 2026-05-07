@@ -73,7 +73,7 @@ export default function Reports({ isTimerRunning }: ReportsProps) {
   const customTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null
     return (
-      <div className="bg-surface-200 border border-white/[0.06] rounded-lg px-3 py-2 shadow-lg">
+      <div className="bg-surface-200 border border-rim/[0.06] rounded-lg px-3 py-2 shadow-lg">
         <p className="text-xs text-text-secondary mb-1">{label || payload[0]?.payload?.name}</p>
         <p className="text-sm font-mono text-text-primary font-medium">
           {activeTab === 'earnings' ? formatMoney(payload[0].value) : `${formatHours(payload[0].value)} hours`}
@@ -119,7 +119,7 @@ export default function Reports({ isTimerRunning }: ReportsProps) {
       </motion.div>
 
       {/* Tabs */}
-      <motion.div variants={item} className="flex gap-1 bg-surface-100 rounded-lg p-0.5 border border-white/[0.04] w-fit mb-6">
+      <motion.div variants={item} className="flex gap-1 bg-surface-100 rounded-lg p-0.5 border border-rim/[0.04] w-fit mb-6">
         {[
           { key: 'projects', label: 'Hours by Project' },
           { key: 'clients', label: 'Hours by Client' },
@@ -148,7 +148,7 @@ export default function Reports({ isTimerRunning }: ReportsProps) {
           ) : (
             <ResponsiveContainer width="100%" height={400}>
               <BarChart data={hoursByProject} layout="vertical" margin={{ left: 120 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--rim) / 0.08)" />
                 <XAxis type="number" stroke="#6B6A67" fontSize={12} tickFormatter={v => `${v}h`} />
                 <YAxis type="category" dataKey="name" stroke="#6B6A67" fontSize={12} width={110} />
                 <Tooltip content={customTooltip} />
@@ -171,7 +171,7 @@ export default function Reports({ isTimerRunning }: ReportsProps) {
           ) : (
             <ResponsiveContainer width="100%" height={400}>
               <BarChart data={hoursByClient} layout="vertical" margin={{ left: 120 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--rim) / 0.08)" />
                 <XAxis type="number" stroke="#6B6A67" fontSize={12} tickFormatter={v => `${v}h`} />
                 <YAxis type="category" dataKey="name" stroke="#6B6A67" fontSize={12} width={110} />
                 <Tooltip content={customTooltip} />
@@ -194,7 +194,7 @@ export default function Reports({ isTimerRunning }: ReportsProps) {
           ) : (
             <ResponsiveContainer width="100%" height={400}>
               <BarChart data={earningsByMonth}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--rim) / 0.08)" />
                 <XAxis dataKey="month" stroke="#6B6A67" fontSize={12} />
                 <YAxis stroke="#6B6A67" fontSize={12} tickFormatter={v => `$${v}`} />
                 <Tooltip content={customTooltip} />
@@ -210,7 +210,7 @@ export default function Reports({ isTimerRunning }: ReportsProps) {
         <motion.div variants={item} className="glass-panel overflow-hidden mt-6">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-white/[0.04]">
+              <tr className="border-b border-rim/[0.04]">
                 <th className="text-left px-4 py-3 text-xs font-medium text-text-tertiary">Project</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-text-tertiary">Hours</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-text-tertiary">% of Total</th>
@@ -218,7 +218,7 @@ export default function Reports({ isTimerRunning }: ReportsProps) {
             </thead>
             <tbody>
               {hoursByProject.map((p, i) => (
-                <tr key={i} className="border-b border-white/[0.02]">
+                <tr key={i} className="border-b border-rim/[0.02]">
                   <td className="px-4 py-3 text-sm text-text-primary flex items-center gap-2">
                     <div className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color || CHART_COLORS[i % CHART_COLORS.length] }} />
                     {p.name}

@@ -188,7 +188,7 @@ export default function InvoiceDetail() {
           {/* Line Items */}
           <table className="w-full mb-8">
             <thead>
-              <tr className="border-b border-white/[0.06]">
+              <tr className="border-b border-rim/[0.06]">
                 <th className="text-left py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Description</th>
                 <th className="text-center py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Hours</th>
                 <th className="text-right py-3 text-xs font-medium text-text-tertiary uppercase tracking-wider">Rate</th>
@@ -197,7 +197,7 @@ export default function InvoiceDetail() {
             </thead>
             <tbody>
               {items.map((item: any, i: number) => (
-                <tr key={i} className="border-b border-white/[0.02]">
+                <tr key={i} className="border-b border-rim/[0.02]">
                   <td className="py-3 text-sm text-text-primary">{item.description}</td>
                   <td className="py-3 text-sm text-text-secondary font-mono text-center">{item.quantity.toFixed(2)}</td>
                   <td className="py-3 text-sm text-text-secondary font-mono text-right">{formatMoney(item.unit_price)}</td>
@@ -226,7 +226,7 @@ export default function InvoiceDetail() {
                   <span className="font-mono text-text-primary">{formatMoney(taxAmount)}</span>
                 </div>
               )}
-              <div className="flex justify-between text-xl font-bold pt-3 border-t border-white/[0.06]">
+              <div className="flex justify-between text-xl font-bold pt-3 border-t border-rim/[0.06]">
                 <span className="text-text-primary">Total</span>
                 <span className="font-mono text-accent">{formatMoney(invoice.total)}</span>
               </div>

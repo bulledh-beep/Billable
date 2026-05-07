@@ -182,7 +182,7 @@ export default function ProjectDetail({ onStartTimer, onStopTimer, isTimerRunnin
       <div className="glass-panel overflow-hidden">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-white/[0.04]">
+            <tr className="border-b border-rim/[0.04]">
               <th className="text-left px-4 py-3 text-xs font-medium text-text-tertiary">Date</th>
               <th className="text-left px-4 py-3 text-xs font-medium text-text-tertiary">Description</th>
               <th className="text-left px-4 py-3 text-xs font-medium text-text-tertiary">Time</th>
@@ -193,7 +193,7 @@ export default function ProjectDetail({ onStartTimer, onStopTimer, isTimerRunnin
           </thead>
           <tbody>
             {entries.filter((e: any) => e.end_time).map((entry: any) => (
-              <tr key={entry.id} className="border-b border-white/[0.02] hover:bg-surface-200/30 transition-colors">
+              <tr key={entry.id} className="border-b border-rim/[0.02] hover:bg-surface-200/30 transition-colors">
                 <td className="px-4 py-3 text-sm text-text-secondary">{formatDate(entry.start_time)}</td>
                 <td className="px-4 py-3 text-sm text-text-primary">{entry.description || '—'}</td>
                 <td className="px-4 py-3 text-sm text-text-tertiary font-mono">
@@ -218,7 +218,7 @@ export default function ProjectDetail({ onStartTimer, onStopTimer, isTimerRunnin
                         +{mins >= 60 ? `${mins / 60}h` : `${mins}m`}
                       </button>
                     ))}
-                    <div className="w-px h-4 bg-white/[0.04] mx-0.5" />
+                    <div className="w-px h-4 bg-rim/[0.04] mx-0.5" />
                     <button
                       onClick={() => {
                         setEditEntry(entry)
@@ -327,7 +327,7 @@ export default function ProjectDetail({ onStartTimer, onStopTimer, isTimerRunnin
               type="checkbox"
               checked={editForm.is_billable}
               onChange={e => setEditForm(f => ({ ...f, is_billable: e.target.checked }))}
-              className="rounded border-white/20 bg-surface-300 text-accent focus:ring-accent"
+              className="rounded border-rim/20 bg-surface-300 text-accent focus:ring-accent"
             />
             <span className="text-sm text-text-secondary">Billable</span>
           </label>

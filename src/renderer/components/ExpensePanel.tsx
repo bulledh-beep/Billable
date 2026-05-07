@@ -143,9 +143,9 @@ export default function ExpensePanel({
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 320, opacity: 0 }}
             transition={{ type: 'spring', damping: 28, stiffness: 280 }}
-            className="fixed top-0 right-0 bottom-0 w-[400px] bg-surface-100 border-l border-white/[0.06] z-50 flex flex-col shadow-2xl"
+            className="fixed top-0 right-0 bottom-0 w-[400px] bg-surface-100 border-l border-rim/[0.06] z-50 flex flex-col shadow-2xl"
           >
-            <div className="flex items-center justify-between p-5 border-b border-white/[0.04]">
+            <div className="flex items-center justify-between p-5 border-b border-rim/[0.04]">
               <div>
                 <h2 className="text-base font-semibold text-text-primary">
                   {isEdit ? 'Edit Expense' : 'New Expense'}
@@ -229,7 +229,7 @@ export default function ExpensePanel({
               </div>
             </div>
 
-            <div className="p-5 border-t border-white/[0.04] flex items-center justify-between gap-3">
+            <div className="p-5 border-t border-rim/[0.04] flex items-center justify-between gap-3">
               {isEdit ? (
                 <button
                   onClick={handleDelete}

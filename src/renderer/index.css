@@ -2,6 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---------- Theme palettes ----------
+ * The Tailwind tokens (surface, text-primary, …) reference these CSS variables
+ * via rgb(var(--name) / <alpha-value>). Toggle the class on <html> to swap themes.
+ * Triplets are space-separated R G B values (no commas) so Tailwind can apply alpha.
+ */
+:root,
+:root.dark {
+  --surface: 15 15 17;
+  --surface-50: 26 26 30;
+  --surface-100: 34 34 38;
+  --surface-200: 42 42 47;
+  --surface-300: 51 51 56;
+  --surface-400: 61 61 66;
+
+  --text-primary: 240 237 232;
+  --text-secondary: 155 154 151;
+  --text-tertiary: 107 106 103;
+
+  /* Border lines / panel rims (white on dark, black on light) */
+  --rim: 255 255 255;
+  --rim-strong: 255 255 255;
+
+  color-scheme: dark;
+}
+
+:root.light {
+  --surface: 250 248 244;       /* warm off-white background */
+  --surface-50: 255 254 251;    /* highest panel */
+  --surface-100: 252 250 246;   /* glass-panel base */
+  --surface-200: 244 241 235;   /* hovered panel / subtle bg */
+  --surface-300: 234 230 222;   /* pressed / borders */
+  --surface-400: 220 215 205;   /* deeper edge */
+
+  --text-primary: 28 26 24;
+  --text-secondary: 90 86 82;
+  --text-tertiary: 130 124 118;
+
+  --rim: 0 0 0;
+  --rim-strong: 0 0 0;
+
+  color-scheme: light;
+}
+
 @layer base {
   * {
     -webkit-font-smoothing: antialiased;
@@ -27,21 +70,31 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgb(var(--rim) / 0.1);
     border-radius: 3px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.2);
+    background: rgb(var(--rim) / 0.2);
   }
 }
 
 @layer components {
   .glass-panel {
-    @apply bg-surface-100/80 backdrop-blur-xl border border-white/[0.04] rounded-xl;
+    @apply bg-surface-100/80 backdrop-blur-xl rounded-xl;
+    border: 1px solid rgb(var(--rim) / 0.05);
     box-shadow:
-      inset 0 1px 1px rgba(255, 255, 255, 0.03),
-      0 2px 8px rgba(0, 0, 0, 0.3);
+      inset 0 1px 1px rgb(var(--rim) / 0.03),
+      0 2px 8px rgba(0, 0, 0, 0.18);
+  }
+
+  :root.light .glass-panel {
+    /* Light mode wants a slightly stronger rim and softer shadow */
+    border-color: rgb(var(--rim) / 0.08);
+    box-shadow:
+      inset 0 1px 1px rgb(255 255 255 / 0.6),
+      0 1px 3px rgba(0, 0, 0, 0.05),
+      0 2px 8px rgba(0, 0, 0, 0.04);
   }
 
   .glass-panel-hover {
@@ -51,28 +104,39 @@
   .glass-panel-hover:hover {
     @apply bg-surface-200/80;
     box-shadow:
-      inset 0 1px 1px rgba(255, 255, 255, 0.05),
-      0 4px 16px rgba(0, 0, 0, 0.4);
+      inset 0 1px 1px rgb(var(--rim) / 0.05),
+      0 4px 16px rgba(0, 0, 0, 0.25);
     transform: translateY(-1px);
   }
 
+  :root.light .glass-panel-hover:hover {
+    box-shadow:
+      inset 0 1px 1px rgb(255 255 255 / 0.7),
+      0 2px 6px rgba(0, 0, 0, 0.06),
+      0 6px 20px rgba(0, 0, 0, 0.06);
+  }
+
   .input-field {
-    @apply w-full bg-surface-200 border border-white/[0.06] rounded-lg px-3 py-2
+    @apply w-full bg-surface-200 rounded-lg px-3 py-2
            text-text-primary placeholder:text-text-tertiary
            focus:outline-none focus:ring-1 focus:ring-accent/50 focus:border-accent/30
            transition-all duration-200 text-sm;
+    border: 1px solid rgb(var(--rim) / 0.06);
   }
 
   .btn-primary {
-    @apply bg-accent hover:bg-accent-light text-surface font-medium px-4 py-2 rounded-lg
+    @apply bg-accent hover:bg-accent-light font-medium px-4 py-2 rounded-lg
            transition-all duration-200 text-sm
            active:scale-[0.98] shadow-lg shadow-accent/20;
+    /* Gold button always wants dark text — independent of theme */
+    color: #1a1a1a;
   }
 
   .btn-secondary {
     @apply bg-surface-200 hover:bg-surface-300 text-text-primary font-medium px-4 py-2 rounded-lg
-           border border-white/[0.06] transition-all duration-200 text-sm
+           transition-all duration-200 text-sm
            active:scale-[0.98];
+    border: 1px solid rgb(var(--rim) / 0.06);
   }
 
   .btn-ghost {

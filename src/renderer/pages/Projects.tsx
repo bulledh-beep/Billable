@@ -119,7 +119,7 @@ export default function Projects({ onStartTimer, onStopTimer, isTimerRunning, ac
               className="input-field pl-10"
             />
           </div>
-          <div className="flex gap-1 bg-surface-100 rounded-lg p-0.5 border border-white/[0.04]">
+          <div className="flex gap-1 bg-surface-100 rounded-lg p-0.5 border border-rim/[0.04]">
             {['all', 'active', 'paused', 'complete', 'archived'].map(s => (
               <button
                 key={s}
@@ -216,7 +216,7 @@ export default function Projects({ onStartTimer, onStopTimer, isTimerRunning, ac
               <XCircle className="w-4 h-4 text-text-tertiary hover:text-text-primary" />
             </button>
           </div>
-          <div className="w-px h-6 bg-white/[0.06]" />
+          <div className="w-px h-6 bg-rim/[0.06]" />
           <div className="text-sm text-text-secondary">
             <span className="font-mono text-text-primary">{formatHours(combinedTotalHours)}h</span> total
           </div>
@@ -228,7 +228,7 @@ export default function Projects({ onStartTimer, onStopTimer, isTimerRunning, ac
           </div>
           {combinedUnbilledHours > 0 && (
             <>
-              <div className="w-px h-6 bg-white/[0.06]" />
+              <div className="w-px h-6 bg-rim/[0.06]" />
               <button
                 onClick={handleGenerateCombinedInvoice}
                 className="btn-primary flex items-center gap-2 text-sm py-2"

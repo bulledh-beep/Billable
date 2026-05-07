@@ -192,7 +192,7 @@ export default function TaxSettingsPage() {
               type="checkbox"
               checked={!!settings.gst_hst_registered}
               onChange={e => handleGstToggle(e.target.checked)}
-              className="rounded border-white/20 bg-surface-300 text-accent focus:ring-accent"
+              className="rounded border-rim/20 bg-surface-300 text-accent focus:ring-accent"
             />
             <span className="text-xs font-medium text-text-secondary">Registered</span>
           </label>

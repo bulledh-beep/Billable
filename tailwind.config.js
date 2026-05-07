@@ -8,13 +8,15 @@ export default {
   theme: {
     extend: {
       colors: {
+        // Surface tokens read from CSS variables so the theme can swap by class on <html>.
+        // The "<alpha-value>" placeholder lets us keep using /80, /40 etc. opacities.
         surface: {
-          DEFAULT: '#0F0F11',
-          50: '#1A1A1E',
-          100: '#222226',
-          200: '#2A2A2F',
-          300: '#333338',
-          400: '#3D3D42',
+          DEFAULT: 'rgb(var(--surface) / <alpha-value>)',
+          50: 'rgb(var(--surface-50) / <alpha-value>)',
+          100: 'rgb(var(--surface-100) / <alpha-value>)',
+          200: 'rgb(var(--surface-200) / <alpha-value>)',
+          300: 'rgb(var(--surface-300) / <alpha-value>)',
+          400: 'rgb(var(--surface-400) / <alpha-value>)',
         },
         accent: {
           DEFAULT: '#F5A623',
@@ -23,10 +25,12 @@ export default {
           glow: 'rgba(245, 166, 35, 0.15)',
         },
         text: {
-          primary: '#F0EDE8',
-          secondary: '#9B9A97',
-          tertiary: '#6B6A67',
+          primary: 'rgb(var(--text-primary) / <alpha-value>)',
+          secondary: 'rgb(var(--text-secondary) / <alpha-value>)',
+          tertiary: 'rgb(var(--text-tertiary) / <alpha-value>)',
         },
+        // Rim/divider color: white in dark, black in light. Used for subtle borders.
+        rim: 'rgb(var(--rim) / <alpha-value>)',
         status: {
           active: '#34D399',
           paused: '#FBBF24',

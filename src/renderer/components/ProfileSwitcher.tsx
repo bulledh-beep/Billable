@@ -126,7 +126,7 @@ export default function ProfileSwitcher({ isTimerRunning, onStopTimer }: {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.12 }}
-            className="absolute left-3 right-3 top-full mt-1 z-30 rounded-lg border border-white/[0.08] bg-surface-100 shadow-xl py-1 overflow-hidden"
+            className="absolute left-3 right-3 top-full mt-1 z-30 rounded-lg border border-rim/[0.08] bg-surface-100 shadow-xl py-1 overflow-hidden"
           >
             {profiles.map(p => (
               <button
@@ -139,7 +139,7 @@ export default function ProfileSwitcher({ isTimerRunning, onStopTimer }: {
                 {p.id === active.id && <Check className="w-3.5 h-3.5 text-accent" />}
               </button>
             ))}
-            <div className="border-t border-white/[0.04] my-1" />
+            <div className="border-t border-rim/[0.04] my-1" />
             <button
               onClick={openCreate}
               className="w-full flex items-center gap-2 px-3 py-2 hover:bg-surface-200/60 transition-colors"
@@ -285,7 +285,7 @@ function ManageProfilesModal({
           {localProfiles.map(p => (
             <div
               key={p.id}
-              className="flex items-center gap-3 p-3 rounded-lg bg-surface-200/40 border border-white/[0.04]"
+              className="flex items-center gap-3 p-3 rounded-lg bg-surface-200/40 border border-rim/[0.04]"
             >
               <div className="flex flex-col gap-1">
                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: p.color }} />

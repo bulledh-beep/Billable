@@ -33,9 +33,9 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' }:
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
             transition={{ type: 'spring', duration: 0.3, bounce: 0.15 }}
-            className={`relative ${sizes[size]} w-full mx-4 bg-surface-100 border border-white/[0.06] rounded-2xl shadow-2xl overflow-hidden`}
+            className={`relative ${sizes[size]} w-full mx-4 bg-surface-100 border border-rim/[0.06] rounded-2xl shadow-2xl overflow-hidden`}
           >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.04]">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-rim/[0.04]">
               <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
               <button
                 onClick={onClose}

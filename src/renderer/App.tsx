@@ -78,12 +78,12 @@ export default function App() {
       <Toaster
         position="bottom-right"
         toastOptions={{
-          className: '!bg-surface-200 !text-text-primary !border !border-white/[0.06] !shadow-card',
+          className: '!bg-surface-200 !text-text-primary !shadow-card',
           duration: 3000,
           style: {
-            background: '#222226',
-            color: '#F0EDE8',
-            border: '1px solid rgba(255,255,255,0.06)',
+            background: 'rgb(var(--surface-200))',
+            color: 'rgb(var(--text-primary))',
+            border: '1px solid rgb(var(--rim) / 0.06)',
           },
         }}
       />

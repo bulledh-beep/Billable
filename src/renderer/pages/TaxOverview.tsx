@@ -198,7 +198,7 @@ export default function TaxOverview() {
               <span className="font-mono text-text-primary">{money(overview.gst_collected_paid)}</span>
             </div>
             {hasUnpaidInvoiced && (
-              <div className="pt-2 mt-2 border-t border-white/[0.04]">
+              <div className="pt-2 mt-2 border-t border-rim/[0.04]">
                 <div className="flex justify-between gap-6">
                   <span className="text-text-tertiary">Projected income tax</span>
                   <span className="font-mono text-text-secondary">{money(projectedIncomeTax)}</span>
@@ -226,11 +226,11 @@ export default function TaxOverview() {
             <p><span className="font-mono text-text-primary">Income tax estimate</span> = max(0, net business income) × your income tax bracket %</p>
             <p><span className="font-mono text-text-primary">Total to set aside</span> = income tax estimate + GST/HST collected (since GST belongs to the CRA, not you)</p>
             {hasUnpaidInvoiced && (
-              <p className="pt-2 border-t border-white/[0.04]">
+              <p className="pt-2 border-t border-rim/[0.04]">
                 <span className="font-mono text-text-primary">Projected if all paid</span> uses the same formula but counts every invoice (draft, sent, overdue, paid) — useful for planning ahead.
               </p>
             )}
-            <p className="text-text-tertiary pt-2 border-t border-white/[0.04]">
+            <p className="text-text-tertiary pt-2 border-t border-rim/[0.04]">
               This is a planning aid only. Actual taxes depend on your full return — CPP contributions, deductions, credits, and other income sources. Consult a CPA before filing.
             </p>
           </div>
@@ -253,7 +253,7 @@ export default function TaxOverview() {
         </div>
         <ResponsiveContainer width="100%" height={260}>
           <BarChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--rim) / 0.08)" />
             <XAxis dataKey="month" stroke="#6B6A67" fontSize={11} />
             <YAxis stroke="#6B6A67" fontSize={11} tickFormatter={v => `$${v}`} />
             <Tooltip
@@ -261,7 +261,7 @@ export default function TaxOverview() {
               content={({ active, payload, label }: any) => {
                 if (!active || !payload?.length) return null
                 return (
-                  <div className="bg-surface-200 border border-white/[0.06] rounded-lg px-3 py-2 shadow-lg">
+                  <div className="bg-surface-200 border border-rim/[0.06] rounded-lg px-3 py-2 shadow-lg">
                     <p className="text-xs text-text-secondary mb-1">{label} {year}</p>
                     <p className="text-sm font-mono text-text-primary font-medium">
                       {money(payload[0].value)}
@@ -323,10 +323,10 @@ export default function TaxOverview() {
             <p className="text-xs text-text-tertiary mt-1">Track deductibles to lower your taxable income.</p>
           </div>
         ) : (
-          <div className="overflow-hidden border border-white/[0.04] rounded-lg">
+          <div className="overflow-hidden border border-rim/[0.04] rounded-lg">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-white/[0.04] bg-surface-200/30">
+                <tr className="border-b border-rim/[0.04] bg-surface-200/30">
                   <th className="text-left px-3 py-2.5 text-[10px] font-medium text-text-tertiary uppercase tracking-wider">Date</th>
                   <th className="text-left px-3 py-2.5 text-[10px] font-medium text-text-tertiary uppercase tracking-wider">Category</th>
                   <th className="text-left px-3 py-2.5 text-[10px] font-medium text-text-tertiary uppercase tracking-wider">Description</th>
@@ -339,7 +339,7 @@ export default function TaxOverview() {
                   <tr
                     key={e.id}
                     onClick={() => handleEditExpense(e)}
-                    className="border-b border-white/[0.02] hover:bg-surface-200/30 transition-colors cursor-pointer"
+                    className="border-b border-rim/[0.02] hover:bg-surface-200/30 transition-colors cursor-pointer"
                   >
                     <td className="px-3 py-2.5 text-xs text-text-secondary font-mono">
                       {e.date.slice(5, 10)}
@@ -398,7 +398,7 @@ export default function TaxOverview() {
       </motion.div>
 
       {/* Disclaimer */}
-      <motion.div variants={item} className="mt-6 flex items-start gap-3 p-4 rounded-lg bg-surface-200/40 border border-white/[0.04]">
+      <motion.div variants={item} className="mt-6 flex items-start gap-3 p-4 rounded-lg bg-surface-200/40 border border-rim/[0.04]">
         <AlertCircle className="w-4 h-4 text-text-tertiary flex-shrink-0 mt-0.5" />
         <p className="text-xs text-text-secondary leading-relaxed">
           All numbers shown are estimates derived from your records in Billable. They do not constitute tax, legal, or financial advice. Please consult a CPA or qualified tax professional before filing or remitting.

@@ -164,7 +164,7 @@ export default function Invoices() {
               <option key={y} value={y}>{y}</option>
             ))}
           </select>
-          <div className="flex gap-1 bg-surface-100 rounded-lg p-0.5 border border-white/[0.04]">
+          <div className="flex gap-1 bg-surface-100 rounded-lg p-0.5 border border-rim/[0.04]">
             {['all', 'draft', 'sent', 'paid', 'overdue'].map(s => (
               <button
                 key={s}

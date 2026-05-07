@@ -374,7 +374,7 @@ export default function InvoiceCreate() {
                   type="checkbox"
                   checked={gstApplicable}
                   onChange={e => setGstApplicable(e.target.checked)}
-                  className="rounded border-white/20 bg-surface-300 text-accent focus:ring-accent"
+                  className="rounded border-rim/20 bg-surface-300 text-accent focus:ring-accent"
                 />
                 <span className="text-xs font-medium text-text-secondary">Apply</span>
               </label>
@@ -486,7 +486,7 @@ export default function InvoiceCreate() {
                 <span className="font-mono text-text-primary">{formatMoney(taxAmount)}</span>
               </div>
             )}
-            <div className="flex justify-between text-lg font-semibold pt-2 border-t border-white/[0.04]">
+            <div className="flex justify-between text-lg font-semibold pt-2 border-t border-rim/[0.04]">
               <span className="text-text-primary">Total</span>
               <span className="font-mono text-accent">{formatMoney(total)}</span>
             </div>

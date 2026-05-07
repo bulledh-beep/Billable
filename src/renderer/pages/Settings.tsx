@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Save, Download, Upload, Plus, Trash2 } from 'lucide-react'
 import type { Settings, PaymentMethod } from '@shared/types'
+import ThemeToggle from '../components/ThemeToggle'
 import toast from 'react-hot-toast'
 
 const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.06 } } }
@@ -260,6 +261,20 @@ export default function SettingsPage() {
             <option value="15">Round to nearest 15 minutes</option>
             <option value="30">Round to nearest 30 minutes</option>
           </select>
+        </div>
+      </motion.div>
+
+      {/* Appearance */}
+      <motion.div variants={item} className="glass-panel p-6 mb-6">
+        <h2 className="text-sm font-semibold text-text-primary mb-1">Appearance</h2>
+        <p className="text-xs text-text-tertiary mb-4">
+          Theme preference is shared across all profiles.
+        </p>
+        <div className="flex items-center gap-4">
+          <ThemeToggle />
+          <span className="text-xs text-text-tertiary">
+            Auto follows your macOS appearance setting.
+          </span>
         </div>
       </motion.div>
 

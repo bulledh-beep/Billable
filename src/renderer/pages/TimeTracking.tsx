@@ -222,7 +222,7 @@ export default function TimeTracking({ onStartTimer, onStopTimer, isTimerRunning
         <motion.div variants={item} className="glass-panel overflow-hidden">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-white/[0.04]">
+              <tr className="border-b border-rim/[0.04]">
                 <th className="text-left px-4 py-3 text-xs font-medium text-text-tertiary">Date</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-text-tertiary">Project</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-text-tertiary">Description</th>
@@ -233,7 +233,7 @@ export default function TimeTracking({ onStartTimer, onStopTimer, isTimerRunning
             </thead>
             <tbody>
               {filtered.map((entry: any) => (
-                <tr key={entry.id} className="border-b border-white/[0.02] hover:bg-surface-200/30 transition-colors">
+                <tr key={entry.id} className="border-b border-rim/[0.02] hover:bg-surface-200/30 transition-colors">
                   <td className="px-4 py-3 text-sm text-text-secondary">{formatDate(entry.start_time)}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
@@ -262,7 +262,7 @@ export default function TimeTracking({ onStartTimer, onStopTimer, isTimerRunning
                           +{mins >= 60 ? `${mins / 60}h` : `${mins}m`}
                         </button>
                       ))}
-                      <div className="w-px h-4 bg-white/[0.04] mx-0.5" />
+                      <div className="w-px h-4 bg-rim/[0.04] mx-0.5" />
                       <button
                         onClick={() => {
                           setEditEntry(entry)
@@ -379,7 +379,7 @@ export default function TimeTracking({ onStartTimer, onStopTimer, isTimerRunning
               type="checkbox"
               checked={manualForm.is_billable}
               onChange={e => setManualForm(f => ({ ...f, is_billable: e.target.checked }))}
-              className="rounded border-white/20 bg-surface-300 text-accent focus:ring-accent"
+              className="rounded border-rim/20 bg-surface-300 text-accent focus:ring-accent"
             />
             <span className="text-sm text-text-secondary">Billable</span>
           </label>
@@ -434,7 +434,7 @@ export default function TimeTracking({ onStartTimer, onStopTimer, isTimerRunning
               type="checkbox"
               checked={editForm.is_billable}
               onChange={e => setEditForm(f => ({ ...f, is_billable: e.target.checked }))}
-              className="rounded border-white/20 bg-surface-300 text-accent focus:ring-accent"
+              className="rounded border-rim/20 bg-surface-300 text-accent focus:ring-accent"
             />
             <span className="text-sm text-text-secondary">Billable</span>
           </label>
