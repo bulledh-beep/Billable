@@ -29,6 +29,13 @@ export class TimerManager {
     this.activeEntry = db.getActiveTimer()
     if (this.activeEntry && this.trayCallbacks) {
       this.startTicking()
+    } else if (this.trayCallbacks) {
+      // No active timer — make sure the tray menu reflects whatever DB is open now
+      // (important after a profile switch that swapped the DB beneath us)
+      this.stopTicking()
+      this.trayCallbacks.updateIcon('idle')
+      this.trayCallbacks.updateTitle('')
+      this.trayCallbacks.rebuildMenu()
     }
   }
 

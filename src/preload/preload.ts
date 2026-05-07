@@ -64,6 +64,16 @@ const api = {
     openFile: (options: any) => ipcRenderer.invoke('dialog:open-file', options),
     saveFile: (options: any) => ipcRenderer.invoke('dialog:save-file', options),
   },
+  // Profiles
+  profile: {
+    list: () => ipcRenderer.invoke('profile:list'),
+    active: () => ipcRenderer.invoke('profile:active'),
+    create: (name: string, color?: string) => ipcRenderer.invoke('profile:create', name, color),
+    rename: (id: string, name: string) => ipcRenderer.invoke('profile:rename', id, name),
+    setColor: (id: string, color: string) => ipcRenderer.invoke('profile:set-color', id, color),
+    switch: (id: string) => ipcRenderer.invoke('profile:switch', id),
+    delete: (id: string) => ipcRenderer.invoke('profile:delete', id),
+  },
   // Tax settings + overview
   tax: {
     getSettings: () => ipcRenderer.invoke('tax:get-settings'),

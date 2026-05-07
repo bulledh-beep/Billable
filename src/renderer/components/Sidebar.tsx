@@ -12,6 +12,7 @@ import {
   Receipt,
   Square,
 } from 'lucide-react'
+import ProfileSwitcher from './ProfileSwitcher'
 
 interface SidebarProps {
   isRunning: boolean
@@ -43,12 +44,18 @@ export default function Sidebar({ isRunning, elapsed, activeProjectName, onStopT
       <div className="drag-region h-[52px] flex-shrink-0" />
 
       {/* Logo */}
-      <div className="px-5 pb-4 flex items-center gap-2.5 flex-shrink-0">
+      <div className="px-5 pb-3 flex items-center gap-2.5 flex-shrink-0">
         <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center">
           <Clock className="w-4 h-4 text-surface" />
         </div>
         <span className="text-base font-semibold text-text-primary tracking-tight">Billable</span>
       </div>
+
+      {/* Profile switcher */}
+      <ProfileSwitcher
+        isTimerRunning={isRunning}
+        onStopTimer={onStopTimer as unknown as () => Promise<unknown>}
+      />
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">

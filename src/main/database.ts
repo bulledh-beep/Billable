@@ -1,11 +1,17 @@
 import Database from 'better-sqlite3'
-import path from 'path'
-import { app } from 'electron'
+import { getProfileDbPath, getActiveProfileId } from './profiles'
 
 let db: Database.Database
 
-export function initDatabase(): Database.Database {
-  const dbPath = path.join(app.getPath('userData'), 'billable.db')
+/**
+ * Open (or re-open) the database for a specific profile.
+ * If a database is already open, it is closed first — safe to call when switching profiles.
+ */
+export function initDatabase(profileId?: string): Database.Database {
+  closeDatabase()
+
+  const id = profileId || getActiveProfileId()
+  const dbPath = getProfileDbPath(id)
   db = new Database(dbPath)
 
   db.pragma('journal_mode = WAL')
@@ -16,6 +22,16 @@ export function initDatabase(): Database.Database {
   seedDefaults()
 
   return db
+}
+
+export function closeDatabase() {
+  if (db) {
+    try {
+      db.close()
+    } catch {
+      // ignore close errors — better-sqlite3 occasionally throws if already closed
+    }
+  }
 }
 
 // Idempotent migrations — safe to re-run on every app launch.

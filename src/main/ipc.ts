@@ -6,6 +6,10 @@ import * as db from './database'
 import { generateInvoicePDF } from './pdf'
 import { generateTaxSummaryPDF } from './tax-pdf'
 import { TimerManager } from './timer-manager'
+import {
+  listProfiles, getActiveProfile, createProfile, renameProfile,
+  updateProfileColor, deleteProfile, setActiveProfileId,
+} from './profiles'
 
 export function registerIpcHandlers(timerManager: TimerManager) {
   // ========== Clients ==========
@@ -175,6 +179,33 @@ export function registerIpcHandlers(timerManager: TimerManager) {
   ipcMain.handle('expense:create', (_, data) => db.createExpense(data))
   ipcMain.handle('expense:update', (_, id: number, data) => db.updateExpense(id, data))
   ipcMain.handle('expense:delete', (_, id: number) => db.deleteExpense(id))
+
+  // ========== Profiles ==========
+  ipcMain.handle('profile:list', () => ({
+    profiles: listProfiles(),
+    active: getActiveProfile(),
+  }))
+  ipcMain.handle('profile:active', () => getActiveProfile())
+  ipcMain.handle('profile:create', (_, name: string, color?: string) => createProfile(name, color))
+  ipcMain.handle('profile:rename', (_, id: string, name: string) => renameProfile(id, name))
+  ipcMain.handle('profile:set-color', (_, id: string, color: string) => updateProfileColor(id, color))
+  ipcMain.handle('profile:switch', (_, id: string) => {
+    // Stop any running timer in the current profile (its DB will be closed)
+    if (timerManager.getActive()) {
+      timerManager.stop()
+    }
+    setActiveProfileId(id)
+    db.initDatabase(id) // reopens against the new profile's DB
+    timerManager.syncFromDatabase() // pick up any timer in the new DB
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.reload()
+    }
+    return getActiveProfile()
+  })
+  ipcMain.handle('profile:delete', (_, id: string) => {
+    deleteProfile(id)
+    return { profiles: listProfiles(), active: getActiveProfile() }
+  })
 
   // ========== Dialogs ==========
   ipcMain.handle('dialog:open-file', async (_, options) => {

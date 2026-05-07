@@ -144,6 +144,18 @@ export interface Settings {
   theme: 'dark' | 'light'
 }
 
+export interface Profile {
+  id: string
+  name: string
+  color: string
+  created_at: string
+}
+
+export interface ProfileListResponse {
+  profiles: Profile[]
+  active: Profile | null
+}
+
 export interface DashboardStats {
   hours_this_week: number
   hours_this_month: number

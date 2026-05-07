@@ -1,10 +1,11 @@
 import { app, BrowserWindow, globalShortcut } from 'electron'
 import path from 'path'
-import { initDatabase } from './database'
+import { initDatabase, closeDatabase } from './database'
 import { registerIpcHandlers } from './ipc'
 import { createTray } from './tray'
 import { createMenu } from './menu'
 import { TimerManager } from './timer-manager'
+import { migrateLegacyIfNeeded, getActiveProfileId } from './profiles'
 
 let mainWindow: BrowserWindow | null = null
 let timerManager: TimerManager
@@ -42,7 +43,12 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  initDatabase()
+  // Migrate single-DB layout into profiles/ on first run with this version
+  migrateLegacyIfNeeded()
+
+  // Open the active profile's database
+  initDatabase(getActiveProfileId())
+
   createWindow()
   createMenu(mainWindow!)
 
@@ -81,8 +87,13 @@ app.on('activate', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
+  closeDatabase()
 })
 
 export function getMainWindow() {
   return mainWindow
+}
+
+export function getTimerManager() {
+  return timerManager
 }
