@@ -714,6 +714,84 @@ export function getUnbilledEntriesForProjects(projectIds: number[]) {
   `).all(...projectIds)
 }
 
+// ============ Tax Overview ============
+
+export interface TaxOverviewBucket {
+  category: string
+  total: number
+  count: number
+}
+
+export interface MonthlyIncomeRow {
+  month: string // 'YYYY-MM'
+  paid: number
+  invoiced: number
+}
+
+export function getTaxOverview(taxYear: number) {
+  // Income aggregates — uses tax_year column (Phase 1 backfilled this)
+  const income = db.prepare(`
+    SELECT
+      COALESCE(SUM(total), 0) as total_invoiced,
+      COALESCE(SUM(CASE WHEN status = 'paid' THEN total ELSE 0 END), 0) as total_paid,
+      COALESCE(SUM(CASE WHEN status IN ('sent', 'overdue') THEN total ELSE 0 END), 0) as total_outstanding,
+      COALESCE(SUM(CASE WHEN status = 'paid' AND gst_hst_applicable = 1 THEN gst_hst_amount ELSE 0 END), 0) as gst_collected_paid,
+      COALESCE(SUM(CASE WHEN gst_hst_applicable = 1 THEN gst_hst_amount ELSE 0 END), 0) as gst_collected_total,
+      COUNT(*) as invoice_count,
+      COALESCE(SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END), 0) as paid_count
+    FROM invoices
+    WHERE tax_year = ?
+  `).get(taxYear) as any
+
+  // Expenses by category for the same year
+  const expensesByCategory = db.prepare(`
+    SELECT category, COALESCE(SUM(amount), 0) as total, COUNT(*) as count
+    FROM expenses
+    WHERE tax_year = ?
+    GROUP BY category
+    ORDER BY total DESC
+  `).all(taxYear) as TaxOverviewBucket[]
+
+  const totalExpenses = expensesByCategory.reduce((s, r) => s + r.total, 0)
+
+  // Monthly income: paid invoices keyed by payment_date (fall back to issue_date if missing).
+  // We also track invoiced amount by issue month for context.
+  const monthly = db.prepare(`
+    SELECT
+      strftime('%Y-%m', COALESCE(payment_date, issue_date)) as month,
+      COALESCE(SUM(CASE WHEN status = 'paid' THEN total ELSE 0 END), 0) as paid,
+      COALESCE(SUM(total), 0) as invoiced
+    FROM invoices
+    WHERE tax_year = ?
+    GROUP BY month
+    ORDER BY month
+  `).all(taxYear) as MonthlyIncomeRow[]
+
+  return {
+    tax_year: taxYear,
+    total_invoiced: income.total_invoiced,
+    total_paid: income.total_paid,
+    total_outstanding: income.total_outstanding,
+    gst_collected_paid: income.gst_collected_paid,
+    gst_collected_total: income.gst_collected_total,
+    invoice_count: income.invoice_count,
+    paid_count: income.paid_count,
+    expenses_by_category: expensesByCategory,
+    total_expenses: totalExpenses,
+    monthly_income: monthly,
+  }
+}
+
+export function listInvoicesByYear(taxYear: number) {
+  return db.prepare(`
+    SELECT i.*, c.name as client_name, c.company as client_company
+    FROM invoices i
+    LEFT JOIN clients c ON i.client_id = c.id
+    WHERE i.tax_year = ?
+    ORDER BY i.issue_date
+  `).all(taxYear)
+}
+
 // ============ Tax Settings ============
 
 export function getTaxSettings() {

@@ -4,7 +4,7 @@ import { app } from 'electron'
 import fs from 'fs'
 import { getInvoice, getSettings, updateInvoice } from './database'
 
-export async function generateInvoicePDF(invoiceId: number): Promise<string> {
+export async function generateInvoicePDF(invoiceId: number): Promise<string | null> {
   const invoice = getInvoice(invoiceId) as any
   if (!invoice) throw new Error('Invoice not found')
 

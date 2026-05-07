@@ -64,10 +64,14 @@ const api = {
     openFile: (options: any) => ipcRenderer.invoke('dialog:open-file', options),
     saveFile: (options: any) => ipcRenderer.invoke('dialog:save-file', options),
   },
-  // Tax settings
+  // Tax settings + overview
   tax: {
     getSettings: () => ipcRenderer.invoke('tax:get-settings'),
     saveSettings: (data: any) => ipcRenderer.invoke('tax:save-settings', data),
+    getOverview: (taxYear: number) => ipcRenderer.invoke('tax:get-overview', taxYear),
+    exportSummaryPDF: (taxYear: number) => ipcRenderer.invoke('tax:export-summary-pdf', taxYear),
+    exportInvoicesCSV: (taxYear: number) => ipcRenderer.invoke('tax:export-invoices-csv', taxYear),
+    exportExpensesCSV: (taxYear: number) => ipcRenderer.invoke('tax:export-expenses-csv', taxYear),
   },
   // Expenses
   expenses: {

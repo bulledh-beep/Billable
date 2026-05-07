@@ -15,6 +15,7 @@ import InvoiceCreate from './pages/InvoiceCreate'
 import Reports from './pages/Reports'
 import SettingsPage from './pages/Settings'
 import TaxSettingsPage from './pages/TaxSettings'
+import TaxOverviewPage from './pages/TaxOverview'
 import { useTimer } from './hooks/useTimer'
 
 export default function App() {
@@ -68,6 +69,7 @@ export default function App() {
             <Route path="/invoices/:id/edit" element={<InvoiceCreate />} />
             <Route path="/invoices/:id" element={<InvoiceDetail />} />
             <Route path="/reports" element={<Reports isTimerRunning={isRunning} />} />
+            <Route path="/tax-overview" element={<TaxOverviewPage />} />
             <Route path="/tax-settings" element={<TaxSettingsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>

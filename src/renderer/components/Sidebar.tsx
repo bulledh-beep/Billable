@@ -8,6 +8,7 @@ import {
   FileText,
   BarChart3,
   Settings,
+  Calculator,
   Receipt,
   Square,
 } from 'lucide-react'
@@ -29,6 +30,7 @@ const navItems = [
 ]
 
 const businessItems = [
+  { to: '/tax-overview', icon: Calculator, label: 'Tax Overview' },
   { to: '/tax-settings', icon: Receipt, label: 'Tax Settings' },
 ]
 

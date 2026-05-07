@@ -152,6 +152,20 @@ export interface DashboardStats {
   paid_total: number
 }
 
+export interface TaxOverview {
+  tax_year: number
+  total_invoiced: number
+  total_paid: number
+  total_outstanding: number
+  gst_collected_paid: number
+  gst_collected_total: number
+  invoice_count: number
+  paid_count: number
+  expenses_by_category: Array<{ category: ExpenseCategory | string; total: number; count: number }>
+  total_expenses: number
+  monthly_income: Array<{ month: string; paid: number; invoiced: number }>
+}
+
 export type IpcChannels = {
   // Clients
   'clients:list': () => Client[]
@@ -172,34 +186,41 @@ export type IpcChannels = {
   'time:update': (id: number, data: Partial<TimeEntry>) => TimeEntry
   'time:delete': (id: number) => void
   'time:start': (projectId: number, description?: string) => TimeEntry
-  'time:stop': (id: number) => TimeEntry
+  'time:stop': (id: number) => TimeEntry | null
   'time:active': () => TimeEntry | null
+  'time:unbilled': (projectId: number) => TimeEntry[]
+  'time:unbilled-multi': (projectIds: number[]) => TimeEntry[]
+  'time:unbilled-by-client': (clientId: number) => TimeEntry[]
   // Invoices
   'invoices:list': (status?: string) => Invoice[]
   'invoices:get': (id: number) => Invoice | null
   'invoices:create': (data: any) => Invoice
   'invoices:update': (id: number, data: Partial<Invoice>) => Invoice
   'invoices:delete': (id: number) => void
-  'invoices:export-pdf': (id: number) => string
+  'invoices:export-pdf': (id: number) => string | null
   // Dashboard
   'dashboard:stats': () => DashboardStats
   'dashboard:recent': () => TimeEntry[]
   // Settings
   'settings:get': () => Settings
   'settings:update': (data: Partial<Settings>) => Settings
-  'settings:export-db': () => string
-  'settings:import-db': (path: string) => void
+  'settings:export-db': () => string | null
+  'settings:import-db': () => boolean | null
   // Reports
   'reports:hours-by-project': (startDate: string, endDate: string) => any[]
   'reports:hours-by-client': (startDate: string, endDate: string) => any[]
   'reports:earnings-by-month': (startDate: string, endDate: string) => any[]
-  'reports:export-csv': (data: any[], filename: string) => string
+  'reports:export-csv': (data: any[], filename: string) => string | null
   // Dialog
   'dialog:open-file': (options: any) => string | null
   'dialog:save-file': (options: any) => string | null
   // Tax
   'tax:get-settings': () => TaxSettings
   'tax:save-settings': (data: Partial<TaxSettings>) => TaxSettings
+  'tax:get-overview': (taxYear: number) => TaxOverview
+  'tax:export-summary-pdf': (taxYear: number) => string | null
+  'tax:export-invoices-csv': (taxYear: number) => string | null
+  'tax:export-expenses-csv': (taxYear: number) => string | null
   // Expenses
   'expense:list': (taxYear?: number) => Expense[]
   'expense:get': (id: number) => Expense | null

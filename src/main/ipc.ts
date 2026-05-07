@@ -4,6 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import * as db from './database'
 import { generateInvoicePDF } from './pdf'
+import { generateTaxSummaryPDF } from './tax-pdf'
 import { TimerManager } from './timer-manager'
 
 export function registerIpcHandlers(timerManager: TimerManager) {
@@ -115,6 +116,58 @@ export function registerIpcHandlers(timerManager: TimerManager) {
   // ========== Tax Settings ==========
   ipcMain.handle('tax:get-settings', () => db.getTaxSettings())
   ipcMain.handle('tax:save-settings', (_, data) => db.saveTaxSettings(data))
+
+  // ========== Tax Overview & Exports ==========
+  ipcMain.handle('tax:get-overview', (_, taxYear: number) => db.getTaxOverview(taxYear))
+  ipcMain.handle('tax:export-summary-pdf', async (_, taxYear: number) => {
+    return await generateTaxSummaryPDF(taxYear)
+  })
+  ipcMain.handle('tax:export-invoices-csv', async (_, taxYear: number) => {
+    const win = BrowserWindow.getFocusedWindow()
+    if (!win) return null
+    const data = db.listInvoicesByYear(taxYear) as any[]
+    if (!data.length) return null
+    const result = await dialog.showSaveDialog(win, {
+      title: 'Export Invoice CSV',
+      defaultPath: `invoices-${taxYear}.csv`,
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+    })
+    if (result.canceled || !result.filePath) return null
+    const cols = [
+      'invoice_number', 'issue_date', 'due_date', 'tax_year', 'client_name',
+      'status', 'subtotal', 'gst_hst_applicable', 'gst_hst_rate', 'gst_hst_amount',
+      'tax_rate', 'total', 'currency', 'payment_date', 'payment_method',
+    ]
+    const csv = [
+      cols.join(','),
+      ...data.map((r: any) => cols.map(c =>
+        `"${String(r[c] ?? '').replace(/"/g, '""')}"`
+      ).join(',')),
+    ].join('\n')
+    fs.writeFileSync(result.filePath, csv)
+    return result.filePath
+  })
+  ipcMain.handle('tax:export-expenses-csv', async (_, taxYear: number) => {
+    const win = BrowserWindow.getFocusedWindow()
+    if (!win) return null
+    const data = db.listExpenses(taxYear) as any[]
+    if (!data.length) return null
+    const result = await dialog.showSaveDialog(win, {
+      title: 'Export Expense CSV',
+      defaultPath: `expenses-${taxYear}.csv`,
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+    })
+    if (result.canceled || !result.filePath) return null
+    const cols = ['date', 'category', 'description', 'amount', 'tax_year', 'receipt_note']
+    const csv = [
+      cols.join(','),
+      ...data.map((r: any) => cols.map(c =>
+        `"${String(r[c] ?? '').replace(/"/g, '""')}"`
+      ).join(',')),
+    ].join('\n')
+    fs.writeFileSync(result.filePath, csv)
+    return result.filePath
+  })
 
   // ========== Expenses ==========
   ipcMain.handle('expense:list', (_, taxYear?: number) => db.listExpenses(taxYear))
