@@ -1,6 +1,6 @@
 {
   "name": "billable",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Professional freelance time tracking and invoice generation",
   "author": "Billable App",
   "license": "MIT",
@@ -45,8 +45,12 @@
     "productName": "Billable",
     "mac": {
       "target": [
-        { "target": "dmg" },
-        { "target": "dir" }
+        {
+          "target": "dmg"
+        },
+        {
+          "target": "dir"
+        }
       ],
       "icon": "resources/icon.icns",
       "category": "public.app-category.productivity",
