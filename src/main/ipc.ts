@@ -10,7 +10,7 @@ import {
   listProfiles, getActiveProfile, createProfile, renameProfile,
   updateProfileColor, deleteProfile, setActiveProfileId,
 } from './profiles'
-import { checkForUpdates, downloadAndOpenUpdate, getCachedStatus } from './updater'
+import { checkForUpdates, downloadAndOpenUpdate, getCachedStatus, installUpdate, getReleaseNotesForTag, getAppBundlePath } from './updater'
 
 export function registerIpcHandlers(timerManager: TimerManager) {
   // ========== Clients ==========
@@ -217,6 +217,18 @@ export function registerIpcHandlers(timerManager: TimerManager) {
   ipcMain.handle('updater:download', async (event, url: string) => {
     const win = BrowserWindow.fromWebContents(event.sender) || undefined
     return await downloadAndOpenUpdate(url, win)
+  })
+  ipcMain.handle('updater:can-install', () => !!getAppBundlePath())
+  ipcMain.handle('updater:install', async (event, url: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender) || undefined
+    await installUpdate(url, win)
+    // Give the renderer a beat to show the "installing — quitting" state,
+    // then quit so the detached helper can take over.
+    setTimeout(() => app.quit(), 500)
+    return true
+  })
+  ipcMain.handle('updater:release-notes', async (_, version: string) => {
+    return await getReleaseNotesForTag(version)
   })
 
   // ========== Dialogs ==========

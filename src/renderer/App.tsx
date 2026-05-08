@@ -16,6 +16,7 @@ import Reports from './pages/Reports'
 import SettingsPage from './pages/Settings'
 import TaxSettingsPage from './pages/TaxSettings'
 import TaxOverviewPage from './pages/TaxOverview'
+import WhatsNewModal from './components/WhatsNewModal'
 import { useTimer } from './hooks/useTimer'
 
 export default function App() {
@@ -87,6 +88,7 @@ export default function App() {
           },
         }}
       />
+      <WhatsNewModal />
     </div>
   )
 }

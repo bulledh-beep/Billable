@@ -70,6 +70,9 @@ const api = {
     cached: () => ipcRenderer.invoke('updater:cached'),
     check: (force?: boolean) => ipcRenderer.invoke('updater:check', force ?? false),
     download: (url: string) => ipcRenderer.invoke('updater:download', url),
+    canInstall: () => ipcRenderer.invoke('updater:can-install'),
+    install: (url: string) => ipcRenderer.invoke('updater:install', url),
+    releaseNotes: (version: string) => ipcRenderer.invoke('updater:release-notes', version),
   },
   // Profiles
   profile: {

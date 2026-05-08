@@ -8,6 +8,11 @@ export function createMenu(mainWindow: BrowserWindow) {
         { role: 'about' },
         { type: 'separator' },
         {
+          label: 'Check for Updates…',
+          click: () => mainWindow.webContents.send('menu:check-updates'),
+        },
+        { type: 'separator' },
+        {
           label: 'Settings',
           accelerator: 'Cmd+,',
           click: () => mainWindow.webContents.send('navigate', '/settings'),

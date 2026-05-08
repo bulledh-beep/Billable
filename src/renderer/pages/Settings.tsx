@@ -318,16 +318,18 @@ export default function SettingsPage() {
             </button>
             {updater.status?.update_available && (
               <button
-                onClick={updater.download}
-                disabled={updater.downloadState === 'downloading'}
+                onClick={updater.install}
+                disabled={updater.downloadState === 'downloading' || updater.downloadState === 'installing'}
                 className="btn-primary flex items-center gap-2 text-xs"
               >
                 <Download className="w-3.5 h-3.5" />
                 {updater.downloadState === 'downloading'
                   ? `Downloading ${updater.progress?.percent ?? 0}%`
-                  : updater.downloadState === 'done'
-                    ? 'Downloaded'
-                    : 'Download Update'}
+                  : updater.downloadState === 'installing'
+                    ? 'Installing — relaunching…'
+                    : updater.canInstall
+                      ? 'Install & Relaunch'
+                      : 'Download Update'}
               </button>
             )}
           </div>
