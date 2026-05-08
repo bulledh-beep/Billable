@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Save, Download, Upload, Plus, Trash2, RefreshCw, ExternalLink } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Save, Download, Upload, Plus, Trash2, RefreshCw, ExternalLink, X } from 'lucide-react'
 import type { Settings, PaymentMethod } from '@shared/types'
 import ThemeToggle from '../components/ThemeToggle'
 import { useUpdater } from '../hooks/useUpdater'
@@ -10,11 +11,30 @@ const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { st
 const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }
 
 export default function SettingsPage() {
+  const navigate = useNavigate()
   const [settings, setSettings] = useState<Settings | null>(null)
   const [dirty, setDirty] = useState(false)
   const updater = useUpdater()
 
   useEffect(() => { loadSettings() }, [])
+
+  // Esc closes Settings (with an unsaved-changes guard)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        handleClose()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirty])
+
+  const handleClose = () => {
+    if (dirty && !confirm('You have unsaved changes. Close without saving?')) return
+    navigate('/')
+  }
 
   const loadSettings = async () => {
     const s = await window.api.settings.get()
@@ -52,13 +72,22 @@ export default function SettingsPage() {
           <h1 className="text-2xl font-bold text-text-primary">Settings</h1>
           <p className="text-sm text-text-secondary mt-1">Configure your business profile and preferences</p>
         </div>
-        <button
-          onClick={handleSave}
-          disabled={!dirty}
-          className={`btn-primary flex items-center gap-2 ${!dirty ? 'opacity-50 cursor-not-allowed' : ''}`}
-        >
-          <Save className="w-4 h-4" /> Save Changes
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSave}
+            disabled={!dirty}
+            className={`btn-primary flex items-center gap-2 ${!dirty ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            <Save className="w-4 h-4" /> Save Changes
+          </button>
+          <button
+            onClick={handleClose}
+            className="p-2 rounded-lg hover:bg-surface-200 text-text-tertiary hover:text-text-primary transition-colors"
+            title="Close settings (Esc)"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </motion.div>
 
       {/* Business Profile */}

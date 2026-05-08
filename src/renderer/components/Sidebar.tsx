@@ -13,7 +13,6 @@ import {
   Square,
 } from 'lucide-react'
 import ProfileSwitcher from './ProfileSwitcher'
-import ThemeToggle from './ThemeToggle'
 import UpdateBanner from './UpdateBanner'
 
 interface SidebarProps {
@@ -45,13 +44,20 @@ export default function Sidebar({ isRunning, elapsed, activeProjectName, onStopT
       {/* Traffic light spacer — drag-only, no content */}
       <div className="drag-region h-[52px] flex-shrink-0" />
 
-      {/* Logo */}
-      <div className="px-5 pb-3 flex items-center gap-2.5 flex-shrink-0">
-        <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center">
+      {/* Logo — clicks through to the Dashboard */}
+      <NavLink
+        to="/"
+        end
+        className="px-5 pb-3 flex items-center gap-2.5 flex-shrink-0 group no-drag"
+        title="Go to Dashboard"
+      >
+        <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center transition-transform group-hover:scale-105 group-active:scale-95">
           <Clock className="w-4 h-4 text-surface" />
         </div>
-        <span className="text-base font-semibold text-text-primary tracking-tight">Billable</span>
-      </div>
+        <span className="text-base font-semibold text-text-primary tracking-tight group-hover:text-accent transition-colors">
+          Billable
+        </span>
+      </NavLink>
 
       {/* Profile switcher */}
       <ProfileSwitcher
@@ -129,12 +135,8 @@ export default function Sidebar({ isRunning, elapsed, activeProjectName, onStopT
         </motion.div>
       )}
 
-      {/* Settings + Theme */}
-      <div className="px-3 pb-4 space-y-1.5">
-        <div className="flex items-center justify-between gap-2 px-1">
-          <span className="text-[10px] uppercase tracking-wider text-text-tertiary">Theme</span>
-          <ThemeToggle compact />
-        </div>
+      {/* Settings */}
+      <div className="px-3 pb-4">
         <NavLink
           to="/settings"
           className={({ isActive }) =>
