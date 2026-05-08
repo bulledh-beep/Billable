@@ -9,6 +9,7 @@ import { TimerManager } from './timer-manager'
 import {
   listProfiles, getActiveProfile, createProfile, renameProfile,
   updateProfileColor, deleteProfile, setActiveProfileId,
+  setProfileAvatar, clearProfileAvatar,
 } from './profiles'
 import { checkForUpdates, downloadAndOpenUpdate, getCachedStatus, installUpdate, getReleaseNotesForTag, getAppBundlePath } from './updater'
 
@@ -207,6 +208,20 @@ export function registerIpcHandlers(timerManager: TimerManager) {
     deleteProfile(id)
     return { profiles: listProfiles(), active: getActiveProfile() }
   })
+  ipcMain.handle('profile:set-avatar', (_, id: string, sourcePath: string) =>
+    setProfileAvatar(id, sourcePath)
+  )
+  ipcMain.handle('profile:pick-avatar', async (event, id: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender) || undefined
+    const result = await dialog.showOpenDialog(win!, {
+      title: 'Choose Profile Picture',
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'heic', 'webp', 'gif', 'tiff', 'bmp'] }],
+      properties: ['openFile'],
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return setProfileAvatar(id, result.filePaths[0])
+  })
+  ipcMain.handle('profile:clear-avatar', (_, id: string) => clearProfileAvatar(id))
 
   // ========== Updater ==========
   ipcMain.handle('updater:current-version', () => app.getVersion())

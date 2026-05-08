@@ -83,6 +83,8 @@ const api = {
     setColor: (id: string, color: string) => ipcRenderer.invoke('profile:set-color', id, color),
     switch: (id: string) => ipcRenderer.invoke('profile:switch', id),
     delete: (id: string) => ipcRenderer.invoke('profile:delete', id),
+    pickAvatar: (id: string) => ipcRenderer.invoke('profile:pick-avatar', id),
+    clearAvatar: (id: string) => ipcRenderer.invoke('profile:clear-avatar', id),
   },
   // Tax settings + overview
   tax: {

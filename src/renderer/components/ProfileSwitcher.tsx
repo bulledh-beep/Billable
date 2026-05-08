@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronDown, Plus, Check, Pencil, Trash2 } from 'lucide-react'
+import { ChevronDown, Plus, Check, Pencil, Trash2, Camera, ImageOff } from 'lucide-react'
 import Modal from './Modal'
 import ConfirmDialog from './ConfirmDialog'
+import ProfileAvatar from './ProfileAvatar'
 import type { Profile } from '@shared/types'
 import toast from 'react-hot-toast'
 
@@ -106,12 +107,9 @@ export default function ProfileSwitcher({ isTimerRunning, onStopTimer }: {
     <div ref={containerRef} className="relative px-3 mb-2">
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-surface-200/60 transition-colors"
+        className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-surface-200/60 transition-colors"
       >
-        <div
-          className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-          style={{ backgroundColor: active.color }}
-        />
+        <ProfileAvatar profile={active} size="sm" />
         <div className="flex-1 min-w-0 text-left">
           <div className="text-[10px] uppercase tracking-wider text-text-tertiary leading-none">Profile</div>
           <div className="text-xs font-medium text-text-primary truncate mt-0.5">{active.name}</div>
@@ -132,9 +130,9 @@ export default function ProfileSwitcher({ isTimerRunning, onStopTimer }: {
               <button
                 key={p.id}
                 onClick={() => requestSwitch(p.id)}
-                className="w-full flex items-center gap-2 px-3 py-2 hover:bg-surface-200/60 transition-colors"
+                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-surface-200/60 transition-colors"
               >
-                <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: p.color }} />
+                <ProfileAvatar profile={p} size="sm" />
                 <span className="text-xs text-text-primary flex-1 text-left truncate">{p.name}</span>
                 {p.id === active.id && <Check className="w-3.5 h-3.5 text-accent" />}
               </button>
@@ -265,6 +263,28 @@ function ManageProfilesModal({
     }
   }
 
+  const handlePickAvatar = async (p: Profile) => {
+    try {
+      const updated = await window.api.profile.pickAvatar(p.id)
+      if (updated) {
+        await refresh()
+        toast.success('Profile photo updated')
+      }
+    } catch (err: any) {
+      toast.error(`Failed: ${err.message || err}`)
+    }
+  }
+
+  const handleClearAvatar = async (p: Profile) => {
+    try {
+      await window.api.profile.clearAvatar(p.id)
+      await refresh()
+      toast.success('Profile photo removed')
+    } catch (err: any) {
+      toast.error(`Failed: ${err.message || err}`)
+    }
+  }
+
   const confirmDelete = async () => {
     if (!deleteId) return
     try {
@@ -287,8 +307,25 @@ function ManageProfilesModal({
               key={p.id}
               className="flex items-center gap-3 p-3 rounded-lg bg-surface-200/40 border border-rim/[0.04]"
             >
-              <div className="flex flex-col gap-1">
-                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: p.color }} />
+              {/* Avatar with hover overlay for change/remove */}
+              <div className="relative group flex-shrink-0">
+                <ProfileAvatar profile={p} size="md" />
+                <button
+                  onClick={() => handlePickAvatar(p)}
+                  className="absolute inset-0 rounded-full bg-black/55 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                  title={p.avatar ? 'Change photo' : 'Add photo'}
+                >
+                  <Camera className="w-3.5 h-3.5 text-white" />
+                </button>
+                {p.avatar && (
+                  <button
+                    onClick={() => handleClearAvatar(p)}
+                    className="absolute -top-1 -right-1 p-0.5 rounded-full bg-surface-100 border border-rim/[0.1] opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20"
+                    title="Remove photo"
+                  >
+                    <ImageOff className="w-2.5 h-2.5 text-text-tertiary" />
+                  </button>
+                )}
               </div>
               {editingId === p.id ? (
                 <>

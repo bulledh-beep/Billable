@@ -148,6 +148,8 @@ export interface Profile {
   id: string
   name: string
   color: string
+  /** Base64-encoded PNG (no `data:` prefix). Empty/undefined means no photo set. */
+  avatar?: string
   created_at: string
 }
 

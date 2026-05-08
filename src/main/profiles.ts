@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { app, nativeImage } from 'electron'
 import path from 'path'
 import fs from 'fs'
 
@@ -6,6 +6,8 @@ export interface Profile {
   id: string
   name: string
   color: string
+  /** Base64-encoded PNG (no `data:` prefix). Optional. */
+  avatar?: string
   created_at: string
 }
 
@@ -184,6 +186,52 @@ export function updateProfileColor(id: string, color: string): Profile {
   const profile = idx.profiles.find(p => p.id === id)
   if (!profile) throw new Error(`Profile ${id} not found`)
   profile.color = color
+  writeProfilesIndex(idx)
+  return profile
+}
+
+const AVATAR_MAX_DIMENSION = 256
+
+/**
+ * Set a profile's avatar from a local file path. Resizes to a max edge of
+ * 256px (preserves aspect ratio), converts to PNG, stores as base64 inside
+ * profiles.json. Throws on bad/unreadable images.
+ */
+export function setProfileAvatar(id: string, sourcePath: string): Profile {
+  const idx = readProfilesIndex()
+  if (!idx) throw new Error('Profiles index missing')
+  const profile = idx.profiles.find(p => p.id === id)
+  if (!profile) throw new Error(`Profile ${id} not found`)
+  if (!fs.existsSync(sourcePath)) throw new Error(`Image not found: ${sourcePath}`)
+
+  let img = nativeImage.createFromPath(sourcePath)
+  if (img.isEmpty()) {
+    throw new Error('Could not read image — unsupported format or corrupt file')
+  }
+
+  // Resize down if either dimension is over the max (preserves aspect)
+  const size = img.getSize()
+  const longest = Math.max(size.width, size.height)
+  if (longest > AVATAR_MAX_DIMENSION) {
+    const ratio = AVATAR_MAX_DIMENSION / longest
+    img = img.resize({
+      width: Math.round(size.width * ratio),
+      height: Math.round(size.height * ratio),
+      quality: 'best',
+    })
+  }
+
+  profile.avatar = img.toPNG().toString('base64')
+  writeProfilesIndex(idx)
+  return profile
+}
+
+export function clearProfileAvatar(id: string): Profile {
+  const idx = readProfilesIndex()
+  if (!idx) throw new Error('Profiles index missing')
+  const profile = idx.profiles.find(p => p.id === id)
+  if (!profile) throw new Error(`Profile ${id} not found`)
+  delete profile.avatar
   writeProfilesIndex(idx)
   return profile
 }
