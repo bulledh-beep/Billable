@@ -1,5 +1,6 @@
+import { useRef, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard,
   Users,
@@ -12,8 +13,25 @@ import {
   Receipt,
   Square,
 } from 'lucide-react'
+import toast from 'react-hot-toast'
 import ProfileSwitcher from './ProfileSwitcher'
 import UpdateBanner from './UpdateBanner'
+
+// 🥚 Tap the logo 7 times in 3 seconds to discover this.
+const SECRET_MESSAGES = [
+  'Stay billable. ✨',
+  "Time is money — and you're rich.",
+  'Hours saved. Soul intact.',
+  '💰 Cha-ching simulator activated.',
+  'Keep tracking. Keep cooking. 🔥',
+  'Invoice every minute. Even this one.',
+  'Your future bookkeeper says thank you.',
+  '🎩 Magic happens here.',
+  'You found me.',
+  'Freelance like nobody is watching.',
+]
+const EGG_CLICK_THRESHOLD = 7
+const EGG_CLICK_WINDOW_MS = 3000
 
 interface SidebarProps {
   isRunning: boolean
@@ -38,21 +56,62 @@ const businessItems = [
 
 export default function Sidebar({ isRunning, elapsed, activeProjectName, onStopTimer }: SidebarProps) {
   const location = useLocation()
+  const clickTimesRef = useRef<number[]>([])
+  const [spinCount, setSpinCount] = useState(0)
+  const [showRing, setShowRing] = useState(false)
+
+  const handleLogoClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    const now = Date.now()
+    // Drop click timestamps older than the rolling window
+    clickTimesRef.current = clickTimesRef.current.filter(t => now - t < EGG_CLICK_WINDOW_MS)
+    clickTimesRef.current.push(now)
+
+    if (clickTimesRef.current.length >= EGG_CLICK_THRESHOLD) {
+      // 🥚 fire — keep the user on the current page so they can enjoy it in context
+      e.preventDefault()
+      clickTimesRef.current = []
+      setSpinCount(c => c + 1)
+      setShowRing(true)
+      window.setTimeout(() => setShowRing(false), 900)
+      const msg = SECRET_MESSAGES[Math.floor(Math.random() * SECRET_MESSAGES.length)]
+      toast.success(msg, { icon: '✨', duration: 2500 })
+    }
+  }
 
   return (
     <aside className="w-56 flex-shrink-0 bg-surface border-r border-rim/[0.04] flex flex-col h-full">
       {/* Traffic light spacer — drag-only, no content */}
       <div className="drag-region h-[52px] flex-shrink-0" />
 
-      {/* Logo — clicks through to the Dashboard */}
+      {/* Logo — clicks through to the Dashboard (and there's an easter egg) */}
       <NavLink
         to="/"
         end
+        onClick={handleLogoClick}
         className="px-5 pb-3 flex items-center gap-2.5 flex-shrink-0 group no-drag"
         title="Go to Dashboard"
       >
-        <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center transition-transform group-hover:scale-105 group-active:scale-95">
-          <Clock className="w-4 h-4 text-surface" />
+        <div className="relative w-7 h-7 flex-shrink-0">
+          {/* Pulse ring on egg fire */}
+          <AnimatePresence>
+            {showRing && (
+              <motion.div
+                key="egg-ring"
+                initial={{ scale: 0.85, opacity: 0.7 }}
+                animate={{ scale: 2.6, opacity: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.9, ease: 'easeOut' }}
+                className="absolute inset-0 rounded-lg border-2 border-accent pointer-events-none"
+              />
+            )}
+          </AnimatePresence>
+          <motion.div
+            animate={{ rotate: spinCount * 360 }}
+            transition={{ duration: 0.7, ease: [0.4, 0, 0.2, 1] }}
+            className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center transition-transform group-hover:scale-105 group-active:scale-95"
+          >
+            <Clock className="w-4 h-4 text-surface" />
+          </motion.div>
         </div>
         <span className="text-base font-semibold text-text-primary tracking-tight group-hover:text-accent transition-colors">
           Billable
