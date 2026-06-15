@@ -269,6 +269,13 @@ function runMigrations() {
   addColumnIfMissing('expenses', 'source_email_id', 'TEXT')
   addColumnIfMissing('expenses', 'updated_at', "TEXT DEFAULT (datetime('now'))")
 
+  // ----- Income ledger: payments table holds money-in (e-Transfers, deposits,
+  // other income) as plain transactions — NOT fake invoices. -----
+  addColumnIfMissing('payments', 'vendor', "TEXT DEFAULT ''")
+  addColumnIfMissing('payments', 'category', "TEXT DEFAULT 'income'")
+  addColumnIfMissing('payments', 'source', "TEXT DEFAULT 'manual'")
+  addColumnIfMissing('payments', 'source_email_id', 'TEXT')
+
   // ----- Phase 1: trustworthy email scoring -----
   // Relevance ("is this financial?") is separate from confidence ("are the
   // extracted fields right?"). Auto-approval requires both to be high.
@@ -1321,91 +1328,33 @@ export function listPayments() {
   return db.prepare('SELECT * FROM payments ORDER BY payment_date DESC, id DESC').all()
 }
 
+/**
+ * Record money received (income) as a plain transaction in the income ledger.
+ * No invoice matching, no phantom clients/invoices — an e-Transfer from family
+ * is just income, not invoiced business revenue. (Real invoice income is tracked
+ * separately via the invoices table.)
+ */
 export function createPayment(data: any) {
-  let invoiceId = data.invoice_id || null
-  const isIncoming = !data.bill_id
-
-  // 1. If incoming, try to auto-match to an outstanding invoice
-  if (isIncoming && !invoiceId && data.amount) {
-    const match = db.prepare(`
-      SELECT i.id, i.client_id, c.name as client_name
-      FROM invoices i
-      LEFT JOIN clients c ON i.client_id = c.id
-      WHERE i.status IN ('sent', 'overdue') AND ABS(i.total - ?) < 0.01
-      LIMIT 1
-    `).get(data.amount) as any
-    if (match) {
-      invoiceId = match.id
-      data.notes = `${data.notes || ''} (Matched & linked to Invoice #${match.id} for client ${match.client_name})`.trim()
-    }
-  }
-
-  // 2. If incoming and still no invoice matches, auto-create a client and a paid invoice to capture the income
-  if (isIncoming && !invoiceId && data.vendor) {
-    let client = db.prepare('SELECT id FROM clients WHERE name = ? COLLATE NOCASE').get(data.vendor) as any
-    if (!client) {
-      const result = db.prepare(`
-        INSERT INTO clients (name, default_rate, currency)
-        VALUES (?, 100, ?)
-      `).run(data.vendor, data.currency || 'CAD')
-      client = { id: result.lastInsertRowid }
-    }
-
-    const settings = getSettings()
-    const invoiceNumber = `E-TX-${Date.now()}`
-    const taxYear = new Date(data.payment_date || new Date()).getFullYear()
-
-    const invResult = db.prepare(`
-      INSERT INTO invoices (
-        client_id, invoice_number, issue_date, due_date, status,
-        subtotal, tax_rate, total, notes, tax_year, currency, payment_date
-      )
-      VALUES (
-        ?, ?, ?, ?, 'paid',
-        ?, 0, ?, ?, ?, ?, ?
-      )
-    `).run(
-      client.id,
-      invoiceNumber,
-      data.payment_date || new Date().toISOString().slice(0, 10),
-      data.payment_date || new Date().toISOString().slice(0, 10),
-      data.amount,
-      data.amount,
-      `Auto-created for e-transfer/payment: ${data.notes || ''}`,
-      taxYear,
-      data.currency || 'CAD',
-      data.payment_date || new Date().toISOString().slice(0, 10)
-    )
-    invoiceId = invResult.lastInsertRowid as number
-  }
-
   const stmt = db.prepare(`
-    INSERT INTO payments (workspace_id, user_id, bill_id, invoice_id, amount, currency, payment_date, payment_method, reference_number, notes)
-    VALUES (@workspace_id, @user_id, @bill_id, @invoice_id, @amount, @currency, @payment_date, @payment_method, @reference_number, @notes)
+    INSERT INTO payments (workspace_id, user_id, bill_id, invoice_id, vendor, amount, currency, payment_date, payment_method, category, reference_number, notes, source, source_email_id)
+    VALUES (@workspace_id, @user_id, @bill_id, @invoice_id, @vendor, @amount, @currency, @payment_date, @payment_method, @category, @reference_number, @notes, @source, @source_email_id)
   `)
   const result = stmt.run({
     workspace_id: data.workspace_id ?? 1,
     user_id: data.user_id ?? 1,
     bill_id: data.bill_id || null,
-    invoice_id: invoiceId,
+    invoice_id: data.invoice_id || null,
+    vendor: data.vendor ?? '',
     amount: data.amount ?? 0,
     currency: data.currency ?? 'CAD',
     payment_date: data.payment_date || new Date().toISOString().slice(0, 10),
     payment_method: data.payment_method ?? '',
+    category: data.category ?? 'income',
     reference_number: data.reference_number ?? '',
     notes: data.notes ?? '',
+    source: data.source ?? 'manual',
+    source_email_id: data.source_email_id || null,
   })
-
-  // If this payment is linked to a bill, let's mark the bill as paid!
-  if (data.bill_id) {
-    db.prepare("UPDATE bills SET status = 'paid' WHERE id = ?").run(data.bill_id)
-  }
-  // If linked to an invoice, let's mark the invoice as paid!
-  if (invoiceId) {
-    db.prepare("UPDATE invoices SET status = 'paid', payment_date = ?, payment_method = ? WHERE id = ?")
-      .run(data.payment_date || new Date().toISOString().slice(0, 10), data.payment_method ?? '', invoiceId)
-  }
-
   return db.prepare('SELECT * FROM payments WHERE id = ?').get(result.lastInsertRowid)
 }
 

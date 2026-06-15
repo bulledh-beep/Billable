@@ -298,17 +298,25 @@ export function extractCandidateFromEmail(
   let vendor = rule?.vendor
   let recordType = rule?.record_type || 'bill'
 
+  // 'payment' here means money RECEIVED (income). Inbound phrases only — an
+  // e-Transfer YOU sent is money out (an expense), not income.
+  const inboundRe = /(sent you money|sent you a payment|sent you an? e-?transfer|has sent you|direct deposit|deposited to your account|you'?ve received|payment received|e-?transfer received|funds received)/i
+  const outboundRe = /(you sent|your e-?transfer to|payment to|sent an? e-?transfer to|transfer to .* (was|is) (sent|completed))/i
+
   if (interacMatch) {
     vendor = interacMatch[1].trim()
-    recordType = 'payment'
+    recordType = 'payment' // received money
   } else {
     vendor = vendor || cleanVendorName(sender)
     if (!rule) {
       const sLower = subject.toLowerCase()
       const bLower = normalizedText.toLowerCase()
-      if (sLower.includes('e-transfer') || sLower.includes('sent you money') || sLower.includes('sent you a payment') || sLower.includes('direct deposit') || sLower.includes('interac e-transfer') || bLower.includes('has sent you an e-transfer')) {
-        recordType = 'payment'
-      } else if (sLower.includes('receipt') || sLower.includes('payment received') || sLower.includes('thank you for your payment') || bLower.includes('amount paid')) {
+      const combined = `${sLower} ${bLower}`
+      if (inboundRe.test(combined) && !outboundRe.test(combined)) {
+        recordType = 'payment' // money in
+      } else if (outboundRe.test(combined) || bLower.includes('e-transfer')) {
+        recordType = 'expense' // money out (sent transfer / purchase)
+      } else if (sLower.includes('receipt') || sLower.includes('thank you for your payment') || bLower.includes('amount paid')) {
         recordType = 'receipt'
       } else if (sLower.includes('subscription') || sLower.includes('renewal') || sLower.includes('membership') || bLower.includes('recurring charge')) {
         recordType = 'subscription'
@@ -514,11 +522,17 @@ export function extractCandidateFromEmail(
           status: 'active',
         })
       } else if (recordType === 'payment') {
+        // Money received (e-Transfer, deposit) → income ledger, NOT a fake invoice
         db.createPayment({
+          vendor,
           amount,
           currency,
+          category: 'income',
           payment_date: paymentDate || fallbackDate,
-          notes: `Auto-approved payment for ${vendor}`,
+          payment_method: paymentMethod || 'e-Transfer',
+          source: 'email',
+          source_email_id: null,
+          notes: `Income from ${vendor}`,
         })
       }
     } catch (err) {

@@ -44,6 +44,7 @@ export default function Billing() {
   const [expenses, setExpenses] = useState<any[]>([])
   const [bills, setBills] = useState<any[]>([])
   const [subscriptions, setSubscriptions] = useState<any[]>([])
+  const [payments, setPayments] = useState<any[]>([])
   const [candidates, setCandidates] = useState<BillImportCandidate[]>([])
 
   // Inbox specific states
@@ -172,17 +173,19 @@ export default function Billing() {
   const loadAllData = async () => {
     setLoading(true)
     try {
-      const [invs, exps, bls, subs, cands] = await Promise.all([
+      const [invs, exps, bls, subs, pays, cands] = await Promise.all([
         window.api.invoices.list(),
         window.api.expenses.list(),
         window.api.bills.list(),
         window.api.subscriptions.list(),
+        window.api.payments.list(),
         window.api.candidates.list(),
       ])
       setInvoices(invs)
       setExpenses(exps)
       setBills(bls)
       setSubscriptions(subs)
+      setPayments(pays)
       setCandidates(cands)
     } catch (err: any) {
       toast.error(`Error loading data: ${err.message}`)
@@ -244,9 +247,24 @@ export default function Billing() {
       }
     })
 
+    // 4. Payments / income received — e-Transfers, deposits, other money in (Inflow)
+    payments.forEach(pay => {
+      list.push({
+        id: `inflow-pay-${pay.id}`,
+        date: pay.payment_date || pay.created_at?.slice(0, 10),
+        type: 'inflow',
+        sourceType: 'payment',
+        description: `${pay.vendor || 'Money in'}${pay.payment_method ? ` · ${pay.payment_method}` : ''}${pay.notes ? ` — ${pay.notes}` : ''}`,
+        category: pay.category || 'income',
+        amount: pay.amount || 0,
+        currency: pay.currency || 'CAD',
+        originalItem: pay,
+      })
+    })
+
     // Sort chronologically (newest first)
     return list.sort((a, b) => b.date.localeCompare(a.date))
-  }, [invoices, expenses, bills])
+  }, [invoices, expenses, bills, payments])
 
   const filteredTransactions = useMemo(() => {
     let result = allTransactions

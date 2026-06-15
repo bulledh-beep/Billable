@@ -196,12 +196,16 @@ export interface Payment {
   user_id: number | null
   bill_id: number | null
   invoice_id: number | null
+  vendor: string
   amount: number
   currency: string
   payment_date: string
   payment_method: string
+  category: string
   reference_number: string
   notes: string
+  source: string
+  source_email_id: string | null
   created_at: string
   updated_at: string
 }
