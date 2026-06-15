@@ -32,6 +32,7 @@ export default function BillInbox() {
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [gmailConnected, setGmailConnected] = useState<boolean | null>(null)
+  const [selectedIds, setSelectedIds] = useState<number[]>([])
 
   // Modals state
   const [showPasteModal, setShowPasteModal] = useState(false)
@@ -76,6 +77,10 @@ export default function BillInbox() {
     loadCandidates()
     checkGmailStatus()
   }, [])
+
+  useEffect(() => {
+    setSelectedIds([])
+  }, [activeTab])
 
   const checkGmailStatus = async () => {
     try {
@@ -138,59 +143,85 @@ export default function BillInbox() {
     }
   }
 
+  const approveCandidateHelper = async (candidate: BillImportCandidate) => {
+    // 1. Create matching record based on record type
+    if (candidate.extracted_record_type === 'bill') {
+      await window.api.bills.create({
+        vendor: candidate.extracted_vendor || 'Unknown Vendor',
+        amount: candidate.extracted_amount || 0,
+        currency: candidate.extracted_currency || 'CAD',
+        due_date: candidate.extracted_due_date,
+        category: candidate.extracted_category || 'other',
+        recurring: candidate.extracted_frequency !== 'one_time' ? 1 : 0,
+        frequency: candidate.extracted_frequency || 'one_time',
+        notes: `Imported candidate from email.`,
+        source: 'email',
+      })
+    } else if (candidate.extracted_record_type === 'expense' || candidate.extracted_record_type === 'receipt') {
+      await window.api.expenses.create({
+        date: candidate.extracted_payment_date || candidate.extracted_due_date || new Date().toISOString().slice(0, 10),
+        category: (candidate.extracted_category || 'other') as any,
+        description: `Imported from email: ${candidate.extracted_vendor}`,
+        amount: candidate.extracted_amount || 0,
+        vendor: candidate.extracted_vendor || 'Unknown Vendor',
+        currency: candidate.extracted_currency || 'CAD',
+        source: 'email',
+      })
+    } else if (candidate.extracted_record_type === 'subscription') {
+      await window.api.subscriptions.create({
+        name: candidate.extracted_vendor || 'Subscription Service',
+        vendor: candidate.extracted_vendor || 'Unknown Vendor',
+        amount: candidate.extracted_amount || 0,
+        currency: candidate.extracted_currency || 'CAD',
+        billing_cycle: candidate.extracted_frequency || 'monthly',
+        next_billing_date: candidate.extracted_due_date || candidate.extracted_payment_date,
+        category: candidate.extracted_category || 'software',
+        status: 'active',
+      })
+    } else if (candidate.extracted_record_type === 'payment') {
+      await window.api.payments.create({
+        amount: candidate.extracted_amount || 0,
+        currency: candidate.extracted_currency || 'CAD',
+        payment_date: candidate.extracted_payment_date || new Date().toISOString().slice(0, 10),
+        notes: `Imported payment for ${candidate.extracted_vendor}`,
+        vendor: candidate.extracted_vendor || 'Unknown Vendor',
+      })
+    }
+
+    // 2. Set candidate status to approved
+    await window.api.candidates.update(candidate.id, { review_status: 'approved' })
+  }
+
   const handleApprove = async (candidate: BillImportCandidate) => {
     toast.loading('Processing approval...', { id: 'approve-candidate' })
     try {
-      // 1. Create matching record based on record type
-      if (candidate.extracted_record_type === 'bill') {
-        await window.api.bills.create({
-          vendor: candidate.extracted_vendor || 'Unknown Vendor',
-          amount: candidate.extracted_amount || 0,
-          currency: candidate.extracted_currency || 'CAD',
-          due_date: candidate.extracted_due_date,
-          category: candidate.extracted_category || 'other',
-          recurring: candidate.extracted_frequency !== 'one_time' ? 1 : 0,
-          frequency: candidate.extracted_frequency || 'one_time',
-          notes: `Imported candidate from email.`,
-          source: 'email',
-        })
-      } else if (candidate.extracted_record_type === 'expense' || candidate.extracted_record_type === 'receipt') {
-        await window.api.expenses.create({
-          date: candidate.extracted_payment_date || candidate.extracted_due_date || new Date().toISOString().slice(0, 10),
-          category: (candidate.extracted_category || 'other') as any,
-          description: `Imported from email: ${candidate.extracted_vendor}`,
-          amount: candidate.extracted_amount || 0,
-          vendor: candidate.extracted_vendor || 'Unknown Vendor',
-          currency: candidate.extracted_currency || 'CAD',
-          source: 'email',
-        })
-      } else if (candidate.extracted_record_type === 'subscription') {
-        await window.api.subscriptions.create({
-          name: candidate.extracted_vendor || 'Subscription Service',
-          vendor: candidate.extracted_vendor || 'Unknown Vendor',
-          amount: candidate.extracted_amount || 0,
-          currency: candidate.extracted_currency || 'CAD',
-          billing_cycle: candidate.extracted_frequency || 'monthly',
-          next_billing_date: candidate.extracted_due_date || candidate.extracted_payment_date,
-          category: candidate.extracted_category || 'software',
-          status: 'active',
-        })
-      } else if (candidate.extracted_record_type === 'payment') {
-        await window.api.payments.create({
-          amount: candidate.extracted_amount || 0,
-          currency: candidate.extracted_currency || 'CAD',
-          payment_date: candidate.extracted_payment_date || new Date().toISOString().slice(0, 10),
-          notes: `Imported payment for ${candidate.extracted_vendor}`,
-          vendor: candidate.extracted_vendor || 'Unknown Vendor',
-        })
-      }
-
-      // 2. Set candidate status to approved
-      await window.api.candidates.update(candidate.id, { review_status: 'approved' })
+      await approveCandidateHelper(candidate)
       toast.success('Approved and imported successfully!', { id: 'approve-candidate' })
       loadCandidates()
     } catch (err: any) {
       toast.error(`Approval failed: ${err.message}`, { id: 'approve-candidate' })
+    }
+  }
+
+  const handleBulkApprove = async () => {
+    if (selectedIds.length === 0) return
+    const candidatesToApprove = candidates.filter(c => selectedIds.includes(c.id))
+    toast.loading(`Approving ${candidatesToApprove.length} candidates...`, { id: 'bulk-approve' })
+    try {
+      let successCount = 0
+      for (const c of candidatesToApprove) {
+        try {
+          await approveCandidateHelper(c)
+          successCount++
+        } catch (err: any) {
+          console.error(`Failed to approve candidate ${c.id}: ${err.message}`)
+        }
+      }
+      toast.success(`Successfully approved ${successCount} of ${candidatesToApprove.length} candidates.`, { id: 'bulk-approve' })
+      setSelectedIds([])
+      loadCandidates()
+    } catch (err: any) {
+      toast.error(`Bulk approval failed: ${err.message}`, { id: 'bulk-approve' })
     }
   }
 
@@ -201,6 +232,50 @@ export default function BillInbox() {
       loadCandidates()
     } catch (err: any) {
       toast.error(err.message)
+    }
+  }
+
+  const handleBulkIgnore = async () => {
+    if (selectedIds.length === 0) return
+    if (!confirm(`Are you sure you want to ignore the ${selectedIds.length} selected candidates?`)) return
+    toast.loading(`Ignoring candidates...`, { id: 'bulk-ignore' })
+    try {
+      await Promise.all(selectedIds.map(id => window.api.candidates.update(id, { review_status: 'ignored' })))
+      toast.success(`Successfully ignored ${selectedIds.length} candidates.`, { id: 'bulk-ignore' })
+      setSelectedIds([])
+      loadCandidates()
+    } catch (err: any) {
+      toast.error(`Bulk ignore failed: ${err.message}`, { id: 'bulk-ignore' })
+    }
+  }
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) return
+    if (!confirm(`Are you sure you want to permanently delete the ${selectedIds.length} selected candidates?`)) return
+    toast.loading(`Deleting candidates...`, { id: 'bulk-delete' })
+    try {
+      await Promise.all(selectedIds.map(id => window.api.candidates.delete(id)))
+      toast.success(`Successfully deleted ${selectedIds.length} candidates.`, { id: 'bulk-delete' })
+      setSelectedIds([])
+      loadCandidates()
+    } catch (err: any) {
+      toast.error(`Bulk delete failed: ${err.message}`, { id: 'bulk-delete' })
+    }
+  }
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    )
+  }
+
+  const toggleSelectAll = () => {
+    const visibleIds = filteredCandidates.map(c => c.id)
+    const allSelected = visibleIds.every(id => selectedIds.includes(id))
+    if (allSelected) {
+      setSelectedIds(prev => prev.filter(id => !visibleIds.includes(id)))
+    } else {
+      setSelectedIds(prev => Array.from(new Set([...prev, ...visibleIds])))
     }
   }
 
@@ -335,6 +410,66 @@ export default function BillInbox() {
         ))}
       </motion.div>
 
+      {/* Bulk Action Bar */}
+      {filteredCandidates.length > 0 && (
+        <motion.div variants={item} className="flex items-center justify-between p-3 mb-4 rounded-xl bg-surface-200 border border-rim/6 text-xs flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              checked={filteredCandidates.length > 0 && filteredCandidates.every(c => selectedIds.includes(c.id))}
+              ref={el => {
+                if (el) {
+                  const visibleIds = filteredCandidates.map(c => c.id)
+                  const someSelected = visibleIds.some(id => selectedIds.includes(id))
+                  const allSelected = visibleIds.every(id => selectedIds.includes(id))
+                  el.indeterminate = someSelected && !allSelected
+                }
+              }}
+              onChange={toggleSelectAll}
+              className="w-4 h-4 text-accent border-rim/6 rounded focus:ring-accent bg-surface-100"
+            />
+            <span className="font-semibold text-text-secondary">
+              {selectedIds.length > 0
+                ? `${selectedIds.length} of ${filteredCandidates.length} selected`
+                : 'Select All'}
+            </span>
+          </div>
+
+          {selectedIds.length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap">
+              {(activeTab === 'needs_review' || activeTab === 'ignored' || activeTab === 'duplicate') && (
+                <button
+                  onClick={handleBulkApprove}
+                  className="btn-primary flex items-center gap-1.5 text-xs py-1.5 px-3"
+                >
+                  <Check className="w-3.5 h-3.5" /> Approve Selected
+                </button>
+              )}
+              {(activeTab === 'needs_review' || activeTab === 'duplicate') && (
+                <button
+                  onClick={handleBulkIgnore}
+                  className="btn-secondary flex items-center gap-1.5 text-xs py-1.5 px-3"
+                >
+                  <X className="w-3.5 h-3.5" /> Ignore Selected
+                </button>
+              )}
+              <button
+                onClick={handleBulkDelete}
+                className="btn-secondary flex items-center gap-1.5 text-xs py-1.5 px-3 text-red-400 border-red-500/20 hover:bg-red-500/10"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Delete Selected
+              </button>
+              <button
+                onClick={() => setSelectedIds([])}
+                className="text-xs text-text-tertiary hover:text-text-primary px-2 font-medium"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </motion.div>
+      )}
+
       {loading && filteredCandidates.length === 0 ? (
         <div className="flex justify-center py-20">
           <RefreshCw className="w-8 h-8 text-accent animate-spin" />
@@ -367,19 +502,30 @@ export default function BillInbox() {
                 layoutId={`candidate-${c.id}`}
                 variants={item}
                 exit={{ opacity: 0, scale: 0.95 }}
-                className="glass-panel p-5 relative border border-rim/[0.04]"
+                className="glass-panel p-5 relative border border-rim/[0.04] flex items-start gap-4"
               >
-                {/* Duplicate Badge */}
-                {c.review_status === 'duplicate' && (
-                  <div className="absolute top-4 right-4 flex items-center gap-1.5 px-2.5 py-1 rounded bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-[10px] font-semibold">
-                    <AlertTriangle className="w-3.5 h-3.5" />
-                    Duplicate Warning
-                  </div>
-                )}
+                {/* Checkbox */}
+                <div className="pt-1 flex-shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(c.id)}
+                    onChange={() => toggleSelect(c.id)}
+                    className="w-4 h-4 text-accent border-rim/6 rounded focus:ring-accent bg-surface-200"
+                  />
+                </div>
 
-                <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
-                  {/* Left info column */}
-                  <div className="space-y-3 flex-1">
+                <div className="flex-1 min-w-0 relative">
+                  {/* Duplicate Badge */}
+                  {c.review_status === 'duplicate' && (
+                    <div className="absolute top-0 right-0 flex items-center gap-1.5 px-2.5 py-1 rounded bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-[10px] font-semibold">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      Duplicate Warning
+                    </div>
+                  )}
+
+                  <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                    {/* Left info column */}
+                    <div className="space-y-3 flex-1">
                     <div className="flex items-center flex-wrap gap-2">
                       <span className="text-base font-bold text-text-primary">{c.extracted_vendor || 'Unknown Vendor'}</span>
                       <span className="px-2 py-0.5 text-[10px] uppercase font-bold tracking-wider rounded-full bg-surface-200 border border-rim/6 text-text-secondary">
@@ -467,7 +613,8 @@ export default function BillInbox() {
                     </button>
                   </div>
                 </div>
-              </motion.div>
+              </div>
+            </motion.div>
             ))}
           </AnimatePresence>
         </motion.div>
