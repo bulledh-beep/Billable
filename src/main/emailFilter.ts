@@ -75,6 +75,12 @@ const NEGATIVE_TERMS: Array<{ re: RegExp; label: string; weight: number }> = [
   { re: /\b(survey|rate your|how did we do|leave a review)\b/i, label: 'survey/feedback', weight: 14 },
 ]
 
+// A COMPLETED purchase — an order/receipt with a real total. Distinct from a
+// marketing offer: a transaction actually happened. Retailers (Walmart, Amazon,
+// Best Buy) bundle these with promo cross-sell, so this must survive the
+// marketing negatives below.
+const ORDER_RECEIPT_RE = /\b(order\s+(confirmation|total|number|placed|received|summary)|order\s*#|your\s+order|thank(s| you)\s+for\s+your\s+(order|purchase)|we'?ve\s+received\s+your\s+order|purchase\s+(receipt|confirmation)|(amount|total)\s+(paid|charged)|payment\s+of\s+\$?[0-9]|items\s+ordered|your\s+receipt\s+from)\b/i
+
 const AMOUNT_RE = /(?:\$|USD|CAD|US\$|CA\$)?\s?([0-9]{1,6}(?:,[0-9]{3})*(?:\.[0-9]{2}))/
 const DATE_LANG_RE = /\b(due\s+date|due\s+by|due\s+on|payment\s+date|paid\s+on|charged\s+on|statement\s+date|invoice\s+date|next\s+billing|renews\s+on|billing\s+date)\b/i
 const INVOICE_NUM_RE = /\b(invoice|inv|statement|account|ref(?:erence)?)\s*#?\s*[:.]?\s*([A-Z0-9][A-Z0-9-]{3,})/i
@@ -191,11 +197,22 @@ export function scoreEmail(input: EmailSignalInput): EmailScore {
     positive.push('Attachment named like an invoice/receipt')
   }
 
+  // ---- Completed purchase / order receipt ----
+  // A real transaction with an amount is a genuine expense even if the email is
+  // wrapped in promo cross-sell — which is exactly how retailer receipts look.
+  const isPurchaseReceipt = ORDER_RECEIPT_RE.test(haystack) && hasAmount
+  if (isPurchaseReceipt) {
+    relevance += 28
+    confidence += 20
+    positive.push('Completed purchase / order receipt')
+  }
+
   // ---- Negative: marketing / noise ----
   let negHits = 0
+  let negativeTotal = 0
   for (const t of NEGATIVE_TERMS) {
     if (t.re.test(haystack)) {
-      relevance -= t.weight
+      negativeTotal += t.weight
       negative.push(t.label)
       negHits++
     }
@@ -203,19 +220,22 @@ export function scoreEmail(input: EmailSignalInput): EmailScore {
 
   // ---- Structural negatives ----
   if (!hasAmount && !hasDateLang) {
-    relevance -= 20
+    negativeTotal += 20
     negative.push('No amount and no financial date')
   }
-  // Heavy unsubscribe presence with no strong financial term → likely a blast
-  if (/\bunsubscribe\b/i.test(body) && strongHits === 0) {
-    relevance -= 12
+  if (/\bunsubscribe\b/i.test(body) && strongHits === 0 && !isPurchaseReceipt) {
+    negativeTotal += 12
     negative.push('Unsubscribe-heavy with no bill terms')
   }
-  // If marketing signals dominate and there's only a weak financial hint, suppress
-  if (negHits >= 2 && strongHits <= 1) {
-    relevance -= 10
+  if (negHits >= 2 && strongHits <= 1 && !isPurchaseReceipt) {
+    negativeTotal += 10
     negative.push('Marketing signals outweigh financial signals')
   }
+
+  // A genuine receipt's promo footer shouldn't sink it — discount the marketing
+  // penalty heavily when a completed purchase is present.
+  if (isPurchaseReceipt) negativeTotal *= 0.2
+  relevance -= negativeTotal
 
   // Corroboration bonus: an amount + a financial date + a strong financial term
   // all co-occurring is the hallmark of a real bill/receipt. This is what lets a
@@ -227,6 +247,9 @@ export function scoreEmail(input: EmailSignalInput): EmailScore {
   } else if (hasAmount && strongHits >= 2) {
     confidence += 10
   }
+
+  // A clearly-completed purchase always deserves at least a review, never ignore.
+  if (isPurchaseReceipt) relevance = Math.max(relevance, 55)
 
   relevance = clamp(relevance)
   confidence = clamp(confidence)

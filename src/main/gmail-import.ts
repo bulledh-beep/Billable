@@ -371,6 +371,9 @@ export function extractCandidateFromEmail(
         recordType = 'expense' // money out (sent transfer / purchase)
       } else if (sLower.includes('receipt') || sLower.includes('thank you for your payment') || bLower.includes('amount paid')) {
         recordType = 'receipt'
+      } else if (/\b(order\s+(confirmation|total|number|placed|received)|order\s*#|your\s+order|thank(s| you)\s+for\s+your\s+(order|purchase)|purchase\s+(receipt|confirmation)|items\s+ordered)\b/i.test(combined)) {
+        // A completed retail purchase is money already spent → expense
+        recordType = 'expense'
       }
     }
   }
