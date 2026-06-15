@@ -354,7 +354,7 @@ export function extractCandidateFromEmail(emailImportId: number, sender: string,
     confidence_score: confidence,
     duplicate_of_id: duplicateId,
     raw_extraction_json: JSON.stringify({ parsedVendor: vendor, parsedAmount: amount, matchedRule: rule?.rule_name || null }),
-    review_status: duplicateId ? 'duplicate' : 'needs_review'
+    review_status: duplicateId ? 'duplicate' : (confidence <= 0 ? 'ignored' : 'needs_review')
   }) as any
 
   // If rule says auto-approve, and we have a valid amount, auto-approve it!

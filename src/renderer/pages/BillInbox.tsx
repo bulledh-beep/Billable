@@ -458,15 +458,13 @@ export default function BillInbox() {
                         </button>
                       </>
                     )}
-                    {c.review_status !== 'needs_review' && (
-                      <button
-                        onClick={() => handleDeleteCandidate(c.id)}
-                        className="p-2 hover:bg-red-500/10 rounded text-text-tertiary hover:text-red-400 transition-colors"
-                        title="Delete candidate history"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
+                    <button
+                      onClick={() => handleDeleteCandidate(c.id)}
+                      className="p-2 hover:bg-red-500/10 rounded text-text-tertiary hover:text-red-400 transition-colors"
+                      title="Delete candidate history"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
               </motion.div>
