@@ -86,6 +86,198 @@ function runMigrations() {
     SET tax_year = CAST(strftime('%Y', issue_date) AS INTEGER)
     WHERE tax_year IS NULL
   `).run()
+
+  // ----- Phase 2: Family Finance Expansion -----
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER,
+      name TEXT NOT NULL,
+      email TEXT DEFAULT '',
+      role TEXT DEFAULT 'member',
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS bills (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER,
+      user_id INTEGER,
+      vendor TEXT NOT NULL,
+      amount REAL DEFAULT 0,
+      currency TEXT DEFAULT 'CAD',
+      due_date TEXT,
+      status TEXT DEFAULT 'upcoming' CHECK(status IN ('upcoming', 'due_soon', 'overdue', 'paid', 'autopay_scheduled', 'needs_review')),
+      category TEXT DEFAULT 'other',
+      recurring INTEGER DEFAULT 0,
+      frequency TEXT DEFAULT 'one_time' CHECK(frequency IN ('one_time', 'weekly', 'monthly', 'quarterly', 'yearly')),
+      autopay INTEGER DEFAULT 0,
+      notes TEXT DEFAULT '',
+      source TEXT DEFAULT 'manual',
+      source_email_id TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER,
+      user_id INTEGER,
+      name TEXT NOT NULL,
+      vendor TEXT NOT NULL,
+      amount REAL DEFAULT 0,
+      currency TEXT DEFAULT 'CAD',
+      billing_cycle TEXT DEFAULT 'monthly',
+      next_billing_date TEXT,
+      category TEXT DEFAULT 'software',
+      payment_method TEXT DEFAULT '',
+      status TEXT DEFAULT 'active' CHECK(status IN ('active', 'paused', 'cancelled')),
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER,
+      user_id INTEGER,
+      bill_id INTEGER,
+      invoice_id INTEGER,
+      amount REAL DEFAULT 0,
+      currency TEXT DEFAULT 'CAD',
+      payment_date TEXT NOT NULL,
+      payment_method TEXT DEFAULT '',
+      reference_number TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (bill_id) REFERENCES bills(id) ON DELETE SET NULL,
+      FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS email_imports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER,
+      user_id INTEGER,
+      provider TEXT DEFAULT 'gmail',
+      source_email_id TEXT UNIQUE,
+      sender TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      received_at TEXT NOT NULL,
+      body_preview TEXT DEFAULT '',
+      attachment_names TEXT DEFAULT '',
+      status TEXT DEFAULT 'detected' CHECK(status IN ('detected', 'reviewed', 'imported', 'ignored', 'duplicate')),
+      confidence_score REAL DEFAULT 1.0,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS bill_import_candidates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER,
+      user_id INTEGER,
+      email_import_id INTEGER,
+      extracted_vendor TEXT,
+      extracted_amount REAL,
+      extracted_currency TEXT DEFAULT 'CAD',
+      extracted_due_date TEXT,
+      extracted_invoice_date TEXT,
+      extracted_payment_date TEXT,
+      extracted_status TEXT DEFAULT 'needs_review',
+      extracted_category TEXT,
+      extracted_invoice_number TEXT,
+      extracted_frequency TEXT DEFAULT 'one_time',
+      extracted_record_type TEXT CHECK(extracted_record_type IN ('bill', 'expense', 'payment', 'subscription', 'receipt')),
+      confidence_score REAL DEFAULT 0,
+      duplicate_of_id INTEGER,
+      raw_extraction_json TEXT,
+      review_status TEXT DEFAULT 'needs_review' CHECK(review_status IN ('needs_review', 'approved', 'ignored', 'duplicate')),
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (email_import_id) REFERENCES email_imports(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS automation_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER,
+      user_id INTEGER,
+      rule_name TEXT NOT NULL,
+      sender_contains TEXT DEFAULT '',
+      subject_contains TEXT DEFAULT '',
+      vendor TEXT DEFAULT '',
+      category TEXT DEFAULT '',
+      record_type TEXT DEFAULT 'bill',
+      recurring_frequency TEXT DEFAULT 'monthly',
+      auto_approve INTEGER DEFAULT 0,
+      is_active INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS budget_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER,
+      name TEXT NOT NULL,
+      color TEXT DEFAULT '#3B82F6',
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL,
+      UNIQUE (workspace_id, name)
+    );
+
+    CREATE TABLE IF NOT EXISTS monthly_budgets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id INTEGER,
+      category_id INTEGER NOT NULL,
+      month TEXT NOT NULL, -- 'YYYY-MM'
+      amount_limit REAL NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL,
+      FOREIGN KEY (category_id) REFERENCES budget_categories(id) ON DELETE CASCADE,
+      UNIQUE (workspace_id, category_id, month)
+    );
+  `)
+
+  // Add new columns to expenses
+  addColumnIfMissing('expenses', 'workspace_id', 'INTEGER')
+  addColumnIfMissing('expenses', 'user_id', 'INTEGER')
+  addColumnIfMissing('expenses', 'vendor', "TEXT DEFAULT ''")
+  addColumnIfMissing('expenses', 'currency', "TEXT DEFAULT 'CAD'")
+  addColumnIfMissing('expenses', 'is_deductible', 'INTEGER DEFAULT 1')
+  addColumnIfMissing('expenses', 'is_reimbursable', 'INTEGER DEFAULT 0')
+  addColumnIfMissing('expenses', 'client_id', 'INTEGER')
+  addColumnIfMissing('expenses', 'project_id', 'INTEGER')
+  addColumnIfMissing('expenses', 'receipt_url', 'TEXT')
+  addColumnIfMissing('expenses', 'source', "TEXT DEFAULT 'manual'")
+  addColumnIfMissing('expenses', 'source_email_id', 'TEXT')
+  addColumnIfMissing('expenses', 'updated_at', "TEXT DEFAULT (datetime('now'))")
+
+  // Seed default workspace and user
+  db.prepare(`
+    INSERT OR IGNORE INTO workspaces (id, name) VALUES (1, 'Default Workspace')
+  `).run()
+
+  db.prepare(`
+    INSERT OR IGNORE INTO users (id, workspace_id, name, email, role)
+    VALUES (1, 1, 'Default User', '', 'owner')
+  `).run()
 }
 
 function addColumnIfMissing(table: string, column: string, def: string) {
@@ -256,7 +448,9 @@ export function listProjects(clientId?: number) {
     SELECT p.*, c.name as client_name, c.company as client_company,
       COALESCE(SUM(CASE WHEN te.end_time IS NOT NULL THEN te.duration_minutes ELSE 0 END) / 60.0, 0) as total_hours,
       COALESCE(SUM(CASE WHEN te.is_invoiced = 1 AND te.end_time IS NOT NULL THEN te.duration_minutes * p.rate / 60.0 ELSE 0 END), 0) as billed_total,
-      COALESCE(SUM(CASE WHEN te.is_invoiced = 0 AND te.is_billable = 1 AND te.end_time IS NOT NULL THEN te.duration_minutes / 60.0 ELSE 0 END), 0) as unbilled_hours
+      COALESCE(SUM(CASE WHEN te.is_invoiced = 0 AND te.is_billable = 1 AND te.end_time IS NOT NULL THEN te.duration_minutes / 60.0 ELSE 0 END), 0) as unbilled_hours,
+      COALESCE(SUM(CASE WHEN te.is_billable = 1 AND te.end_time IS NOT NULL THEN te.duration_minutes ELSE 0 END) / 60.0, 0) as total_billable_hours,
+      COALESCE(SUM(CASE WHEN te.is_billable = 0 AND te.end_time IS NOT NULL THEN te.duration_minutes ELSE 0 END) / 60.0, 0) as total_non_billable_hours
     FROM projects p
     LEFT JOIN clients c ON p.client_id = c.id
     LEFT JOIN time_entries te ON te.project_id = p.id
@@ -272,7 +466,9 @@ export function getProject(id: number) {
     SELECT p.*, c.name as client_name, c.company as client_company,
       COALESCE(SUM(CASE WHEN te.end_time IS NOT NULL THEN te.duration_minutes ELSE 0 END) / 60.0, 0) as total_hours,
       COALESCE(SUM(CASE WHEN te.is_invoiced = 1 AND te.end_time IS NOT NULL THEN te.duration_minutes * p.rate / 60.0 ELSE 0 END), 0) as billed_total,
-      COALESCE(SUM(CASE WHEN te.is_invoiced = 0 AND te.is_billable = 1 AND te.end_time IS NOT NULL THEN te.duration_minutes / 60.0 ELSE 0 END), 0) as unbilled_hours
+      COALESCE(SUM(CASE WHEN te.is_invoiced = 0 AND te.is_billable = 1 AND te.end_time IS NOT NULL THEN te.duration_minutes / 60.0 ELSE 0 END), 0) as unbilled_hours,
+      COALESCE(SUM(CASE WHEN te.is_billable = 1 AND te.end_time IS NOT NULL THEN te.duration_minutes ELSE 0 END) / 60.0, 0) as total_billable_hours,
+      COALESCE(SUM(CASE WHEN te.is_billable = 0 AND te.end_time IS NOT NULL THEN te.duration_minutes ELSE 0 END) / 60.0, 0) as total_non_billable_hours
     FROM projects p
     LEFT JOIN clients c ON p.client_id = c.id
     LEFT JOIN time_entries te ON te.project_id = p.id
@@ -358,13 +554,13 @@ export function deleteTimeEntry(id: number) {
   db.prepare('DELETE FROM time_entries WHERE id = ?').run(id)
 }
 
-export function startTimer(projectId: number, description: string = '') {
+export function startTimer(projectId: number, description: string = '', isBillable: number = 1) {
   const now = new Date().toISOString()
   const stmt = db.prepare(`
     INSERT INTO time_entries (project_id, description, start_time, is_billable)
-    VALUES (?, ?, ?, 1)
+    VALUES (?, ?, ?, ?)
   `)
-  const result = stmt.run(projectId, description, now)
+  const result = stmt.run(projectId, description, now, isBillable)
   return getTimeEntry(result.lastInsertRowid as number)
 }
 
@@ -581,12 +777,32 @@ export function updateSettings(data: any) {
 
 export function getDashboardStats() {
   const now = new Date()
+  const todayStr = now.toISOString().slice(0, 10)
+  
+  // Start of week
   const startOfWeek = new Date(now)
   startOfWeek.setDate(now.getDate() - now.getDay())
   startOfWeek.setHours(0, 0, 0, 0)
 
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+  // End of week
+  const endOfWeek = new Date(startOfWeek)
+  endOfWeek.setDate(startOfWeek.getDate() + 7)
+  const endOfWeekStr = endOfWeek.toISOString().slice(0, 10)
 
+  // Start of month
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+  const startOfMonthStr = startOfMonth.toISOString().slice(0, 10)
+
+  // End of month
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+  const endOfMonthStr = endOfMonth.toISOString().slice(0, 10)
+
+  // 30 days from now
+  const next30Days = new Date(now)
+  next30Days.setDate(now.getDate() + 30)
+  const next30DaysStr = next30Days.toISOString().slice(0, 10)
+
+  // 1. Time tracking stats
   const hoursThisWeek = db.prepare(`
     SELECT COALESCE(SUM(duration_minutes) / 60.0, 0) as hours
     FROM time_entries
@@ -605,22 +821,118 @@ export function getDashboardStats() {
     WHERE te.end_time IS NOT NULL AND te.is_invoiced = 0 AND te.is_billable = 1
   `).get() as any
 
-  const outstanding = db.prepare(`
+  // 2. Invoice Income stats
+  const outstandingInvoices = db.prepare(`
     SELECT COALESCE(SUM(total), 0) as total
     FROM invoices WHERE status IN ('sent', 'overdue')
   `).get() as any
 
-  const paid = db.prepare(`
-    SELECT COALESCE(SUM(total), 0) as total
-    FROM invoices WHERE status = 'paid'
+  const paidInvoicesThisMonth = db.prepare(`
+    SELECT COALESCE(SUM(total), 0) as total,
+           COALESCE(SUM(CASE WHEN gst_hst_applicable = 1 THEN gst_hst_amount ELSE 0 END), 0) as gst
+    FROM invoices 
+    WHERE status = 'paid' AND COALESCE(payment_date, issue_date) >= ? AND COALESCE(payment_date, issue_date) <= ?
+  `).get(startOfMonthStr, endOfMonthStr) as any
+
+  // 3. Expense stats
+  const expensesThisMonth = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) as total
+    FROM expenses
+    WHERE date >= ? AND date <= ?
+  `).get(startOfMonthStr, endOfMonthStr) as any
+
+  const deductibleExpensesThisMonth = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) as total
+    FROM expenses
+    WHERE date >= ? AND date <= ? AND is_deductible = 1
+  `).get(startOfMonthStr, endOfMonthStr) as any
+
+  const expensesByCategory = db.prepare(`
+    SELECT category, COALESCE(SUM(amount), 0) as total, COUNT(*) as count
+    FROM expenses
+    WHERE date >= ? AND date <= ?
+    GROUP BY category
+  `).all(startOfMonthStr, endOfMonthStr) as any[]
+
+  // 4. Bills stats
+  const billsDueThisWeek = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as count
+    FROM bills
+    WHERE status != 'paid' AND due_date >= ? AND due_date <= ?
+  `).get(todayStr, endOfWeekStr) as any
+
+  const billsDueThisMonth = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as count
+    FROM bills
+    WHERE status != 'paid' AND due_date >= ? AND due_date <= ?
+  `).get(startOfMonthStr, endOfMonthStr) as any
+
+  const billsDueInNext30Days = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) as total
+    FROM bills
+    WHERE status != 'paid' AND due_date >= ? AND due_date <= ?
+  `).get(todayStr, next30DaysStr) as any
+
+  const billsOverdue = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as count
+    FROM bills
+    WHERE status != 'paid' AND due_date < ?
+  `).get(todayStr) as any
+
+  const billsPaidThisMonth = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as count
+    FROM bills
+    WHERE status = 'paid' AND updated_at >= ? AND updated_at <= ?
+  `).get(startOfMonthStr, endOfMonthStr) as any
+
+  // 5. Subscription stats
+  const activeSubscriptionsTotal = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) as total
+    FROM subscriptions
+    WHERE status = 'active'
   `).get() as any
+
+  // 6. Tax settings / set-aside
+  const taxSettings = getTaxSettings()
+  const taxRate = (taxSettings?.income_tax_bracket || 25) / 100.0
+
+  const taxableIncomeThisMonth = Math.max(0, (paidInvoicesThisMonth.total - paidInvoicesThisMonth.gst) - deductibleExpensesThisMonth.total)
+  const estimatedTaxSetAside = taxableIncomeThisMonth * taxRate
+
+  // 7. Safe to Spend
+  const safeToSpend = paidInvoicesThisMonth.total - expensesThisMonth.total - billsDueInNext30Days.total - estimatedTaxSetAside
+
+  // 8. Upcoming payment reminders (next 5 upcoming unpaid bills)
+  const upcomingReminders = db.prepare(`
+    SELECT id, vendor, amount, currency, due_date, status, category
+    FROM bills
+    WHERE status != 'paid' AND due_date >= ?
+    ORDER BY due_date ASC
+    LIMIT 5
+  `).all(todayStr)
 
   return {
     hours_this_week: hoursThisWeek.hours,
     hours_this_month: hoursThisMonth.hours,
     unbilled_hours: unbilled.hours,
-    outstanding_total: outstanding.total,
-    paid_total: paid.total,
+    outstanding_invoices: outstandingInvoices.total,
+    paid_income_this_month: paidInvoicesThisMonth.total,
+    expenses_this_month: expensesThisMonth.total,
+    expenses_by_category: expensesByCategory,
+    bills_due_this_week_total: billsDueThisWeek.total,
+    bills_due_this_week_count: billsDueThisWeek.count,
+    bills_due_this_month_total: billsDueThisMonth.total,
+    bills_due_this_month_count: billsDueThisMonth.count,
+    bills_due_in_next_30_days: billsDueInNext30Days.total,
+    bills_overdue_total: billsOverdue.total,
+    bills_overdue_count: billsOverdue.count,
+    bills_paid_this_month_total: billsPaidThisMonth.total,
+    bills_paid_this_month_count: billsPaidThisMonth.count,
+    active_subscriptions_total: activeSubscriptionsTotal.total,
+    estimated_tax_set_aside: estimatedTaxSetAside,
+    tax_bracket_rate: taxRate * 100,
+    safe_to_spend: safeToSpend,
+    upcoming_reminders: upcomingReminders,
   }
 }
 
@@ -759,11 +1071,11 @@ export function getTaxOverview(taxYear: number) {
     WHERE tax_year = ?
   `).get(taxYear) as any
 
-  // Expenses by category for the same year
+  // Expenses by category for the same year (only deductible ones count for taxes)
   const expensesByCategory = db.prepare(`
     SELECT category, COALESCE(SUM(amount), 0) as total, COUNT(*) as count
     FROM expenses
-    WHERE tax_year = ?
+    WHERE tax_year = ? AND is_deductible = 1
     GROUP BY category
     ORDER BY total DESC
   `).all(taxYear) as TaxOverviewBucket[]
@@ -851,8 +1163,16 @@ export function createExpense(data: any) {
   const date = data.date || new Date().toISOString().slice(0, 10)
   const taxYear = data.tax_year || new Date(date).getFullYear()
   const stmt = db.prepare(`
-    INSERT INTO expenses (date, category, description, amount, tax_year, receipt_note, receipt_id)
-    VALUES (@date, @category, @description, @amount, @tax_year, @receipt_note, @receipt_id)
+    INSERT INTO expenses (
+      date, category, description, amount, tax_year, receipt_note, receipt_id,
+      workspace_id, user_id, vendor, currency, is_deductible, is_reimbursable,
+      client_id, project_id, receipt_url, source, source_email_id
+    )
+    VALUES (
+      @date, @category, @description, @amount, @tax_year, @receipt_note, @receipt_id,
+      @workspace_id, @user_id, @vendor, @currency, @is_deductible, @is_reimbursable,
+      @client_id, @project_id, @receipt_url, @source, @source_email_id
+    )
   `)
   const result = stmt.run({
     date,
@@ -862,6 +1182,17 @@ export function createExpense(data: any) {
     tax_year: taxYear,
     receipt_note: data.receipt_note || '',
     receipt_id: data.receipt_id || null,
+    workspace_id: data.workspace_id ?? 1,
+    user_id: data.user_id ?? 1,
+    vendor: data.vendor || '',
+    currency: data.currency || 'CAD',
+    is_deductible: data.is_deductible ?? 1,
+    is_reimbursable: data.is_reimbursable ?? 0,
+    client_id: data.client_id || null,
+    project_id: data.project_id || null,
+    receipt_url: data.receipt_url || null,
+    source: data.source || 'manual',
+    source_email_id: data.source_email_id || null,
   })
   return getExpense(result.lastInsertRowid as number)
 }
@@ -878,9 +1209,369 @@ export function updateExpense(id: number, data: any) {
   db.prepare(`UPDATE expenses SET ${sets} WHERE id = @id`).run({ ...data, id })
   return getExpense(id)
 }
-
 export function deleteExpense(id: number) {
   db.prepare('DELETE FROM expenses WHERE id = ?').run(id)
+}
+
+// ============ Bills ============
+export function listBills() {
+  return db.prepare('SELECT * FROM bills ORDER BY due_date ASC, id DESC').all()
+}
+
+export function getBill(id: number) {
+  return db.prepare('SELECT * FROM bills WHERE id = ?').get(id)
+}
+
+export function createBill(data: any) {
+  const stmt = db.prepare(`
+    INSERT INTO bills (workspace_id, user_id, vendor, amount, currency, due_date, status, category, recurring, frequency, autopay, notes, source, source_email_id)
+    VALUES (@workspace_id, @user_id, @vendor, @amount, @currency, @due_date, @status, @category, @recurring, @frequency, @autopay, @notes, @source, @source_email_id)
+  `)
+  const result = stmt.run({
+    workspace_id: data.workspace_id ?? 1,
+    user_id: data.user_id ?? 1,
+    vendor: data.vendor,
+    amount: data.amount ?? 0,
+    currency: data.currency ?? 'CAD',
+    due_date: data.due_date || null,
+    status: data.status ?? 'upcoming',
+    category: data.category ?? 'other',
+    recurring: data.recurring ? 1 : 0,
+    frequency: data.frequency ?? 'one_time',
+    autopay: data.autopay ? 1 : 0,
+    notes: data.notes ?? '',
+    source: data.source ?? 'manual',
+    source_email_id: data.source_email_id || null,
+  })
+  return getBill(result.lastInsertRowid as number)
+}
+
+export function updateBill(id: number, data: any) {
+  const fields = Object.keys(data).filter(k => k !== 'id' && k !== 'created_at')
+  if (fields.length === 0) return getBill(id)
+  const sets = fields.map(f => `${f} = @${f}`).join(', ')
+  db.prepare(`UPDATE bills SET ${sets}, updated_at = datetime('now') WHERE id = @id`).run({ ...data, id })
+  return getBill(id)
+}
+
+export function deleteBill(id: number) {
+  db.prepare('DELETE FROM bills WHERE id = ?').run(id)
+}
+
+// ============ Subscriptions ============
+export function listSubscriptions() {
+  return db.prepare('SELECT * FROM subscriptions ORDER BY name ASC').all()
+}
+
+export function getSubscription(id: number) {
+  return db.prepare('SELECT * FROM subscriptions WHERE id = ?').get(id)
+}
+
+export function createSubscription(data: any) {
+  const stmt = db.prepare(`
+    INSERT INTO subscriptions (workspace_id, user_id, name, vendor, amount, currency, billing_cycle, next_billing_date, category, payment_method, status)
+    VALUES (@workspace_id, @user_id, @name, @vendor, @amount, @currency, @billing_cycle, @next_billing_date, @category, @payment_method, @status)
+  `)
+  const result = stmt.run({
+    workspace_id: data.workspace_id ?? 1,
+    user_id: data.user_id ?? 1,
+    name: data.name,
+    vendor: data.vendor,
+    amount: data.amount ?? 0,
+    currency: data.currency ?? 'CAD',
+    billing_cycle: data.billing_cycle ?? 'monthly',
+    next_billing_date: data.next_billing_date || null,
+    category: data.category ?? 'software',
+    payment_method: data.payment_method ?? '',
+    status: data.status ?? 'active',
+  })
+  return getSubscription(result.lastInsertRowid as number)
+}
+
+export function updateSubscription(id: number, data: any) {
+  const fields = Object.keys(data).filter(k => k !== 'id' && k !== 'created_at')
+  if (fields.length === 0) return getSubscription(id)
+  const sets = fields.map(f => `${f} = @${f}`).join(', ')
+  db.prepare(`UPDATE subscriptions SET ${sets}, updated_at = datetime('now') WHERE id = @id`).run({ ...data, id })
+  return getSubscription(id)
+}
+
+export function deleteSubscription(id: number) {
+  db.prepare('DELETE FROM subscriptions WHERE id = ?').run(id)
+}
+
+// ============ Payments ============
+export function listPayments() {
+  return db.prepare('SELECT * FROM payments ORDER BY payment_date DESC, id DESC').all()
+}
+
+export function createPayment(data: any) {
+  let invoiceId = data.invoice_id || null
+  const isIncoming = !data.bill_id
+
+  // 1. If incoming, try to auto-match to an outstanding invoice
+  if (isIncoming && !invoiceId && data.amount) {
+    const match = db.prepare(`
+      SELECT i.id, i.client_id, c.name as client_name
+      FROM invoices i
+      LEFT JOIN clients c ON i.client_id = c.id
+      WHERE i.status IN ('sent', 'overdue') AND ABS(i.total - ?) < 0.01
+      LIMIT 1
+    `).get(data.amount) as any
+    if (match) {
+      invoiceId = match.id
+      data.notes = `${data.notes || ''} (Matched & linked to Invoice #${match.id} for client ${match.client_name})`.trim()
+    }
+  }
+
+  // 2. If incoming and still no invoice matches, auto-create a client and a paid invoice to capture the income
+  if (isIncoming && !invoiceId && data.vendor) {
+    let client = db.prepare('SELECT id FROM clients WHERE name = ? COLLATE NOCASE').get(data.vendor) as any
+    if (!client) {
+      const result = db.prepare(`
+        INSERT INTO clients (name, default_rate, currency)
+        VALUES (?, 100, ?)
+      `).run(data.vendor, data.currency || 'CAD')
+      client = { id: result.lastInsertRowid }
+    }
+
+    const settings = getSettings()
+    const invoiceNumber = `E-TX-${Date.now()}`
+    const taxYear = new Date(data.payment_date || new Date()).getFullYear()
+
+    const invResult = db.prepare(`
+      INSERT INTO invoices (
+        client_id, invoice_number, issue_date, due_date, status,
+        subtotal, tax_rate, total, notes, tax_year, currency, payment_date
+      )
+      VALUES (
+        ?, ?, ?, ?, 'paid',
+        ?, 0, ?, ?, ?, ?, ?
+      )
+    `).run(
+      client.id,
+      invoiceNumber,
+      data.payment_date || new Date().toISOString().slice(0, 10),
+      data.payment_date || new Date().toISOString().slice(0, 10),
+      data.amount,
+      data.amount,
+      `Auto-created for e-transfer/payment: ${data.notes || ''}`,
+      taxYear,
+      data.currency || 'CAD',
+      data.payment_date || new Date().toISOString().slice(0, 10)
+    )
+    invoiceId = invResult.lastInsertRowid as number
+  }
+
+  const stmt = db.prepare(`
+    INSERT INTO payments (workspace_id, user_id, bill_id, invoice_id, amount, currency, payment_date, payment_method, reference_number, notes)
+    VALUES (@workspace_id, @user_id, @bill_id, @invoice_id, @amount, @currency, @payment_date, @payment_method, @reference_number, @notes)
+  `)
+  const result = stmt.run({
+    workspace_id: data.workspace_id ?? 1,
+    user_id: data.user_id ?? 1,
+    bill_id: data.bill_id || null,
+    invoice_id: invoiceId,
+    amount: data.amount ?? 0,
+    currency: data.currency ?? 'CAD',
+    payment_date: data.payment_date || new Date().toISOString().slice(0, 10),
+    payment_method: data.payment_method ?? '',
+    reference_number: data.reference_number ?? '',
+    notes: data.notes ?? '',
+  })
+
+  // If this payment is linked to a bill, let's mark the bill as paid!
+  if (data.bill_id) {
+    db.prepare("UPDATE bills SET status = 'paid' WHERE id = ?").run(data.bill_id)
+  }
+  // If linked to an invoice, let's mark the invoice as paid!
+  if (invoiceId) {
+    db.prepare("UPDATE invoices SET status = 'paid', payment_date = ?, payment_method = ? WHERE id = ?")
+      .run(data.payment_date || new Date().toISOString().slice(0, 10), data.payment_method ?? '', invoiceId)
+  }
+
+  return db.prepare('SELECT * FROM payments WHERE id = ?').get(result.lastInsertRowid)
+}
+
+export function deletePayment(id: number) {
+  db.prepare('DELETE FROM payments WHERE id = ?').run(id)
+}
+
+// ============ Email Imports & Candidates ============
+export function listEmailImports() {
+  return db.prepare('SELECT * FROM email_imports ORDER BY received_at DESC').all()
+}
+
+export function getEmailImport(id: number) {
+  return db.prepare('SELECT * FROM email_imports WHERE id = ?').get(id)
+}
+
+export function createEmailImport(data: any) {
+  const stmt = db.prepare(`
+    INSERT INTO email_imports (workspace_id, user_id, provider, source_email_id, sender, subject, received_at, body_preview, attachment_names, status, confidence_score)
+    VALUES (@workspace_id, @user_id, @provider, @source_email_id, @sender, @subject, @received_at, @body_preview, @attachment_names, @status, @confidence_score)
+  `)
+  const result = stmt.run({
+    workspace_id: data.workspace_id ?? 1,
+    user_id: data.user_id ?? 1,
+    provider: data.provider ?? 'gmail',
+    source_email_id: data.source_email_id,
+    sender: data.sender,
+    subject: data.subject,
+    received_at: data.received_at,
+    body_preview: data.body_preview ?? '',
+    attachment_names: data.attachment_names ?? '',
+    status: data.status ?? 'detected',
+    confidence_score: data.confidence_score ?? 1.0,
+  })
+  return getEmailImport(result.lastInsertRowid as number)
+}
+
+export function updateEmailImportStatus(id: number, status: string) {
+  db.prepare(`UPDATE email_imports SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, id)
+  return getEmailImport(id)
+}
+
+export function listCandidates(reviewStatus?: string) {
+  if (reviewStatus) {
+    return db.prepare('SELECT * FROM bill_import_candidates WHERE review_status = ? ORDER BY created_at DESC').all(reviewStatus)
+  }
+  return db.prepare('SELECT * FROM bill_import_candidates ORDER BY created_at DESC').all()
+}
+
+export function getCandidate(id: number) {
+  return db.prepare('SELECT * FROM bill_import_candidates WHERE id = ?').get(id)
+}
+
+export function createCandidate(data: any) {
+  const stmt = db.prepare(`
+    INSERT INTO bill_import_candidates (workspace_id, user_id, email_import_id, extracted_vendor, extracted_amount, extracted_currency, extracted_due_date, extracted_invoice_date, extracted_payment_date, extracted_status, extracted_category, extracted_invoice_number, extracted_frequency, extracted_record_type, confidence_score, duplicate_of_id, raw_extraction_json, review_status)
+    VALUES (@workspace_id, @user_id, @email_import_id, @extracted_vendor, @extracted_amount, @extracted_currency, @extracted_due_date, @extracted_invoice_date, @extracted_payment_date, @extracted_status, @extracted_category, @extracted_invoice_number, @extracted_frequency, @extracted_record_type, @confidence_score, @duplicate_of_id, @raw_extraction_json, @review_status)
+  `)
+  const result = stmt.run({
+    workspace_id: data.workspace_id ?? 1,
+    user_id: data.user_id ?? 1,
+    email_import_id: data.email_import_id || null,
+    extracted_vendor: data.extracted_vendor || null,
+    extracted_amount: data.extracted_amount ?? null,
+    extracted_currency: data.extracted_currency ?? 'CAD',
+    extracted_due_date: data.extracted_due_date || null,
+    extracted_invoice_date: data.extracted_invoice_date || null,
+    extracted_payment_date: data.extracted_payment_date || null,
+    extracted_status: data.extracted_status ?? 'needs_review',
+    extracted_category: data.extracted_category || null,
+    extracted_invoice_number: data.extracted_invoice_number || null,
+    extracted_frequency: data.extracted_frequency ?? 'one_time',
+    extracted_record_type: data.extracted_record_type ?? 'bill',
+    confidence_score: data.confidence_score ?? 0,
+    duplicate_of_id: data.duplicate_of_id || null,
+    raw_extraction_json: data.raw_extraction_json || null,
+    review_status: data.review_status ?? 'needs_review',
+  })
+  return getCandidate(result.lastInsertRowid as number)
+}
+
+export function updateCandidate(id: number, data: any) {
+  const fields = Object.keys(data).filter(k => k !== 'id' && k !== 'created_at')
+  if (fields.length === 0) return getCandidate(id)
+  const sets = fields.map(f => `${f} = @${f}`).join(', ')
+  db.prepare(`UPDATE bill_import_candidates SET ${sets}, updated_at = datetime('now') WHERE id = ?`).run({ ...data, id })
+  return getCandidate(id)
+}
+
+export function deleteCandidate(id: number) {
+  db.prepare('DELETE FROM bill_import_candidates WHERE id = ?').run(id)
+}
+
+// ============ Automation Rules ============
+export function listAutomationRules() {
+  return db.prepare('SELECT * FROM automation_rules ORDER BY id DESC').all()
+}
+
+export function getAutomationRule(id: number) {
+  return db.prepare('SELECT * FROM automation_rules WHERE id = ?').get(id)
+}
+
+export function createAutomationRule(data: any) {
+  const stmt = db.prepare(`
+    INSERT INTO automation_rules (workspace_id, user_id, rule_name, sender_contains, subject_contains, vendor, category, record_type, recurring_frequency, auto_approve, is_active)
+    VALUES (@workspace_id, @user_id, @rule_name, @sender_contains, @subject_contains, @vendor, @category, @record_type, @recurring_frequency, @auto_approve, @is_active)
+  `)
+  const result = stmt.run({
+    workspace_id: data.workspace_id ?? 1,
+    user_id: data.user_id ?? 1,
+    rule_name: data.rule_name,
+    sender_contains: data.sender_contains ?? '',
+    subject_contains: data.subject_contains ?? '',
+    vendor: data.vendor ?? '',
+    category: data.category ?? '',
+    record_type: data.record_type ?? 'bill',
+    recurring_frequency: data.recurring_frequency ?? 'monthly',
+    auto_approve: data.auto_approve ? 1 : 0,
+    is_active: data.is_active ?? 1,
+  })
+  return getAutomationRule(result.lastInsertRowid as number)
+}
+
+export function updateAutomationRule(id: number, data: any) {
+  const fields = Object.keys(data).filter(k => k !== 'id' && k !== 'created_at')
+  if (fields.length === 0) return getAutomationRule(id)
+  const sets = fields.map(f => `${f} = @${f}`).join(', ')
+  db.prepare(`UPDATE automation_rules SET ${sets}, updated_at = datetime('now') WHERE id = @id`).run({ ...data, id })
+  return getAutomationRule(id)
+}
+
+export function deleteAutomationRule(id: number) {
+  db.prepare('DELETE FROM automation_rules WHERE id = ?').run(id)
+}
+
+// ============ Budgets ============
+export function listBudgetCategories() {
+  return db.prepare('SELECT * FROM budget_categories ORDER BY name ASC').all()
+}
+
+export function createBudgetCategory(name: string, color?: string) {
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO budget_categories (workspace_id, name, color)
+    VALUES (1, ?, ?)
+  `)
+  stmt.run(name, color || '#3B82F6')
+  return db.prepare('SELECT * FROM budget_categories WHERE workspace_id = 1 AND name = ?').get(name)
+}
+
+export function deleteBudgetCategory(id: number) {
+  db.prepare('DELETE FROM budget_categories WHERE id = ?').run(id)
+}
+
+export function listMonthlyBudgets(month: string) {
+  // Return all budget categories with their limit for this month and their actual expenses for this month
+  return db.prepare(`
+    SELECT
+      bc.id as category_id,
+      bc.name as category_name,
+      bc.color as category_color,
+      COALESCE(mb.amount_limit, 0) as amount_limit,
+      COALESCE(mb.id, 0) as budget_id,
+      COALESCE((
+        SELECT SUM(amount)
+        FROM expenses
+        WHERE category = bc.name AND strftime('%Y-%m', date) = ?
+      ), 0) as current_spend
+    FROM budget_categories bc
+    LEFT JOIN monthly_budgets mb ON mb.category_id = bc.id AND mb.month = ?
+    WHERE bc.workspace_id = 1
+    ORDER BY bc.name ASC
+  `).all(month, month)
+}
+
+export function setMonthlyBudget(categoryId: number, month: string, amountLimit: number) {
+  db.prepare(`
+    INSERT INTO monthly_budgets (workspace_id, category_id, month, amount_limit)
+    VALUES (1, ?, ?, ?)
+    ON CONFLICT(workspace_id, category_id, month) DO UPDATE SET amount_limit = excluded.amount_limit, updated_at = datetime('now')
+  `).run(categoryId, month, amountLimit)
+
+  return db.prepare('SELECT * FROM monthly_budgets WHERE workspace_id = 1 AND category_id = ? AND month = ?').get(categoryId, month)
 }
 
 export { db }

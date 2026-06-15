@@ -16,6 +16,7 @@ import Reports from './pages/Reports'
 import SettingsPage from './pages/Settings'
 import TaxSettingsPage from './pages/TaxSettings'
 import TaxOverviewPage from './pages/TaxOverview'
+import BillInbox from './pages/BillInbox'
 import WhatsNewModal from './components/WhatsNewModal'
 import { useTimer } from './hooks/useTimer'
 
@@ -51,6 +52,7 @@ export default function App() {
                 activeEntry={activeEntry}
               />
             } />
+            <Route path="/bill-inbox" element={<BillInbox />} />
             <Route path="/clients" element={<Clients />} />
             <Route path="/clients/:id" element={<ClientDetail />} />
             <Route path="/projects" element={<Projects onStartTimer={startTimer} onStopTimer={stopTimer} isTimerRunning={isRunning} activeEntry={activeEntry} />} />

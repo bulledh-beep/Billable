@@ -37,6 +37,7 @@ interface FormState {
   description: string
   amount: number
   receipt_note: string
+  is_deductible: boolean
 }
 
 export default function ExpensePanel({
@@ -54,6 +55,7 @@ export default function ExpensePanel({
     description: '',
     amount: 0,
     receipt_note: '',
+    is_deductible: true,
   })
   const [saving, setSaving] = useState(false)
 
@@ -66,12 +68,13 @@ export default function ExpensePanel({
         description: expense.description,
         amount: expense.amount,
         receipt_note: expense.receipt_note,
+        is_deductible: expense.is_deductible !== 0,
       })
     } else {
       // Default the date to Jan 1 of the selected tax year if it's in the past, else today
       const currentYear = new Date().getFullYear()
       const date = defaultTaxYear === currentYear ? todayISO() : `${defaultTaxYear}-01-01`
-      setForm({ date, category: 'other', description: '', amount: 0, receipt_note: '' })
+      setForm({ date, category: 'other', description: '', amount: 0, receipt_note: '', is_deductible: true })
     }
   }, [open, expense, defaultTaxYear])
 
@@ -93,12 +96,14 @@ export default function ExpensePanel({
       if (isEdit && expense) {
         await window.api.expenses.update(expense.id, {
           ...form,
+          is_deductible: form.is_deductible ? 1 : 0,
           tax_year: new Date(form.date).getFullYear(),
         })
         toast.success('Expense updated')
       } else {
         await window.api.expenses.create({
           ...form,
+          is_deductible: form.is_deductible ? 1 : 0,
           tax_year: new Date(form.date).getFullYear(),
         })
         toast.success('Expense added')
@@ -227,6 +232,16 @@ export default function ExpensePanel({
                   A pointer to where the receipt is stored. (Receipt attachments come in Phase 4.)
                 </p>
               </div>
+
+              <label className="flex items-center gap-2 cursor-pointer pt-2 select-none">
+                <input
+                  type="checkbox"
+                  checked={form.is_deductible}
+                  onChange={e => update('is_deductible', e.target.checked)}
+                  className="rounded border-rim/20 bg-surface-300 text-accent focus:ring-accent"
+                />
+                <span className="text-sm text-text-secondary">Deductible for Income Tax</span>
+              </label>
             </div>
 
             <div className="p-5 border-t border-rim/[0.04] flex items-center justify-between gap-3">

@@ -52,12 +52,12 @@ export function useTimer() {
     setActiveEntry(entry)
   }
 
-  const startTimer = async (projectId: number, description: string = '') => {
+  const startTimer = async (projectId: number, description: string = '', isBillable?: number) => {
     // Stop any existing timer first
     if (activeEntry) {
       await window.api.time.stop(activeEntry.id)
     }
-    const entry = await window.api.time.start(projectId, description)
+    const entry = await window.api.time.start(projectId, description, isBillable)
     setActiveEntry(entry)
     return entry
   }

@@ -12,6 +12,8 @@ import {
   setProfileAvatar, clearProfileAvatar,
 } from './profiles'
 import { checkForUpdates, downloadAndOpenUpdate, getCachedStatus, installUpdate, getReleaseNotesForTag, getAppBundlePath } from './updater'
+import { startGoogleOAuth, disconnectGoogleOAuth } from './gmail-oauth'
+import { syncGmailEmails, extractCandidateFromEmail } from './gmail-import'
 
 export function registerIpcHandlers(timerManager: TimerManager) {
   // ========== Clients ==========
@@ -34,7 +36,7 @@ export function registerIpcHandlers(timerManager: TimerManager) {
   ipcMain.handle('time:create', (_, data) => db.createTimeEntry(data))
   ipcMain.handle('time:update', (_, id: number, data) => db.updateTimeEntry(id, data))
   ipcMain.handle('time:delete', (_, id: number) => db.deleteTimeEntry(id))
-  ipcMain.handle('time:start', (_, projectId: number, description?: string) => timerManager.start(projectId, description))
+  ipcMain.handle('time:start', (_, projectId: number, description?: string, isBillable?: number) => timerManager.start(projectId, description, isBillable))
   ipcMain.handle('time:stop', () => timerManager.stop())
   ipcMain.handle('time:active', () => timerManager.getActive())
 
@@ -164,7 +166,7 @@ export function registerIpcHandlers(timerManager: TimerManager) {
       filters: [{ name: 'CSV', extensions: ['csv'] }],
     })
     if (result.canceled || !result.filePath) return null
-    const cols = ['date', 'category', 'description', 'amount', 'tax_year', 'receipt_note']
+    const cols = ['date', 'category', 'vendor', 'description', 'amount', 'currency', 'is_deductible', 'is_reimbursable', 'receipt_note']
     const csv = [
       cols.join(','),
       ...data.map((r: any) => cols.map(c =>
@@ -260,4 +262,78 @@ export function registerIpcHandlers(timerManager: TimerManager) {
     const result = await dialog.showSaveDialog(win, options)
     return result.canceled ? null : result.filePath
   })
+
+  // ========== Bills ==========
+  ipcMain.handle('bills:list', () => db.listBills())
+  ipcMain.handle('bills:get', (_, id: number) => db.getBill(id))
+  ipcMain.handle('bills:create', (_, data) => db.createBill(data))
+  ipcMain.handle('bills:update', (_, id: number, data) => db.updateBill(id, data))
+  ipcMain.handle('bills:delete', (_, id: number) => db.deleteBill(id))
+
+  // ========== Subscriptions ==========
+  ipcMain.handle('subscriptions:list', () => db.listSubscriptions())
+  ipcMain.handle('subscriptions:get', (_, id: number) => db.getSubscription(id))
+  ipcMain.handle('subscriptions:create', (_, data) => db.createSubscription(data))
+  ipcMain.handle('subscriptions:update', (_, id: number, data) => db.updateSubscription(id, data))
+  ipcMain.handle('subscriptions:delete', (_, id: number) => db.deleteSubscription(id))
+
+  // ========== Payments ==========
+  ipcMain.handle('payments:list', () => db.listPayments())
+  ipcMain.handle('payments:create', (_, data) => db.createPayment(data))
+  ipcMain.handle('payments:delete', (_, id: number) => db.deletePayment(id))
+
+  // ========== Email Imports ==========
+  ipcMain.handle('email-imports:list', () => db.listEmailImports())
+  ipcMain.handle('email-imports:create', (_, data) => db.createEmailImport(data))
+  ipcMain.handle('email-imports:update-status', (_, id: number, status: string) => db.updateEmailImportStatus(id, status))
+
+  // ========== Candidates ==========
+  ipcMain.handle('candidates:list', (_, reviewStatus?: string) => db.listCandidates(reviewStatus))
+  ipcMain.handle('candidates:get', (_, id: number) => db.getCandidate(id))
+  ipcMain.handle('candidates:create', (_, data) => db.createCandidate(data))
+  ipcMain.handle('candidates:update', (_, id: number, data) => db.updateCandidate(id, data))
+  ipcMain.handle('candidates:delete', (_, id: number) => db.deleteCandidate(id))
+  ipcMain.handle('candidates:parse-text', (_, text: string, subject: string, sender: string) => {
+    const emailImport = db.createEmailImport({
+      workspace_id: 1,
+      user_id: 1,
+      provider: 'manual',
+      source_email_id: 'manual-' + Date.now(),
+      sender: sender || 'Manual Paste',
+      subject: subject || 'Pasted Email Text',
+      received_at: new Date().toISOString(),
+      body_preview: text.slice(0, 100),
+      attachment_names: '',
+      status: 'detected',
+      confidence_score: 1.0
+    }) as any
+    return extractCandidateFromEmail(emailImport.id, emailImport.sender, emailImport.subject, text)
+  })
+
+  // ========== Automation Rules ==========
+  ipcMain.handle('automation-rules:list', () => db.listAutomationRules())
+  ipcMain.handle('automation-rules:create', (_, data) => db.createAutomationRule(data))
+  ipcMain.handle('automation-rules:update', (_, id: number, data) => db.updateAutomationRule(id, data))
+  ipcMain.handle('automation-rules:delete', (_, id: number) => db.deleteAutomationRule(id))
+
+  // ========== Budgets ==========
+  ipcMain.handle('budgets:categories-list', () => db.listBudgetCategories())
+  ipcMain.handle('budgets:category-create', (_, name: string, color?: string) => db.createBudgetCategory(name, color))
+  ipcMain.handle('budgets:category-delete', (_, id: number) => db.deleteBudgetCategory(id))
+  ipcMain.handle('budgets:monthly-list', (_, month: string) => db.listMonthlyBudgets(month))
+  ipcMain.handle('budgets:monthly-set', (_, categoryId: number, month: string, limit: number) => db.setMonthlyBudget(categoryId, month, limit))
+
+  // ========== Gmail OAuth ==========
+  ipcMain.handle('gmail:connect', () => startGoogleOAuth())
+  ipcMain.handle('gmail:disconnect', () => disconnectGoogleOAuth())
+  ipcMain.handle('gmail:status', () => {
+    const settings = db.getSettings()
+    return {
+      connected: !!settings.google_refresh_token,
+      email: settings.google_email || '',
+      clientId: settings.google_client_id || '',
+      clientSecret: settings.google_client_secret ? '••••••••' : '',
+    }
+  })
+  ipcMain.handle('gmail:sync', (_, daysRange) => syncGmailEmails(daysRange))
 }

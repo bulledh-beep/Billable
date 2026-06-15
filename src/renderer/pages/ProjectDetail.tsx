@@ -10,7 +10,7 @@ import type { Project, TimeEntry } from '@shared/types'
 import toast from 'react-hot-toast'
 
 interface Props {
-  onStartTimer: (projectId: number, description?: string) => Promise<any>
+  onStartTimer: (projectId: number, description?: string, isBillable?: number) => Promise<any>
   onStopTimer: () => Promise<any>
   isTimerRunning: boolean
   activeEntry: TimeEntry | null
@@ -146,6 +146,9 @@ export default function ProjectDetail({ onStartTimer, onStopTimer, isTimerRunnin
         <div className="glass-panel p-4">
           <div className="text-xs text-text-tertiary mb-1">Total Hours</div>
           <div className="font-mono text-lg font-semibold">{formatHours(project.total_hours || 0)}h</div>
+          <div className="text-[10px] text-text-tertiary mt-1">
+            {formatHours(project.total_billable_hours || 0)}h billable · {formatHours(project.total_non_billable_hours || 0)}h non-billable
+          </div>
         </div>
         <div className="glass-panel p-4">
           <div className="text-xs text-text-tertiary mb-1">Total Earned</div>
@@ -195,7 +198,16 @@ export default function ProjectDetail({ onStartTimer, onStopTimer, isTimerRunnin
             {entries.filter((e: any) => e.end_time).map((entry: any) => (
               <tr key={entry.id} className="border-b border-rim/[0.02] hover:bg-surface-200/30 transition-colors">
                 <td className="px-4 py-3 text-sm text-text-secondary">{formatDate(entry.start_time)}</td>
-                <td className="px-4 py-3 text-sm text-text-primary">{entry.description || '—'}</td>
+                <td className="px-4 py-3 text-sm text-text-primary">
+                  <div className="flex items-center gap-2">
+                    <span>{entry.description || '—'}</span>
+                    {!entry.is_billable && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium bg-surface-300 text-text-tertiary rounded">
+                        Non-billable
+                      </span>
+                    )}
+                  </div>
+                </td>
                 <td className="px-4 py-3 text-sm text-text-tertiary font-mono">
                   {formatTime(entry.start_time)} – {entry.end_time ? formatTime(entry.end_time) : '...'}
                 </td>
@@ -203,7 +215,7 @@ export default function ProjectDetail({ onStartTimer, onStopTimer, isTimerRunnin
                   {formatDuration(entry.duration_minutes)}
                 </td>
                 <td className="px-4 py-3 text-sm font-mono text-right text-text-primary">
-                  {formatMoney((entry.duration_minutes / 60) * project.rate)}
+                  {entry.is_billable ? formatMoney((entry.duration_minutes / 60) * project.rate) : '—'}
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-0.5 justify-end">

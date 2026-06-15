@@ -7,6 +7,8 @@ import { createMenu } from './menu'
 import { TimerManager } from './timer-manager'
 import { migrateLegacyIfNeeded, getActiveProfileId } from './profiles'
 
+app.disableHardwareAcceleration()
+
 let mainWindow: BrowserWindow | null = null
 let timerManager: TimerManager
 

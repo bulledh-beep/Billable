@@ -39,13 +39,13 @@ export class TimerManager {
     }
   }
 
-  start(projectId: number, description?: string) {
+  start(projectId: number, description?: string, isBillable?: number) {
     // Stop any running timer first
     if (this.activeEntry) {
       this.stopInternal()
     }
 
-    const entry = db.startTimer(projectId, description)
+    const entry = db.startTimer(projectId, description, isBillable ?? 1)
     this.activeEntry = entry
     this.startTicking()
     this.broadcastStateChange()

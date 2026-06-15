@@ -14,7 +14,7 @@ const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { st
 const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }
 
 interface Props {
-  onStartTimer: (projectId: number, description?: string) => Promise<any>
+  onStartTimer: (projectId: number, description?: string, isBillable?: number) => Promise<any>
   onStopTimer: () => Promise<any>
   isTimerRunning: boolean
   activeEntry: TimeEntry | null
@@ -34,6 +34,7 @@ export default function TimeTracking({ onStartTimer, onStopTimer, isTimerRunning
   // Start timer form
   const [startProjectId, setStartProjectId] = useState(0)
   const [startDescription, setStartDescription] = useState('')
+  const [startIsBillable, setStartIsBillable] = useState(true)
 
   // Manual entry form
   const [manualForm, setManualForm] = useState({
@@ -70,9 +71,10 @@ export default function TimeTracking({ onStartTimer, onStopTimer, isTimerRunning
 
   const handleStart = async () => {
     if (!startProjectId) return toast.error('Select a project')
-    await onStartTimer(startProjectId, startDescription)
+    await onStartTimer(startProjectId, startDescription, startIsBillable ? 1 : 0)
     setShowStartForm(false)
     setStartDescription('')
+    setStartIsBillable(true)
     toast.success('Timer started')
     loadData()
   }
@@ -314,6 +316,15 @@ export default function TimeTracking({ onStartTimer, onStopTimer, isTimerRunning
               autoFocus
             />
           </div>
+          <label className="flex items-center gap-2 cursor-pointer pb-2">
+            <input
+              type="checkbox"
+              checked={startIsBillable}
+              onChange={e => setStartIsBillable(e.target.checked)}
+              className="rounded border-rim/20 bg-surface-300 text-accent focus:ring-accent"
+            />
+            <span className="text-sm text-text-secondary">Billable</span>
+          </label>
           <div className="flex justify-end gap-3">
             <button onClick={() => setShowStartForm(false)} className="btn-secondary">Cancel</button>
             <button onClick={handleStart} className="btn-primary flex items-center gap-2">

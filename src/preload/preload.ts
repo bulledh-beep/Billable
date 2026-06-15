@@ -24,7 +24,7 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('time:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('time:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('time:delete', id),
-    start: (projectId: number, description?: string) => ipcRenderer.invoke('time:start', projectId, description),
+    start: (projectId: number, description?: string, isBillable?: number) => ipcRenderer.invoke('time:start', projectId, description, isBillable),
     stop: (id: number) => ipcRenderer.invoke('time:stop', id),
     active: () => ipcRenderer.invoke('time:active'),
     unbilled: (projectId: number) => ipcRenderer.invoke('time:unbilled', projectId),
@@ -102,6 +102,65 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('expense:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('expense:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('expense:delete', id),
+  },
+  // Bills
+  bills: {
+    list: () => ipcRenderer.invoke('bills:list'),
+    get: (id: number) => ipcRenderer.invoke('bills:get', id),
+    create: (data: any) => ipcRenderer.invoke('bills:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('bills:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('bills:delete', id),
+  },
+  // Subscriptions
+  subscriptions: {
+    list: () => ipcRenderer.invoke('subscriptions:list'),
+    get: (id: number) => ipcRenderer.invoke('subscriptions:get', id),
+    create: (data: any) => ipcRenderer.invoke('subscriptions:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('subscriptions:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('subscriptions:delete', id),
+  },
+  // Payments
+  payments: {
+    list: () => ipcRenderer.invoke('payments:list'),
+    create: (data: any) => ipcRenderer.invoke('payments:create', data),
+    delete: (id: number) => ipcRenderer.invoke('payments:delete', id),
+  },
+  // Email Imports
+  emailImports: {
+    list: () => ipcRenderer.invoke('email-imports:list'),
+    create: (data: any) => ipcRenderer.invoke('email-imports:create', data),
+    updateStatus: (id: number, status: string) => ipcRenderer.invoke('email-imports:update-status', id, status),
+  },
+  // Candidates
+  candidates: {
+    list: (reviewStatus?: string) => ipcRenderer.invoke('candidates:list', reviewStatus),
+    get: (id: number) => ipcRenderer.invoke('candidates:get', id),
+    create: (data: any) => ipcRenderer.invoke('candidates:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('candidates:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('candidates:delete', id),
+    parseText: (text: string, subject: string, sender: string) => ipcRenderer.invoke('candidates:parse-text', text, subject, sender),
+  },
+  // Automation Rules
+  automationRules: {
+    list: () => ipcRenderer.invoke('automation-rules:list'),
+    create: (data: any) => ipcRenderer.invoke('automation-rules:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('automation-rules:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('automation-rules:delete', id),
+  },
+  // Budgets
+  budgets: {
+    categoriesList: () => ipcRenderer.invoke('budgets:categories-list'),
+    categoryCreate: (name: string, color?: string) => ipcRenderer.invoke('budgets:category-create', name, color),
+    categoryDelete: (id: number) => ipcRenderer.invoke('budgets:category-delete', id),
+    monthlyList: (month: string) => ipcRenderer.invoke('budgets:monthly-list', month),
+    monthlySet: (categoryId: number, month: string, limit: number) => ipcRenderer.invoke('budgets:monthly-set', categoryId, month, limit),
+  },
+  // Gmail OAuth
+  gmail: {
+    connect: () => ipcRenderer.invoke('gmail:connect'),
+    disconnect: () => ipcRenderer.invoke('gmail:disconnect'),
+    status: () => ipcRenderer.invoke('gmail:status'),
+    sync: (daysRange?: number) => ipcRenderer.invoke('gmail:sync', daysRange),
   },
   // Events from main process
   on: (channel: string, callback: (...args: any[]) => void) => {

@@ -348,7 +348,14 @@ export default function TaxOverview() {
                       {CATEGORY_LABEL[e.category] || e.category}
                     </td>
                     <td className="px-3 py-2.5 text-xs text-text-secondary truncate max-w-[300px]">
-                      {e.description || '—'}
+                      <div className="flex items-center gap-2">
+                        <span>{e.description || '—'}</span>
+                        {e.is_deductible === 0 && (
+                          <span className="px-1.5 py-0.5 text-[9px] font-medium bg-surface-300 text-text-tertiary rounded">
+                            Non-deductible
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-2.5 text-xs font-mono text-text-primary text-right">
                       {money(e.amount)}

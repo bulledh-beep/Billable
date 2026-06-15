@@ -15,7 +15,7 @@ const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { st
 const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }
 
 interface ProjectsProps {
-  onStartTimer: (projectId: number, description?: string) => Promise<any>
+  onStartTimer: (projectId: number, description?: string, isBillable?: number) => Promise<any>
   onStopTimer: () => Promise<any>
   isTimerRunning: boolean
   activeEntry: TimeEntry | null
