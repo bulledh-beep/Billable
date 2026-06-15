@@ -122,7 +122,22 @@ function cleanVendorName(sender: string): string {
 }
 
 /**
- * Parse date from raw text to standard YYYY-MM-DD
+ * Validate a Y/M/D is a real calendar date (rejects e.g. 2026-06-31, 2026-02-30).
+ * Returns the normalized YYYY-MM-DD, or null if impossible/out of sane range.
+ */
+function validYmd(y: number, m: number, d: number): string | null {
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null
+  if (y < 2000 || y > 2100) return null
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  // Round-trip check: JS rolls 06-31 over to 07-01, so compare the parts back.
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) {
+    return null
+  }
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
+/**
+ * Parse date from raw text to standard YYYY-MM-DD. Only returns real dates.
  */
 function parseDateString(text: string): string | null {
   if (!text) return null
@@ -130,35 +145,34 @@ function parseDateString(text: string): string | null {
   // Match YYYY-MM-DD
   const ymd = text.match(/\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/)
   if (ymd) {
-    const y = ymd[1]
-    const m = ymd[2].padStart(2, '0')
-    const d = ymd[3].padStart(2, '0')
-    return `${y}-${m}-${d}`
+    return validYmd(parseInt(ymd[1]), parseInt(ymd[2]), parseInt(ymd[3]))
   }
 
   // Month Names Map
-  const monthMap: Record<string, string> = {
-    january: '01', february: '02', march: '03', april: '04', may: '05', june: '06',
-    july: '07', august: '08', september: '09', october: '10', november: '11', december: '12',
-    jan: '01', feb: '02', mar: '03', apr: '04', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+  const monthMap: Record<string, number> = {
+    january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+    july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
+    jan: 1, feb: 2, mar: 3, apr: 4, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
   }
 
-  const monthRegex = new RegExp(`\\b(${Object.keys(monthMap).join('|')})\\b`, 'i')
-  const hasMonth = text.match(monthRegex)
-  if (hasMonth) {
-    const monthName = hasMonth[1].toLowerCase()
-    const monthVal = monthMap[monthName]
-
-    // Find YYYY (e.g. 2024 to 2035)
-    const yearMatch = text.match(/\b(202\d|203\d)\b/)
-    const year = yearMatch ? yearMatch[1] : new Date().getFullYear().toString()
-
-    // Find DD day
-    const stripped = text.replace(year, '').replace(hasMonth[1], '')
-    const dayMatch = stripped.match(/\b(\d{1,2})\b/)
-    const day = dayMatch ? dayMatch[1].padStart(2, '0') : '01'
-
-    return `${year}-${monthVal}-${day}`
+  // Prefer "Month DD, YYYY" / "DD Month YYYY" patterns so we grab the day that
+  // actually sits next to the month name, not a stray number elsewhere.
+  const monthAlt = Object.keys(monthMap).join('|')
+  const mdY = text.match(new RegExp(`\\b(${monthAlt})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s*(\\d{4})?`, 'i'))
+  if (mdY) {
+    const m = monthMap[mdY[1].toLowerCase()]
+    const d = parseInt(mdY[2])
+    const y = mdY[3] ? parseInt(mdY[3]) : new Date().getFullYear()
+    const v = validYmd(y, m, d)
+    if (v) return v
+  }
+  const dMY = text.match(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${monthAlt})\\.?,?\\s*(\\d{4})?`, 'i'))
+  if (dMY) {
+    const m = monthMap[dMY[2].toLowerCase()]
+    const d = parseInt(dMY[1])
+    const y = dMY[3] ? parseInt(dMY[3]) : new Date().getFullYear()
+    const v = validYmd(y, m, d)
+    if (v) return v
   }
 
   return null

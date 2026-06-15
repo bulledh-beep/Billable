@@ -357,6 +357,38 @@ export default function Billing() {
     }
   }
 
+  // Has an equivalent record already been created? Matches vendor + amount +
+  // a nearby date across the relevant ledger. Prevents the same bill stacking
+  // into multiple expenses when approved more than once.
+  const findExistingDuplicate = (candidate: BillImportCandidate): string | null => {
+    const vendor = (candidate.extracted_vendor || '').trim().toLowerCase()
+    const amount = candidate.extracted_amount || 0
+    if (!vendor || !amount) return null
+    const refDate = candidate.extracted_payment_date || candidate.extracted_due_date || ''
+    const withinDays = (a: string, b: string, days: number) => {
+      if (!a || !b) return false
+      const diff = Math.abs(new Date(a).getTime() - new Date(b).getTime()) / 86400000
+      return diff <= days
+    }
+    const amtMatch = (x: number) => Math.abs((x || 0) - amount) < 0.01
+
+    const type = candidate.extracted_record_type
+    if (type === 'expense' || type === 'receipt') {
+      const hit = expenses.find(e => (e.vendor || '').trim().toLowerCase() === vendor && amtMatch(e.amount) && withinDays(e.date, refDate, 4))
+      if (hit) return `expense "${hit.vendor}" $${hit.amount} on ${hit.date}`
+    } else if (type === 'bill') {
+      const hit = bills.find(b => (b.vendor || '').trim().toLowerCase() === vendor && amtMatch(b.amount) && withinDays(b.due_date, refDate, 4))
+      if (hit) return `bill "${hit.vendor}" $${hit.amount}`
+    } else if (type === 'payment') {
+      const hit = payments.find(p => (p.vendor || '').trim().toLowerCase() === vendor && amtMatch(p.amount) && withinDays(p.payment_date, refDate, 4))
+      if (hit) return `payment "${hit.vendor}" $${hit.amount}`
+    } else if (type === 'subscription') {
+      const hit = subscriptions.find(s => (s.vendor || '').trim().toLowerCase() === vendor && amtMatch(s.amount))
+      if (hit) return `subscription "${hit.vendor}" $${hit.amount}`
+    }
+    return null
+  }
+
   const approveCandidateHelper = async (candidate: BillImportCandidate) => {
     if (candidate.extracted_record_type === 'bill') {
       await window.api.bills.create({
@@ -405,6 +437,14 @@ export default function Billing() {
   }
 
   const handleApproveCandidate = async (candidate: BillImportCandidate) => {
+    const dup = findExistingDuplicate(candidate)
+    if (dup && !confirm(`This looks like a duplicate of an existing ${dup}.\n\nAdd it anyway?`)) {
+      // Treat as a duplicate rather than importing a second copy
+      await window.api.candidates.update(candidate.id, { review_status: 'duplicate' })
+      toast('Marked as duplicate — not imported', { icon: '⏭️' })
+      loadAllData()
+      return
+    }
     toast.loading('Processing approval...', { id: 'approve-candidate' })
     try {
       await approveCandidateHelper(candidate)
@@ -421,15 +461,23 @@ export default function Billing() {
     toast.loading(`Approving ${candidatesToApprove.length} candidates...`, { id: 'bulk-approve' })
     try {
       let successCount = 0
+      let skippedDup = 0
       for (const c of candidatesToApprove) {
         try {
+          // In bulk, skip exact duplicates silently rather than stacking copies
+          if (findExistingDuplicate(c)) {
+            await window.api.candidates.update(c.id, { review_status: 'duplicate' })
+            skippedDup++
+            continue
+          }
           await approveCandidateHelper(c)
           successCount++
         } catch (err: any) {
           console.error(`Failed to approve candidate ${c.id}: ${err.message}`)
         }
       }
-      toast.success(`Successfully approved ${successCount} candidates.`, { id: 'bulk-approve' })
+      const dupNote = skippedDup ? ` · skipped ${skippedDup} duplicate${skippedDup > 1 ? 's' : ''}` : ''
+      toast.success(`Approved ${successCount}${dupNote}.`, { id: 'bulk-approve' })
       setSelectedInboxIds([])
       loadAllData()
     } catch (err: any) {
