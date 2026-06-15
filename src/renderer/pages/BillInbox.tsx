@@ -33,6 +33,7 @@ export default function BillInbox() {
   const [syncing, setSyncing] = useState(false)
   const [gmailConnected, setGmailConnected] = useState<boolean | null>(null)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [focusedId, setFocusedId] = useState<number | null>(null)
 
   // Modals state
   const [showPasteModal, setShowPasteModal] = useState(false)
@@ -72,7 +73,19 @@ export default function BillInbox() {
     recurring_frequency: 'monthly',
     auto_approve: 0,
   })
-
+  // Filter candidates based on activeTab
+  const filteredCandidates = candidates.filter(c => {
+    if (activeTab === 'needs_review') {
+      return c.review_status === 'needs_review'
+    } else if (activeTab === 'ignored') {
+      return c.review_status === 'ignored'
+    } else if (activeTab === 'duplicate') {
+      return c.review_status === 'duplicate'
+    } else {
+      // bill, receipt, subscription, payment tabs show approved ones
+      return c.review_status === 'approved' && c.extracted_record_type === activeTab
+    }
+  })
   useEffect(() => {
     loadCandidates()
     checkGmailStatus()
@@ -81,6 +94,111 @@ export default function BillInbox() {
   useEffect(() => {
     setSelectedIds([])
   }, [activeTab])
+
+  // Maintain active focused item
+  useEffect(() => {
+    if (filteredCandidates.length > 0) {
+      if (focusedId === null || !filteredCandidates.some(c => c.id === focusedId)) {
+        setFocusedId(filteredCandidates[0].id)
+      }
+    } else {
+      setFocusedId(null)
+    }
+  }, [filteredCandidates, focusedId])
+
+  // Scroll focused item into view
+  useEffect(() => {
+    if (focusedId !== null) {
+      const element = document.getElementById(`candidate-card-${focusedId}`)
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      }
+    }
+  }, [focusedId])
+
+  // Keyboard navigation & quick actions
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Skip if user is typing in forms
+      if (
+        document.activeElement?.tagName === 'INPUT' ||
+        document.activeElement?.tagName === 'TEXTAREA' ||
+        document.activeElement?.getAttribute('contenteditable') === 'true'
+      ) {
+        return
+      }
+
+      const activeIndex = filteredCandidates.findIndex(c => c.id === focusedId)
+
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        e.preventDefault()
+        if (activeIndex < filteredCandidates.length - 1) {
+          setFocusedId(filteredCandidates[activeIndex + 1].id)
+        }
+      } else if (e.key === 'k' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        if (activeIndex > 0) {
+          setFocusedId(filteredCandidates[activeIndex - 1].id)
+        }
+      } else if (e.key === 'a' || e.key === 'A') {
+        e.preventDefault()
+        if (selectedIds.length > 0) {
+          handleBulkApprove()
+        } else if (focusedId !== null) {
+          const activeCandidate = filteredCandidates.find(c => c.id === focusedId)
+          if (activeCandidate && activeCandidate.review_status === 'needs_review') {
+            const nextId = activeIndex < filteredCandidates.length - 1
+              ? filteredCandidates[activeIndex + 1].id
+              : activeIndex > 0
+                ? filteredCandidates[activeIndex - 1].id
+                : null
+            setFocusedId(nextId)
+            handleApprove(activeCandidate)
+          }
+        }
+      } else if (e.key === 'i' || e.key === 'I') {
+        e.preventDefault()
+        if (selectedIds.length > 0) {
+          handleBulkIgnore()
+        } else if (focusedId !== null) {
+          const nextId = activeIndex < filteredCandidates.length - 1
+            ? filteredCandidates[activeIndex + 1].id
+            : activeIndex > 0
+              ? filteredCandidates[activeIndex - 1].id
+              : null
+          setFocusedId(nextId)
+          handleIgnore(focusedId)
+        }
+      } else if (e.key === 'd' || e.key === 'D' || e.key === 'Delete') {
+        e.preventDefault()
+        if (selectedIds.length > 0) {
+          handleBulkDelete()
+        } else if (focusedId !== null) {
+          const nextId = activeIndex < filteredCandidates.length - 1
+            ? filteredCandidates[activeIndex + 1].id
+            : activeIndex > 0
+              ? filteredCandidates[activeIndex - 1].id
+              : null
+          setFocusedId(nextId)
+          handleDeleteCandidate(focusedId)
+        }
+      } else if (e.key === ' ') {
+        e.preventDefault()
+        if (focusedId !== null) {
+          toggleSelect(focusedId)
+        }
+      } else if (e.key === 'e' || e.key === 'E') {
+        e.preventDefault()
+        if (focusedId !== null) {
+          const activeCandidate = filteredCandidates.find(c => c.id === focusedId)
+          if (activeCandidate) handleEditClick(activeCandidate)
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [focusedId, selectedIds, filteredCandidates])
 
   const checkGmailStatus = async () => {
     try {
@@ -344,25 +462,18 @@ export default function BillInbox() {
     }
   }
 
-  // Filter candidates based on activeTab
-  const filteredCandidates = candidates.filter(c => {
-    if (activeTab === 'needs_review') {
-      return c.review_status === 'needs_review'
-    } else if (activeTab === 'ignored') {
-      return c.review_status === 'ignored'
-    } else if (activeTab === 'duplicate') {
-      return c.review_status === 'duplicate'
-    } else {
-      // bill, receipt, subscription, payment tabs show approved ones
-      return c.review_status === 'approved' && c.extracted_record_type === activeTab
-    }
-  })
+
 
   return (
     <motion.div variants={container} initial="hidden" animate="show" className="p-8">
       <motion.div variants={item} className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary">Bill Inbox</h1>
+          <h1 className="text-2xl font-bold text-text-primary flex items-center gap-3">
+            Bill Inbox
+            <span className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-200 border border-rim/6 text-[10px] text-text-tertiary font-mono">
+              ⌨️ A: Approve · I: Ignore · Space: Select · ↓/↑: Move
+            </span>
+          </h1>
           <p className="text-sm text-text-secondary mt-1">
             Incoming bills, receipts, and subscriptions detected from Gmail
           </p>
@@ -499,10 +610,13 @@ export default function BillInbox() {
             {filteredCandidates.map(c => (
               <motion.div
                 key={c.id}
+                id={`candidate-card-${c.id}`}
                 layoutId={`candidate-${c.id}`}
                 variants={item}
                 exit={{ opacity: 0, scale: 0.95 }}
-                className="glass-panel p-5 relative border border-rim/[0.04] flex items-start gap-4"
+                className={`glass-panel p-5 relative border transition-all flex items-start gap-4 ${
+                  focusedId === c.id ? 'ring-1 ring-accent border-accent bg-accent/[0.01]' : 'border-rim/[0.04]'
+                }`}
               >
                 {/* Checkbox */}
                 <div className="pt-1 flex-shrink-0">
