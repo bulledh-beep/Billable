@@ -320,6 +320,7 @@ export interface Settings {
   theme: 'dark' | 'light'
   google_client_id?: string
   google_client_secret?: string
+  bill_tracking_enabled?: string
 }
 
 export interface Profile {

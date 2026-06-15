@@ -379,6 +379,7 @@ function seedDefaults() {
     default_payment_method: 'e-Transfer',
     time_rounding: 'none',
     theme: 'dark',
+    bill_tracking_enabled: '1',
   }
 
   const insert = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')

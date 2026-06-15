@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -61,6 +61,21 @@ export default function Sidebar({ isRunning, elapsed, activeProjectName, onStopT
   const clickTimesRef = useRef<number[]>([])
   const [spinCount, setSpinCount] = useState(0)
   const [showRing, setShowRing] = useState(false)
+  const [billTrackingEnabled, setBillTrackingEnabled] = useState(true)
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const s = await window.api.settings.get()
+        setBillTrackingEnabled(s?.bill_tracking_enabled !== '0')
+      } catch (err) {
+        console.error(err)
+      }
+    }
+    loadSettings()
+    window.addEventListener('settings-updated', loadSettings)
+    return () => window.removeEventListener('settings-updated', loadSettings)
+  }, [])
 
   const handleLogoClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
     const now = Date.now()
@@ -131,19 +146,21 @@ export default function Sidebar({ isRunning, elapsed, activeProjectName, onStopT
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
-        {navItems.map(({ to, icon: Icon, label }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={to === '/'}
-            className={({ isActive }) =>
-              `sidebar-link ${isActive ? 'active' : ''}`
-            }
-          >
-            <Icon className="w-4.5 h-4.5 flex-shrink-0" style={{ width: 18, height: 18 }} />
-            <span>{label}</span>
-          </NavLink>
-        ))}
+        {navItems
+          .filter(item => item.to !== '/billing' || billTrackingEnabled)
+          .map(({ to, icon: Icon, label }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === '/'}
+              className={({ isActive }) =>
+                `sidebar-link ${isActive ? 'active' : ''}`
+              }
+            >
+              <Icon className="w-4.5 h-4.5 flex-shrink-0" style={{ width: 18, height: 18 }} />
+              <span>{label}</span>
+            </NavLink>
+          ))}
 
         <div className="pt-4 pb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
           Business

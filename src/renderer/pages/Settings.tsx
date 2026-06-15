@@ -119,6 +119,7 @@ export default function SettingsPage() {
     toast.success('Settings saved')
     setDirty(false)
     loadGmailStatus()
+    window.dispatchEvent(new Event('settings-updated'))
   }
 
   const handleExport = async () => {
@@ -362,67 +363,89 @@ export default function SettingsPage() {
         </div>
       </motion.div>
 
-      {/* Gmail Integration */}
+      {/* Features */}
       <motion.div variants={item} className="glass-panel p-6 mb-6">
-        <h2 className="text-sm font-semibold text-text-primary mb-1">Gmail Connection</h2>
+        <h2 className="text-sm font-semibold text-text-primary mb-1">Features</h2>
         <p className="text-xs text-text-tertiary mb-4">
-          Connect your Google Account to automatically scan for bills, receipts, and subscriptions.
+          Enable or disable optional modules in Billable.
         </p>
-        <div className="space-y-4">
-          {!gmailStatus?.connected ? (
-            <>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-medium text-text-secondary mb-1.5 block">Google Client ID</label>
-                  <input
-                    className="input-field"
-                    value={settings.google_client_id || ''}
-                    onChange={e => updateField('google_client_id', e.target.value)}
-                    placeholder="Enter OAuth Client ID"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-text-secondary mb-1.5 block">Google Client Secret</label>
-                  <input
-                    className="input-field"
-                    type="password"
-                    value={settings.google_client_secret || ''}
-                    onChange={e => updateField('google_client_secret', e.target.value)}
-                    placeholder="Enter OAuth Client Secret"
-                  />
-                </div>
-              </div>
-              <div className="flex items-center justify-between pt-2">
-                <span className="text-[11px] text-text-tertiary">
-                  * Click "Save Changes" at the top before connecting.
-                </span>
-                <button
-                  type="button"
-                  onClick={handleConnectGmail}
-                  disabled={!settings.google_client_id || !settings.google_client_secret}
-                  className={`btn-primary text-xs ${(!settings.google_client_id || !settings.google_client_secret) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  Connect Gmail
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="flex items-center justify-between p-4 rounded-lg bg-surface-200 border border-rim/6">
-              <div>
-                <span className="text-[10px] uppercase font-bold tracking-wider text-text-tertiary">Connected Account</span>
-                <div className="text-sm font-semibold text-accent mt-0.5">{gmailStatus.email}</div>
-              </div>
-              <button
-                type="button"
-                onClick={handleDisconnectGmail}
-                className="btn-secondary text-red-400 hover:text-red-300 border-red-500/20 hover:bg-red-500/10 text-xs px-3 py-1.5"
-              >
-                Disconnect
-              </button>
-            </div>
-          )}
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-xs font-semibold text-text-primary">Bill & Subscription Tracking</div>
+            <div className="text-[10px] text-text-tertiary mt-0.5">Track cash flow (money in & money out), pending bills, and subscriptions.</div>
+          </div>
+          <input
+            type="checkbox"
+            checked={settings.bill_tracking_enabled !== '0'}
+            onChange={e => updateField('bill_tracking_enabled', e.target.checked ? '1' : '0')}
+            className="w-4 h-4 text-accent border-rim/6 rounded focus:ring-accent bg-surface-100"
+          />
         </div>
       </motion.div>
+
+      {/* Gmail Integration */}
+      {settings.bill_tracking_enabled !== '0' && (
+        <motion.div variants={item} className="glass-panel p-6 mb-6">
+          <h2 className="text-sm font-semibold text-text-primary mb-1">Gmail Connection</h2>
+          <p className="text-xs text-text-tertiary mb-4">
+            Connect your Google Account to automatically scan for bills, receipts, and subscriptions.
+          </p>
+          <div className="space-y-4">
+            {!gmailStatus?.connected ? (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-medium text-text-secondary mb-1.5 block">Google Client ID</label>
+                    <input
+                      className="input-field"
+                      value={settings.google_client_id || ''}
+                      onChange={e => updateField('google_client_id', e.target.value)}
+                      placeholder="Enter OAuth Client ID"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-text-secondary mb-1.5 block">Google Client Secret</label>
+                    <input
+                      className="input-field"
+                      type="password"
+                      value={settings.google_client_secret || ''}
+                      onChange={e => updateField('google_client_secret', e.target.value)}
+                      placeholder="Enter OAuth Client Secret"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-[11px] text-text-tertiary">
+                    * Click "Save Changes" at the top before connecting.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleConnectGmail}
+                    disabled={!settings.google_client_id || !settings.google_client_secret}
+                    className={`btn-primary text-xs ${(!settings.google_client_id || !settings.google_client_secret) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    Connect Gmail
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-between p-4 rounded-lg bg-surface-200 border border-rim/6">
+                <div>
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-text-tertiary">Connected Account</span>
+                  <div className="text-sm font-semibold text-accent mt-0.5">{gmailStatus.email}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDisconnectGmail}
+                  className="btn-secondary text-red-400 hover:text-red-300 border-red-500/20 hover:bg-red-500/10 text-xs px-3 py-1.5"
+                >
+                  Disconnect
+                </button>
+              </div>
+            )}
+          </div>
+        </motion.div>
+      )}
 
       {/* Appearance */}
       <motion.div variants={item} className="glass-panel p-6 mb-6">
@@ -517,64 +540,66 @@ export default function SettingsPage() {
       </motion.div>
 
       {/* Automation Rules */}
-      <motion.div variants={item} className="glass-panel p-6 mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-text-primary">Automation Rules</h2>
-          <button
-            onClick={() => {
-              setRuleForm({
-                rule_name: '',
-                sender_contains: '',
-                subject_contains: '',
-                vendor: '',
-                category: 'other',
-                record_type: 'bill',
-                recurring_frequency: 'monthly',
-                auto_approve: 0,
-              })
-              setShowRuleModal(true)
-            }}
-            className="text-xs text-accent hover:text-accent-light flex items-center gap-1"
-          >
-            <Plus className="w-3.5 h-3.5" /> Add Rule
-          </button>
-        </div>
-
-        {rules.length === 0 ? (
-          <p className="text-xs text-text-tertiary text-center py-4">
-            No automation rules defined yet. Create rules to auto-categorize incoming emails.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {rules.map(rule => (
-              <div key={rule.id} className="flex justify-between items-center p-3 rounded-xl bg-surface-200 border border-rim/6 text-xs">
-                <div>
-                  <div className="font-semibold text-text-primary">{rule.rule_name}</div>
-                  <div className="text-[10px] text-text-tertiary mt-0.5">
-                    {rule.sender_contains && `Sender contains: "${rule.sender_contains}"`}
-                    {rule.sender_contains && rule.subject_contains && ' AND '}
-                    {rule.subject_contains && `Subject contains: "${rule.subject_contains}"`}
-                  </div>
-                  <div className="text-[10px] text-accent mt-1 font-medium">
-                    Maps to: {rule.vendor || 'Extract Vendor'} ({rule.record_type}) · {rule.category}
-                    {rule.auto_approve === 1 && <span className="ml-2 text-green-400 font-bold">[Auto-Approve]</span>}
-                  </div>
-                </div>
-                <button
-                  onClick={async () => {
-                    await window.api.automationRules.delete(rule.id)
-                    toast.success('Rule deleted')
-                    loadRules()
-                  }}
-                  className="p-1.5 hover:bg-red-500/10 rounded transition-colors text-text-tertiary hover:text-red-400"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
+      {settings.bill_tracking_enabled !== '0' && (
+        <motion.div variants={item} className="glass-panel p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-text-primary">Automation Rules</h2>
+            <button
+              onClick={() => {
+                setRuleForm({
+                  rule_name: '',
+                  sender_contains: '',
+                  subject_contains: '',
+                  vendor: '',
+                  category: 'other',
+                  record_type: 'bill',
+                  recurring_frequency: 'monthly',
+                  auto_approve: 0,
+                })
+                setShowRuleModal(true)
+              }}
+              className="text-xs text-accent hover:text-accent-light flex items-center gap-1"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add Rule
+            </button>
           </div>
-        )}
-      </motion.div>
+
+          {rules.length === 0 ? (
+            <p className="text-xs text-text-tertiary text-center py-4">
+              No automation rules defined yet. Create rules to auto-categorize incoming emails.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {rules.map(rule => (
+                <div key={rule.id} className="flex justify-between items-center p-3 rounded-xl bg-surface-200 border border-rim/6 text-xs">
+                  <div>
+                    <div className="font-semibold text-text-primary">{rule.rule_name}</div>
+                    <div className="text-[10px] text-text-tertiary mt-0.5">
+                      {rule.sender_contains && `Sender contains: "${rule.sender_contains}"`}
+                      {rule.sender_contains && rule.subject_contains && ' AND '}
+                      {rule.subject_contains && `Subject contains: "${rule.subject_contains}"`}
+                    </div>
+                    <div className="text-[10px] text-accent mt-1 font-medium">
+                      Maps to: {rule.vendor || 'Extract Vendor'} ({rule.record_type}) · {rule.category}
+                      {rule.auto_approve === 1 && <span className="ml-2 text-green-400 font-bold">[Auto-Approve]</span>}
+                    </div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      await window.api.automationRules.delete(rule.id)
+                      toast.success('Rule deleted')
+                      loadRules()
+                    }}
+                    className="p-1.5 hover:bg-red-500/10 rounded transition-colors text-text-tertiary hover:text-red-400"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </motion.div>
+      )}
 
       {/* Modal: Create Automation Rule */}
       <Modal isOpen={showRuleModal} onClose={() => setShowRuleModal(false)} title="Create Automation Rule">

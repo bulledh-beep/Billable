@@ -38,23 +38,28 @@ export default function Dashboard({ onStartTimer, onStopTimer, isTimerRunning, a
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [recent, setRecent] = useState<TimeEntry[]>([])
   const [projects, setProjects] = useState<Project[]>([])
+  const [billTrackingEnabled, setBillTrackingEnabled] = useState(true)
 
   useEffect(() => {
     loadData()
+    window.addEventListener('settings-updated', loadData)
+    return () => window.removeEventListener('settings-updated', loadData)
   }, [])
 
   // Reload when timer starts/stops so stats and recent activity stay current
   useEffect(() => { loadData() }, [isTimerRunning])
 
   const loadData = async () => {
-    const [s, r, p] = await Promise.all([
+    const [s, r, p, settings] = await Promise.all([
       window.api.dashboard.stats(),
       window.api.dashboard.recent(),
       window.api.projects.list(),
+      window.api.settings.get(),
     ])
     setStats(s)
     setRecent(r)
     setProjects(p.filter((p: any) => p.status === 'active'))
+    setBillTrackingEnabled(settings?.bill_tracking_enabled !== '0')
   }
 
   const handleQuickStart = async (projectId: number) => {
@@ -94,20 +99,22 @@ export default function Dashboard({ onStartTimer, onStopTimer, isTimerRunning, a
     },
     {
       label: 'Expenses This Month',
-      value: stats.expenses_this_month + (stats.bills_paid_this_month_total || 0),
+      value: billTrackingEnabled
+        ? stats.expenses_this_month + (stats.bills_paid_this_month_total || 0)
+        : stats.expenses_this_month,
       format: (v: number) => formatMoney(v),
       icon: DollarSign,
       color: 'text-status-overdue',
       bg: 'bg-status-overdue/10',
     },
-    {
+    ...(billTrackingEnabled ? [{
       label: 'Safe-to-Spend Balance',
       value: stats.safe_to_spend,
       format: (v: number) => formatMoney(v),
       icon: CheckCircle2,
       color: 'text-accent',
       bg: 'bg-accent/10',
-    },
+    }] : []),
   ] : []
 
   return (
@@ -125,53 +132,33 @@ export default function Dashboard({ onStartTimer, onStopTimer, isTimerRunning, a
             Welcome back. Here&apos;s your financial overview.
           </p>
         </div>
-        <button
-          onClick={() => navigate('/billing')}
-          className="btn-primary text-xs flex items-center gap-2"
-        >
-          Open Billing
-        </button>
+        {billTrackingEnabled && (
+          <button
+            onClick={() => navigate('/billing')}
+            className="btn-primary text-xs flex items-center gap-2"
+          >
+            Open Billing
+          </button>
+        )}
       </motion.div>
 
       {/* Safe-to-Spend Banner */}
-      {stats && (
+      {stats && billTrackingEnabled && (
         <motion.div variants={item} className="glass-panel p-6 mb-6 bg-gradient-to-r from-accent/[0.04] to-transparent border border-accent/10">
-          <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
-            <div>
-              <span className="text-[10px] uppercase font-bold tracking-wider text-accent">Safe-To-Spend Balance</span>
-              <div className="text-3xl font-bold font-mono text-text-primary mt-1">
-                {formatMoney(stats.safe_to_spend)}
-              </div>
-              <p className="text-xs text-text-tertiary mt-1">
-                Formula: Realized Income - Paid Expenses - Pending Bills (30d) - Estimated Tax Set-Aside ({stats.tax_bracket_rate}%)
-              </p>
+          <div>
+            <span className="text-[10px] uppercase font-bold tracking-wider text-accent">Safe-To-Spend Balance</span>
+            <div className="text-3xl font-bold font-mono text-text-primary mt-1">
+              {formatMoney(stats.safe_to_spend)}
             </div>
-            
-            {/* The Formula Breakdown */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-3.5 rounded-xl bg-surface-200 border border-rim/6 text-xs w-full xl:w-auto">
-              <div>
-                <div className="text-text-tertiary text-[10px]">Realized Income</div>
-                <div className="font-semibold font-mono text-green-400 mt-0.5">{formatMoney(stats.paid_income_this_month)}</div>
-              </div>
-              <div>
-                <div className="text-text-tertiary text-[10px]">Paid Expenses</div>
-                <div className="font-semibold font-mono text-red-400 mt-0.5">-{formatMoney(stats.expenses_this_month)}</div>
-              </div>
-              <div>
-                <div className="text-text-tertiary text-[10px]">Bills (30d)</div>
-                <div className="font-semibold font-mono text-yellow-400 mt-0.5">-{formatMoney(stats.bills_due_in_next_30_days)}</div>
-              </div>
-              <div>
-                <div className="text-text-tertiary text-[10px]">Tax Set-Aside ({stats.tax_bracket_rate}%)</div>
-                <div className="font-semibold font-mono text-purple-400 mt-0.5">-{formatMoney(stats.estimated_tax_set_aside)}</div>
-              </div>
-            </div>
+            <p className="text-xs text-text-tertiary mt-1">
+              Formula: Realized Income - Paid Expenses - Pending Bills (30d) - Estimated Tax Set-Aside ({stats.tax_bracket_rate}%)
+            </p>
           </div>
         </motion.div>
       )}
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-5 gap-4 mb-6">
+      <div className={`grid ${billTrackingEnabled ? 'grid-cols-5' : 'grid-cols-4'} gap-4 mb-6`}>
         {statCards.map((card, i) => (
           <motion.div
             key={card.label}
