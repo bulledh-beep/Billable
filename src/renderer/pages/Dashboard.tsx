@@ -81,34 +81,32 @@ export default function Dashboard({ onStartTimer, onStopTimer, isTimerRunning, a
       value: stats.outstanding_invoices,
       format: (v: number) => formatMoney(v),
       icon: DollarSign,
-      color: 'text-status-overdue',
-      bg: 'bg-status-overdue/10',
+      color: 'text-yellow-400',
+      bg: 'bg-yellow-500/10',
     },
     {
-      label: 'Bills Due This Month',
-      value: stats.bills_due_this_month_total,
+      label: 'Income This Month',
+      value: stats.paid_income_this_month,
       format: (v: number) => formatMoney(v),
       icon: TrendingUp,
-      color: 'text-status-paused',
-      bg: 'bg-status-paused/10',
-      badge: stats.bills_due_this_month_count ? `${stats.bills_due_this_month_count} due` : null,
-    },
-    {
-      label: 'Overdue Bills',
-      value: stats.bills_overdue_total,
-      format: (v: number) => formatMoney(v),
-      icon: AlertTriangle,
-      color: 'text-status-overdue',
-      bg: 'bg-status-overdue/10',
-      badge: stats.bills_overdue_count ? `${stats.bills_overdue_count} late` : null,
-    },
-    {
-      label: 'Active Subscriptions',
-      value: stats.active_subscriptions_total,
-      format: (v: number) => formatMoney(v),
-      icon: DollarSign,
       color: 'text-status-complete',
       bg: 'bg-status-complete/10',
+    },
+    {
+      label: 'Expenses This Month',
+      value: stats.expenses_this_month + (stats.bills_paid_this_month_total || 0),
+      format: (v: number) => formatMoney(v),
+      icon: DollarSign,
+      color: 'text-status-overdue',
+      bg: 'bg-status-overdue/10',
+    },
+    {
+      label: 'Safe-to-Spend Balance',
+      value: stats.safe_to_spend,
+      format: (v: number) => formatMoney(v),
+      icon: CheckCircle2,
+      color: 'text-accent',
+      bg: 'bg-accent/10',
     },
   ] : []
 
@@ -128,10 +126,10 @@ export default function Dashboard({ onStartTimer, onStopTimer, isTimerRunning, a
           </p>
         </div>
         <button
-          onClick={() => navigate('/bill-inbox')}
+          onClick={() => navigate('/billing')}
           className="btn-primary text-xs flex items-center gap-2"
         >
-          Open Bill Inbox
+          Open Billing
         </button>
       </motion.div>
 
@@ -145,7 +143,7 @@ export default function Dashboard({ onStartTimer, onStopTimer, isTimerRunning, a
                 {formatMoney(stats.safe_to_spend)}
               </div>
               <p className="text-xs text-text-tertiary mt-1">
-                Formula: Realized Income - Paid Expenses - Bills Due (30d) - Estimated Tax Set-Aside ({stats.tax_bracket_rate}%)
+                Formula: Realized Income - Paid Expenses - Pending Bills (30d) - Estimated Tax Set-Aside ({stats.tax_bracket_rate}%)
               </p>
             </div>
             
@@ -184,11 +182,6 @@ export default function Dashboard({ onStartTimer, onStopTimer, isTimerRunning, a
               <div className={`w-8 h-8 rounded-lg ${card.bg} flex items-center justify-center`}>
                 <card.icon className={`w-4 h-4 ${card.color}`} />
               </div>
-              {card.badge && (
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-accent/15 text-accent border border-accent/20 font-mono">
-                  {card.badge}
-                </span>
-              )}
             </div>
             <div className="font-mono text-xl font-semibold text-text-primary">
               <AnimatedNumber value={card.value} format={card.format} />
@@ -199,7 +192,7 @@ export default function Dashboard({ onStartTimer, onStopTimer, isTimerRunning, a
       </div>
 
       <div className="grid grid-cols-3 gap-6">
-        {/* Left Side: Recent Activity & Reminders */}
+        {/* Left Side: Recent Activity */}
         <div className="col-span-2 space-y-6">
           {/* Recent Activity */}
           <motion.div variants={item} className="glass-panel p-5">
@@ -245,48 +238,6 @@ export default function Dashboard({ onStartTimer, onStopTimer, isTimerRunning, a
                       <div className="text-xs text-text-tertiary">
                         {formatRelative(entry.start_time)}
                       </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </motion.div>
-
-          {/* Upcoming Payment Reminders */}
-          <motion.div variants={item} className="glass-panel p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-text-primary">Upcoming Payment Reminders</h2>
-              <button
-                onClick={() => navigate('/bill-inbox')}
-                className="text-xs text-accent hover:text-accent-light transition-colors"
-              >
-                Manage Bills
-              </button>
-            </div>
-
-            {stats?.upcoming_reminders?.length === 0 ? (
-              <div className="text-center py-8">
-                <CheckCircle2 className="w-8 h-8 text-green-400 mx-auto mb-2" />
-                <p className="text-sm text-text-secondary">All caught up!</p>
-                <p className="text-xs text-text-tertiary mt-1">No upcoming bills due soon.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-3">
-                {stats?.upcoming_reminders?.map((reminder: any) => (
-                  <div key={reminder.id} className="flex justify-between items-center p-3 rounded-xl bg-surface-200 border border-rim/6">
-                    <div>
-                      <div className="text-xs font-semibold text-text-primary truncate max-w-[120px]">{reminder.vendor}</div>
-                      <div className="text-[10px] text-text-tertiary mt-0.5 capitalize truncate max-w-[120px]">
-                        {reminder.category} · Due {reminder.due_date}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs font-bold font-mono text-text-primary">{formatMoney(reminder.amount)}</div>
-                      <span className={`inline-block text-[8px] uppercase font-bold tracking-wider font-mono px-1 rounded mt-1 ${
-                        reminder.status === 'overdue' ? 'bg-red-500/10 text-red-400' : 'bg-yellow-500/10 text-yellow-400'
-                      }`}>
-                        {reminder.status}
-                      </span>
                     </div>
                   </div>
                 ))}

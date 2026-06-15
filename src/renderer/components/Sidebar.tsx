@@ -12,7 +12,7 @@ import {
   Calculator,
   Receipt,
   Square,
-  Inbox,
+  CreditCard,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import ProfileSwitcher from './ProfileSwitcher'
@@ -43,7 +43,7 @@ interface SidebarProps {
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/bill-inbox', icon: Inbox, label: 'Bill Inbox' },
+  { to: '/billing', icon: CreditCard, label: 'Billing' },
   { to: '/clients', icon: Users, label: 'Clients' },
   { to: '/projects', icon: FolderKanban, label: 'Projects' },
   { to: '/time', icon: Clock, label: 'Time' },
