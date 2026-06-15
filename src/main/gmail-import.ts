@@ -335,6 +335,9 @@ export function extractCandidateFromEmail(emailImportId: number, sender: string,
     date: paymentDate || dueDate
   })
 
+  // Auto-approve if requested by rule OR if we have high confidence (>= 80%), a valid amount, and no duplicate warning
+  const isAutoApproved = (rule?.auto_approve === 1 || confidence >= 0.8) && amount !== null && !duplicateId
+
   // Insert into candidates database
   const candidate = db.createCandidate({
     workspace_id: 1,
@@ -354,11 +357,17 @@ export function extractCandidateFromEmail(emailImportId: number, sender: string,
     confidence_score: confidence,
     duplicate_of_id: duplicateId,
     raw_extraction_json: JSON.stringify({ parsedVendor: vendor, parsedAmount: amount, matchedRule: rule?.rule_name || null }),
-    review_status: duplicateId ? 'duplicate' : (confidence <= 0 ? 'ignored' : 'needs_review')
+    review_status: duplicateId
+      ? 'duplicate'
+      : isAutoApproved
+        ? 'approved'
+        : confidence <= 0
+          ? 'ignored'
+          : 'needs_review'
   }) as any
 
-  // If rule says auto-approve, and we have a valid amount, auto-approve it!
-  if (rule?.auto_approve === 1 && amount !== null && !duplicateId) {
+  // If auto-approved, copy into the main records table
+  if (isAutoApproved) {
     try {
       if (recordType === 'bill') {
         db.createBill({
@@ -369,9 +378,9 @@ export function extractCandidateFromEmail(emailImportId: number, sender: string,
           currency,
           due_date: dueDate,
           category,
-          recurring: rule.recurring_frequency !== 'one_time' ? 1 : 0,
-          frequency: rule.recurring_frequency || 'one_time',
-          notes: `Auto-approved by rule: ${rule.rule_name}`,
+          recurring: rule?.recurring_frequency && rule.recurring_frequency !== 'one_time' ? 1 : 0,
+          frequency: rule?.recurring_frequency || 'one_time',
+          notes: rule ? `Auto-approved by rule: ${rule.rule_name}` : `Auto-approved with high confidence (${Math.round(confidence * 100)}%)`,
           source: 'email',
         })
       } else if (recordType === 'expense' || recordType === 'receipt') {
@@ -390,7 +399,7 @@ export function extractCandidateFromEmail(emailImportId: number, sender: string,
           vendor,
           amount,
           currency,
-          billing_cycle: rule.recurring_frequency || 'monthly',
+          billing_cycle: rule?.recurring_frequency || 'monthly',
           next_billing_date: dueDate || paymentDate,
           category,
           status: 'active',
@@ -403,12 +412,11 @@ export function extractCandidateFromEmail(emailImportId: number, sender: string,
           notes: `Auto-approved payment for ${vendor}`,
         })
       }
-
-      // Update candidate status
-      db.updateCandidate(candidate.id, { review_status: 'approved' })
-      candidate.review_status = 'approved'
     } catch (err) {
       console.error('Auto-approve failed:', err)
+      // Fallback: revert status to needs_review in DB so the user doesn't lose the bill
+      db.updateCandidate(candidate.id, { review_status: 'needs_review' })
+      candidate.review_status = 'needs_review'
     }
   }
 
