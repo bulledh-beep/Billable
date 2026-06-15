@@ -1,6 +1,7 @@
 import { getValidAccessToken } from './gmail-oauth'
 import * as db from './database'
 import { scoreEmail, relevanceBand } from './emailFilter'
+import { detectSubscription, type SubFrequency } from './subscriptionDetector'
 
 /** Extract the bare domain from a "Name <a@b.com>" sender header. */
 function extractDomain(sender: string): string {
@@ -37,6 +38,44 @@ function buildKnownDomains(): Set<string> {
     // best-effort — scoring still works without it
   }
   return domains
+}
+
+/**
+ * Build a map of vendors already known to recur, with their cadence:
+ *  - existing subscriptions (definitive)
+ *  - any vendor that already appears 2+ times in bills/expenses (inferred)
+ * Used to auto-classify repeat charges as subscriptions. Computed once per sync.
+ */
+function buildKnownRecurringVendors(): Map<string, SubFrequency> {
+  const map = new Map<string, SubFrequency>()
+  const norm = (v: string) => (v || '').trim().toLowerCase()
+  const cycleToFreq = (c: string): SubFrequency => {
+    const x = (c || '').toLowerCase()
+    if (x.startsWith('year') || x.startsWith('annual')) return 'yearly'
+    if (x.startsWith('quarter')) return 'quarterly'
+    if (x.startsWith('week')) return 'weekly'
+    return 'monthly'
+  }
+  try {
+    for (const s of db.listSubscriptions() as any[]) {
+      const key = norm(s.vendor || s.name)
+      if (key) map.set(key, cycleToFreq(s.billing_cycle))
+    }
+    // Infer recurrence from repeat history (>= 2 charges from the same vendor)
+    const counts = new Map<string, number>()
+    const bump = (v: string) => {
+      const k = norm(v)
+      if (k) counts.set(k, (counts.get(k) || 0) + 1)
+    }
+    for (const e of db.listExpenses() as any[]) bump(e.vendor || '')
+    for (const b of db.listBills() as any[]) bump(b.vendor || '')
+    for (const [k, n] of counts) {
+      if (n >= 2 && !map.has(k)) map.set(k, 'monthly')
+    }
+  } catch {
+    // best-effort
+  }
+  return map
 }
 
 /** Read the auto-approve config from settings (enabled + threshold 0-100). */
@@ -302,7 +341,7 @@ export function extractCandidateFromEmail(
   sender: string,
   subject: string,
   bodyText: string,
-  opts?: { knownDomains?: Set<string>; attachmentNames?: string[] },
+  opts?: { knownDomains?: Set<string>; attachmentNames?: string[]; knownRecurringVendors?: Map<string, SubFrequency> },
 ): any {
   const normalizedText = bodyText.replace(/\s+/g, ' ')
   const rule = matchAutomationRules(sender, subject)
@@ -332,9 +371,26 @@ export function extractCandidateFromEmail(
         recordType = 'expense' // money out (sent transfer / purchase)
       } else if (sLower.includes('receipt') || sLower.includes('thank you for your payment') || bLower.includes('amount paid')) {
         recordType = 'receipt'
-      } else if (sLower.includes('subscription') || sLower.includes('renewal') || sLower.includes('membership') || bLower.includes('recurring charge')) {
-        recordType = 'subscription'
       }
+    }
+  }
+
+  // ---- Recurring subscription detection ----
+  // Runs for non-payment emails. Promotes the record to a subscription (and
+  // figures out monthly/yearly) when it's a known sub vendor, the email states
+  // it recurs, or we've already seen this vendor recurring.
+  let frequency: string = rule?.recurring_frequency || 'one_time'
+  if (recordType !== 'payment') {
+    const sub = detectSubscription({
+      vendor,
+      subject,
+      body: normalizedText,
+      amount: null,
+      knownRecurringVendors: opts?.knownRecurringVendors,
+    })
+    if (sub.isSubscription) {
+      recordType = 'subscription'
+      frequency = sub.frequency || 'monthly'
     }
   }
 
@@ -347,6 +403,7 @@ export function extractCandidateFromEmail(
     else if (vLower.includes('rogers') || vLower.includes('bell') || vLower.includes('telus') || vLower.includes('internet') || vLower.includes('fido')) category = 'phone_internet'
     else if (vLower.includes('uber') || vLower.includes('taxi') || vLower.includes('flight') || vLower.includes('hotel')) category = 'travel'
     else if (vLower.includes('restaurant') || vLower.includes('meals') || vLower.includes('cafe')) category = 'meals'
+    else if (recordType === 'subscription') category = 'software'
   }
 
   // Amount
@@ -474,7 +531,7 @@ export function extractCandidateFromEmail(
     extracted_status: recordType === 'receipt' ? 'paid' : 'needs_review',
     extracted_category: category,
     extracted_invoice_number: null,
-    extracted_frequency: rule?.recurring_frequency || 'one_time',
+    extracted_frequency: frequency,
     extracted_record_type: recordType,
     confidence_score: confidence,
     relevance_score: relevance,
@@ -509,8 +566,8 @@ export function extractCandidateFromEmail(
           currency,
           due_date: dueDate,
           category,
-          recurring: rule?.recurring_frequency && rule.recurring_frequency !== 'one_time' ? 1 : 0,
-          frequency: rule?.recurring_frequency || 'one_time',
+          recurring: frequency !== 'one_time' ? 1 : 0,
+          frequency,
           notes: rule ? `Auto-approved by rule: ${rule.rule_name}` : `Auto-approved with high confidence (${Math.round(confidence * 100)}%)`,
           source: 'email',
         })
@@ -530,7 +587,7 @@ export function extractCandidateFromEmail(
           vendor,
           amount,
           currency,
-          billing_cycle: rule?.recurring_frequency || 'monthly',
+          billing_cycle: frequency && frequency !== 'one_time' ? frequency : 'monthly',
           next_billing_date: dueDate || paymentDate,
           category,
           status: 'active',
@@ -590,6 +647,7 @@ export async function syncGmailEmails(daysRange: number = 30): Promise<{ fetched
   // Build lookups ONCE up front instead of re-querying inside the loop (was O(n²)).
   const existingIds = new Set((db.listEmailImports() as any[]).map(e => e.source_email_id))
   const knownDomains = buildKnownDomains()
+  const knownRecurringVendors = buildKnownRecurringVendors()
 
   for (const msg of messages) {
     // Check if already processed
@@ -646,6 +704,7 @@ export async function syncGmailEmails(daysRange: number = 30): Promise<{ fetched
     extractCandidateFromEmail(emailImport.id, fromHeader, subjectHeader, body, {
       knownDomains,
       attachmentNames: attachments,
+      knownRecurringVendors,
     })
     fetchedCount++
   }
