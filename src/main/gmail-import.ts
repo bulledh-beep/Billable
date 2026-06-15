@@ -1,5 +1,51 @@
 import { getValidAccessToken } from './gmail-oauth'
 import * as db from './database'
+import { scoreEmail, relevanceBand } from './emailFilter'
+
+/** Extract the bare domain from a "Name <a@b.com>" sender header. */
+function extractDomain(sender: string): string {
+  const m = sender.match(/@([a-z0-9.-]+)/i)
+  return m ? m[1].toLowerCase() : ''
+}
+
+/**
+ * Build a set of domains the user has already approved — i.e. domains that
+ * appear on existing bills/subscriptions/expenses that came from email. These
+ * get a relevance boost (and can clear the auto-approve bar more easily).
+ * Computed once per sync, not per email.
+ */
+function buildKnownDomains(): Set<string> {
+  const domains = new Set<string>()
+  const addFrom = (rows: any[], field: string) => {
+    for (const r of rows) {
+      const v = (r[field] || '').toString()
+      const d = extractDomain(v)
+      if (d) domains.add(d)
+    }
+  }
+  try {
+    // Approved email imports carry the real sender domain
+    const imports = db.listEmailImports() as any[]
+    for (const imp of imports) {
+      if (imp.status === 'imported') {
+        const d = extractDomain(imp.sender || '')
+        if (d) domains.add(d)
+      }
+    }
+    addFrom(db.listAutomationRules() as any[], 'sender_contains')
+  } catch {
+    // best-effort — scoring still works without it
+  }
+  return domains
+}
+
+/** Read the auto-approve config from settings (enabled + threshold 0-100). */
+function getAutoApproveConfig(): { enabled: boolean; threshold: number } {
+  const s = db.getSettings() as any
+  const enabled = (s.bill_auto_approve_enabled ?? '1') !== '0'
+  const threshold = Math.max(0, Math.min(100, parseInt(s.bill_auto_approve_threshold ?? '85', 10) || 85))
+  return { enabled, threshold }
+}
 
 /**
  * Decode Base64Url string to standard UTF-8 string
@@ -237,7 +283,13 @@ export function findDuplicateRecord(candidate: {
 /**
  * Local non-AI extraction logic for a single imported email
  */
-export function extractCandidateFromEmail(emailImportId: number, sender: string, subject: string, bodyText: string): any {
+export function extractCandidateFromEmail(
+  emailImportId: number,
+  sender: string,
+  subject: string,
+  bodyText: string,
+  opts?: { knownDomains?: Set<string>; attachmentNames?: string[] },
+): any {
   const normalizedText = bodyText.replace(/\s+/g, ' ')
   const rule = matchAutomationRules(sender, subject)
 
@@ -322,21 +374,69 @@ export function extractCandidateFromEmail(emailImportId: number, sender: string,
     dueDate = fallbackDate
   }
 
-  // Confidence Score
-  let confidence = rule ? 1.0 : amtResult.confidence
-  if (amount && (dueDate || paymentDate)) {
-    confidence = Math.min(1.0, confidence + 0.1)
-  }
+  // ---- Relevance + confidence scoring (the real signal, not "number near a word") ----
+  const score = scoreEmail({
+    sender,
+    subject,
+    body: bodyText,
+    attachmentNames: opts?.attachmentNames,
+    knownDomains: opts?.knownDomains,
+    ruleMatched: !!rule,
+  })
+  const relevance = score.relevance_score
+  const band = relevanceBand(relevance)
+
+  // Confidence (0-1) blends the scorer's field-corroboration with the legacy
+  // amount-context confidence, and a rule match is a strong vote.
+  let confidence = score.confidence_score / 100
+  if (rule) confidence = Math.max(confidence, 0.9)
+  if (amount && (dueDate || paymentDate)) confidence = Math.min(1, confidence + 0.05)
+  confidence = Math.min(1, confidence)
+
+  // Light extra extraction for review context
+  const last4Match = normalizedText.match(/(?:account|acct|card|ending(?:\s+in)?)\s*(?:#|no\.?|number)?\s*(?:\*+|x+)?\s*(\d{4})\b/i)
+  const accountLast4 = last4Match ? last4Match[1] : null
+  const pmMatch = normalizedText.match(/\b(visa|mastercard|amex|american express|paypal|interac|e-?transfer|debit|credit card)\b/i)
+  const paymentMethod = pmMatch ? pmMatch[1] : null
 
   // Duplicate Check
-  const duplicateId = findDuplicateRecord({
-    vendor,
-    amount,
-    date: paymentDate || dueDate
-  })
+  const duplicateId = findDuplicateRecord({ vendor, amount, date: paymentDate || dueDate })
 
-  // Auto-approve if requested by rule OR if we have high confidence (>= 80%), a valid amount, and no duplicate warning
-  const isAutoApproved = (rule?.auto_approve === 1 || confidence >= 0.8) && amount !== null && !duplicateId
+  // ---- Strict auto-approve gate ----
+  // A rule that explicitly says auto_approve always wins (the user opted in).
+  // Otherwise, EVERY guard must pass: feature on, relevance AND confidence both
+  // clear the threshold, all key fields present, and no duplicate. High
+  // confidence alone is NOT enough — that was the old footgun.
+  const { enabled: autoEnabled, threshold } = getAutoApproveConfig()
+  const confidencePct = Math.round(confidence * 100)
+  const fieldsComplete = !!vendor && amount !== null && amount > 0 && !!(dueDate || paymentDate)
+  const ruleAutoApprove = rule?.auto_approve === 1 && amount !== null && !duplicateId
+  const scoreAutoApprove =
+    autoEnabled &&
+    relevance >= threshold &&
+    confidencePct >= threshold &&
+    fieldsComplete &&
+    !duplicateId
+  const isAutoApproved = ruleAutoApprove || scoreAutoApprove
+
+  // Below the "ignore" band, don't even surface it as needs-review.
+  const reviewStatus = duplicateId
+    ? 'duplicate'
+    : isAutoApproved
+      ? 'approved'
+      : band === 'ignore'
+        ? 'ignored'
+        : 'needs_review'
+
+  const suggestedAction = duplicateId
+    ? 'Possible duplicate — compare'
+    : isAutoApproved
+      ? (ruleAutoApprove ? 'Auto-added by rule' : 'Auto-added (high confidence)')
+      : band === 'ignore'
+        ? 'Ignored (low relevance)'
+        : recordType === 'payment'
+          ? 'Review — try matching to a bill'
+          : 'Review & approve'
 
   // Insert into candidates database
   const candidate = db.createCandidate({
@@ -355,15 +455,24 @@ export function extractCandidateFromEmail(emailImportId: number, sender: string,
     extracted_frequency: rule?.recurring_frequency || 'one_time',
     extracted_record_type: recordType,
     confidence_score: confidence,
+    relevance_score: relevance,
+    detected_reason: score.detected_reason,
+    low_confidence_reason: score.low_confidence_reason,
+    suggested_action: suggestedAction,
+    extracted_account_last4: accountLast4,
+    extracted_payment_method: paymentMethod,
+    auto_approved: isAutoApproved ? 1 : 0,
     duplicate_of_id: duplicateId,
-    raw_extraction_json: JSON.stringify({ parsedVendor: vendor, parsedAmount: amount, matchedRule: rule?.rule_name || null }),
-    review_status: duplicateId
-      ? 'duplicate'
-      : isAutoApproved
-        ? 'approved'
-        : confidence <= 0
-          ? 'ignored'
-          : 'needs_review'
+    raw_extraction_json: JSON.stringify({
+      parsedVendor: vendor,
+      parsedAmount: amount,
+      matchedRule: rule?.rule_name || null,
+      relevance,
+      confidence: confidencePct,
+      positive_signals: score.positive_signals,
+      negative_signals: score.negative_signals,
+    }),
+    review_status: reviewStatus,
   }) as any
 
   // If auto-approved, copy into the main records table
@@ -450,10 +559,13 @@ export async function syncGmailEmails(daysRange: number = 30): Promise<{ fetched
   let fetchedCount = 0
   let skippedCount = 0
 
+  // Build lookups ONCE up front instead of re-querying inside the loop (was O(n²)).
+  const existingIds = new Set((db.listEmailImports() as any[]).map(e => e.source_email_id))
+  const knownDomains = buildKnownDomains()
+
   for (const msg of messages) {
     // Check if already processed
-    const existing = db.listEmailImports() as any[]
-    if (existing.some(e => e.source_email_id === msg.id)) {
+    if (existingIds.has(msg.id)) {
       skippedCount++
       continue
     }
@@ -499,8 +611,14 @@ export async function syncGmailEmails(daysRange: number = 30): Promise<{ fetched
       confidence_score: 1.0
     }) as any
 
-    // Process extraction immediately
-    extractCandidateFromEmail(emailImport.id, fromHeader, subjectHeader, body)
+    // Remember it so a duplicate within the same batch is skipped too
+    existingIds.add(msg.id)
+
+    // Process extraction immediately (relevance scoring runs inside)
+    extractCandidateFromEmail(emailImport.id, fromHeader, subjectHeader, body, {
+      knownDomains,
+      attachmentNames: attachments,
+    })
     fetchedCount++
   }
 

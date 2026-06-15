@@ -447,6 +447,65 @@ export default function SettingsPage() {
         </motion.div>
       )}
 
+      {/* Email Auto-Import */}
+      {settings.bill_tracking_enabled !== '0' && (
+        <motion.div variants={item} className="glass-panel p-6 mb-6">
+          <h2 className="text-sm font-semibold text-text-primary mb-1">Email Auto-Import</h2>
+          <p className="text-xs text-text-tertiary mb-4">
+            Controls when an imported email is added to your finances automatically
+            vs. held for review in the Bill Inbox.
+          </p>
+
+          <div className="flex items-center justify-between mb-4">
+            <div className="pr-4">
+              <div className="text-xs font-semibold text-text-primary">Auto-add high-confidence items</div>
+              <div className="text-[10px] text-text-tertiary mt-0.5">
+                When on, emails that clearly pass the bar below are added without review.
+                Everything else waits in Needs Review. Automation rules with auto-approve
+                always apply regardless of this setting.
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={(settings.bill_auto_approve_enabled ?? '1') !== '0'}
+              onChange={e => updateField('bill_auto_approve_enabled', e.target.checked ? '1' : '0')}
+              className="w-4 h-4 text-accent border-rim/6 rounded focus:ring-accent bg-surface-100 flex-shrink-0"
+            />
+          </div>
+
+          {(settings.bill_auto_approve_enabled ?? '1') !== '0' && (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-medium text-text-secondary">
+                  Confidence bar
+                </label>
+                <span className="text-xs font-mono text-accent">
+                  {settings.bill_auto_approve_threshold ?? '85'}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min={60}
+                max={100}
+                step={5}
+                value={parseInt(settings.bill_auto_approve_threshold ?? '85', 10)}
+                onChange={e => updateField('bill_auto_approve_threshold', e.target.value)}
+                className="w-full accent-accent"
+              />
+              <div className="flex justify-between text-[10px] text-text-tertiary mt-1">
+                <span>60% — more auto-adds</span>
+                <span>100% — only the surest</span>
+              </div>
+              <p className="text-[10px] text-text-tertiary mt-2 leading-relaxed">
+                An email must score at least this high on <span className="text-text-secondary">both</span> relevance
+                (is it financial?) and confidence (are the details right?), have a vendor, amount, and date,
+                and not look like a duplicate. Marketing, newsletters, and shipping updates never qualify.
+              </p>
+            </div>
+          )}
+        </motion.div>
+      )}
+
       {/* Appearance */}
       <motion.div variants={item} className="glass-panel p-6 mb-6">
         <h2 className="text-sm font-semibold text-text-primary mb-1">Appearance</h2>

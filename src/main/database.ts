@@ -269,6 +269,17 @@ function runMigrations() {
   addColumnIfMissing('expenses', 'source_email_id', 'TEXT')
   addColumnIfMissing('expenses', 'updated_at', "TEXT DEFAULT (datetime('now'))")
 
+  // ----- Phase 1: trustworthy email scoring -----
+  // Relevance ("is this financial?") is separate from confidence ("are the
+  // extracted fields right?"). Auto-approval requires both to be high.
+  addColumnIfMissing('bill_import_candidates', 'relevance_score', 'REAL DEFAULT 0')
+  addColumnIfMissing('bill_import_candidates', 'detected_reason', "TEXT DEFAULT ''")
+  addColumnIfMissing('bill_import_candidates', 'low_confidence_reason', "TEXT DEFAULT ''")
+  addColumnIfMissing('bill_import_candidates', 'suggested_action', "TEXT DEFAULT ''")
+  addColumnIfMissing('bill_import_candidates', 'extracted_account_last4', 'TEXT')
+  addColumnIfMissing('bill_import_candidates', 'extracted_payment_method', 'TEXT')
+  addColumnIfMissing('bill_import_candidates', 'auto_approved', 'INTEGER DEFAULT 0')
+
   // Seed default workspace and user
   db.prepare(`
     INSERT OR IGNORE INTO workspaces (id, name) VALUES (1, 'Default Workspace')
@@ -380,6 +391,10 @@ function seedDefaults() {
     time_rounding: 'none',
     theme: 'dark',
     bill_tracking_enabled: '1',
+    // Email auto-approval: only fires when relevance AND confidence both clear
+    // this threshold, all key fields are present, and there's no duplicate.
+    bill_auto_approve_enabled: '1',
+    bill_auto_approve_threshold: '85',
   }
 
   const insert = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
@@ -1446,8 +1461,8 @@ export function getCandidate(id: number) {
 
 export function createCandidate(data: any) {
   const stmt = db.prepare(`
-    INSERT INTO bill_import_candidates (workspace_id, user_id, email_import_id, extracted_vendor, extracted_amount, extracted_currency, extracted_due_date, extracted_invoice_date, extracted_payment_date, extracted_status, extracted_category, extracted_invoice_number, extracted_frequency, extracted_record_type, confidence_score, duplicate_of_id, raw_extraction_json, review_status)
-    VALUES (@workspace_id, @user_id, @email_import_id, @extracted_vendor, @extracted_amount, @extracted_currency, @extracted_due_date, @extracted_invoice_date, @extracted_payment_date, @extracted_status, @extracted_category, @extracted_invoice_number, @extracted_frequency, @extracted_record_type, @confidence_score, @duplicate_of_id, @raw_extraction_json, @review_status)
+    INSERT INTO bill_import_candidates (workspace_id, user_id, email_import_id, extracted_vendor, extracted_amount, extracted_currency, extracted_due_date, extracted_invoice_date, extracted_payment_date, extracted_status, extracted_category, extracted_invoice_number, extracted_frequency, extracted_record_type, confidence_score, relevance_score, detected_reason, low_confidence_reason, suggested_action, extracted_account_last4, extracted_payment_method, auto_approved, duplicate_of_id, raw_extraction_json, review_status)
+    VALUES (@workspace_id, @user_id, @email_import_id, @extracted_vendor, @extracted_amount, @extracted_currency, @extracted_due_date, @extracted_invoice_date, @extracted_payment_date, @extracted_status, @extracted_category, @extracted_invoice_number, @extracted_frequency, @extracted_record_type, @confidence_score, @relevance_score, @detected_reason, @low_confidence_reason, @suggested_action, @extracted_account_last4, @extracted_payment_method, @auto_approved, @duplicate_of_id, @raw_extraction_json, @review_status)
   `)
   const result = stmt.run({
     workspace_id: data.workspace_id ?? 1,
@@ -1465,6 +1480,13 @@ export function createCandidate(data: any) {
     extracted_frequency: data.extracted_frequency ?? 'one_time',
     extracted_record_type: data.extracted_record_type ?? 'bill',
     confidence_score: data.confidence_score ?? 0,
+    relevance_score: data.relevance_score ?? 0,
+    detected_reason: data.detected_reason ?? '',
+    low_confidence_reason: data.low_confidence_reason ?? '',
+    suggested_action: data.suggested_action ?? '',
+    extracted_account_last4: data.extracted_account_last4 || null,
+    extracted_payment_method: data.extracted_payment_method || null,
+    auto_approved: data.auto_approved ? 1 : 0,
     duplicate_of_id: data.duplicate_of_id || null,
     raw_extraction_json: data.raw_extraction_json || null,
     review_status: data.review_status ?? 'needs_review',

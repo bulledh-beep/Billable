@@ -245,6 +245,18 @@ export interface BillImportCandidate {
   extracted_frequency: string
   extracted_record_type: CandidateRecordType
   confidence_score: number
+  /** 0-100 financial-relevance score (is this a financial email vs noise). */
+  relevance_score?: number
+  /** Short human-readable reasons it was detected as financial. */
+  detected_reason?: string
+  /** Why confidence may be low / what's missing. */
+  low_confidence_reason?: string
+  /** Suggested next action, e.g. "Review", "Auto-added", "Match payment". */
+  suggested_action?: string
+  extracted_account_last4?: string | null
+  extracted_payment_method?: string | null
+  /** 1 if this candidate was auto-approved into a real record. */
+  auto_approved?: number
   duplicate_of_id: number | null
   raw_extraction_json: string | null
   review_status: CandidateReviewStatus
@@ -321,6 +333,8 @@ export interface Settings {
   google_client_id?: string
   google_client_secret?: string
   bill_tracking_enabled?: string
+  bill_auto_approve_enabled?: string
+  bill_auto_approve_threshold?: string
 }
 
 export interface Profile {
