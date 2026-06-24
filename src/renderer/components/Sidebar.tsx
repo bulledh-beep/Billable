@@ -11,6 +11,7 @@ import {
   Settings,
   Calculator,
   Receipt,
+  HandCoins,
   Square,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -50,6 +51,7 @@ const navItems = [
 ]
 
 const businessItems = [
+  { to: '/commissions', icon: HandCoins, label: 'Commissions' },
   { to: '/tax-overview', icon: Calculator, label: 'Tax Overview' },
   { to: '/tax-settings', icon: Receipt, label: 'Tax Settings' },
 ]

@@ -182,6 +182,13 @@ export function registerIpcHandlers(timerManager: TimerManager) {
   ipcMain.handle('expense:update', (_, id: number, data) => db.updateExpense(id, data))
   ipcMain.handle('expense:delete', (_, id: number) => db.deleteExpense(id))
 
+  // ========== Commissions ==========
+  ipcMain.handle('commissions:list', () => db.listCommissions())
+  ipcMain.handle('commissions:get', (_, id: number) => db.getCommission(id))
+  ipcMain.handle('commissions:create', (_, data) => db.createCommission(data))
+  ipcMain.handle('commissions:update', (_, id: number, data) => db.updateCommission(id, data))
+  ipcMain.handle('commissions:delete', (_, id: number) => db.deleteCommission(id))
+
   // ========== Profiles ==========
   ipcMain.handle('profile:list', () => ({
     profiles: listProfiles(),

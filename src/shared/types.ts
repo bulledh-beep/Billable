@@ -123,6 +123,41 @@ export interface InvoiceItem {
   total: number
 }
 
+// ===== Commission tracking (appointment-setting commissions) =====
+export type CommissionJobType = 'solar' | 'roofing'
+
+export type CommissionStatus =
+  | 'appointment_set'
+  | 'appointment_attended'
+  | 'closed_waiting'
+  | 'paid'
+  | 'lost'
+  | 'cancelled'
+  | 'needs_review'
+
+export type CommissionPaymentStatus = 'unpaid' | 'pending' | 'paid'
+
+export interface Commission {
+  id: number
+  client_name: string
+  job_type: CommissionJobType
+  appointment_date: string | null
+  closer_name: string
+  status: CommissionStatus
+  payment_status: CommissionPaymentStatus
+  system_size_kw: number | null
+  contract_amount: number | null
+  /** Rule-based commission (0 when in the roofing review gap). */
+  calculated_commission: number
+  /** When set, overrides the calculated commission. */
+  manual_override: number | null
+  /** 1 when roofing is $20,001–$29,999 and no override is set. */
+  needs_review: number
+  notes: string
+  created_at: string
+  updated_at: string
+}
+
 export interface PaymentMethod {
   name: string
   email: string
@@ -253,6 +288,12 @@ export type IpcChannels = {
   'tax:export-summary-pdf': (taxYear: number) => string | null
   'tax:export-invoices-csv': (taxYear: number) => string | null
   'tax:export-expenses-csv': (taxYear: number) => string | null
+  // Commissions
+  'commissions:list': () => Commission[]
+  'commissions:get': (id: number) => Commission | null
+  'commissions:create': (data: Partial<Commission>) => Commission
+  'commissions:update': (id: number, data: Partial<Commission>) => Commission
+  'commissions:delete': (id: number) => void
   // Expenses
   'expense:list': (taxYear?: number) => Expense[]
   'expense:get': (id: number) => Expense | null

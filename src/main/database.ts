@@ -86,6 +86,29 @@ function runMigrations() {
     SET tax_year = CAST(strftime('%Y', issue_date) AS INTEGER)
     WHERE tax_year IS NULL
   `).run()
+
+  // ----- Commission tracking (appointment-setting commissions) -----
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS commissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_name TEXT NOT NULL,
+      job_type TEXT NOT NULL DEFAULT 'solar' CHECK(job_type IN ('solar', 'roofing')),
+      appointment_date TEXT,
+      closer_name TEXT DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'appointment_set'
+        CHECK(status IN ('appointment_set','appointment_attended','closed_waiting','paid','lost','cancelled','needs_review')),
+      payment_status TEXT NOT NULL DEFAULT 'unpaid'
+        CHECK(payment_status IN ('unpaid','pending','paid')),
+      system_size_kw REAL,
+      contract_amount REAL,
+      calculated_commission REAL DEFAULT 0,
+      manual_override REAL,
+      needs_review INTEGER DEFAULT 0,
+      notes TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+  `)
 }
 
 function addColumnIfMissing(table: string, column: string, def: string) {
@@ -881,6 +904,129 @@ export function updateExpense(id: number, data: any) {
 
 export function deleteExpense(id: number) {
   db.prepare('DELETE FROM expenses WHERE id = ?').run(id)
+}
+
+// ============ Commission Tracking ============
+
+/**
+ * Authoritative commission calculation. Runs on every create/update so the
+ * stored number always matches the rules.
+ *
+ *  Solar:   kW × $50
+ *  Roofing: ≤ $20,000 → $250 ; ≥ $30,000 → $500 ;
+ *           $20,001–$29,999 → Needs Review (commission 0) unless a manual
+ *           override is provided.
+ *
+ * Returns the rule-based `calculated` amount and a `needs_review` flag. A manual
+ * override (when present and ≥ 0) takes precedence in display/totals and clears
+ * the review flag.
+ */
+export function computeCommission(data: any): { calculated: number; needs_review: number } {
+  const overrideRaw = data.manual_override
+  const hasOverride = overrideRaw !== null && overrideRaw !== undefined && overrideRaw !== '' &&
+    !isNaN(Number(overrideRaw)) && Number(overrideRaw) >= 0
+
+  if (data.job_type === 'roofing') {
+    const amt = Number(data.contract_amount) || 0
+    if (amt <= 20000) return { calculated: 250, needs_review: 0 }
+    if (amt >= 30000) return { calculated: 500, needs_review: 0 }
+    // $20,001–$29,999 gap
+    return { calculated: 0, needs_review: hasOverride ? 0 : 1 }
+  }
+
+  // Solar (default)
+  const kw = Number(data.system_size_kw) || 0
+  const amount = Math.max(0, Math.round(kw * 50 * 100) / 100)
+  return { calculated: amount, needs_review: 0 }
+}
+
+export function listCommissions() {
+  return db.prepare('SELECT * FROM commissions ORDER BY appointment_date DESC, id DESC').all()
+}
+
+export function getCommission(id: number) {
+  return db.prepare('SELECT * FROM commissions WHERE id = ?').get(id)
+}
+
+export function createCommission(data: any) {
+  const { calculated, needs_review } = computeCommission(data)
+  const override = data.manual_override === '' || data.manual_override === null || data.manual_override === undefined
+    ? null
+    : Math.max(0, Number(data.manual_override))
+
+  const stmt = db.prepare(`
+    INSERT INTO commissions (
+      client_name, job_type, appointment_date, closer_name, status, payment_status,
+      system_size_kw, contract_amount, calculated_commission, manual_override, needs_review, notes
+    ) VALUES (
+      @client_name, @job_type, @appointment_date, @closer_name, @status, @payment_status,
+      @system_size_kw, @contract_amount, @calculated_commission, @manual_override, @needs_review, @notes
+    )
+  `)
+  const result = stmt.run({
+    client_name: data.client_name,
+    job_type: data.job_type || 'solar',
+    appointment_date: data.appointment_date || null,
+    closer_name: data.closer_name || '',
+    status: data.status || 'appointment_set',
+    payment_status: data.payment_status || 'unpaid',
+    system_size_kw: data.system_size_kw != null && data.system_size_kw !== '' ? Number(data.system_size_kw) : null,
+    contract_amount: data.contract_amount != null && data.contract_amount !== '' ? Number(data.contract_amount) : null,
+    calculated_commission: calculated,
+    manual_override: override,
+    needs_review,
+    notes: data.notes || '',
+  })
+  return getCommission(result.lastInsertRowid as number)
+}
+
+export function updateCommission(id: number, data: any) {
+  const existing = getCommission(id) as any
+  if (!existing) return null
+
+  // Merge so the recalculation sees the full picture even on partial updates
+  const merged = { ...existing, ...data }
+  const { calculated, needs_review } = computeCommission(merged)
+  const override = merged.manual_override === '' || merged.manual_override === null || merged.manual_override === undefined
+    ? null
+    : Math.max(0, Number(merged.manual_override))
+
+  db.prepare(`
+    UPDATE commissions SET
+      client_name = @client_name,
+      job_type = @job_type,
+      appointment_date = @appointment_date,
+      closer_name = @closer_name,
+      status = @status,
+      payment_status = @payment_status,
+      system_size_kw = @system_size_kw,
+      contract_amount = @contract_amount,
+      calculated_commission = @calculated_commission,
+      manual_override = @manual_override,
+      needs_review = @needs_review,
+      notes = @notes,
+      updated_at = datetime('now')
+    WHERE id = @id
+  `).run({
+    id,
+    client_name: merged.client_name,
+    job_type: merged.job_type,
+    appointment_date: merged.appointment_date || null,
+    closer_name: merged.closer_name || '',
+    status: merged.status,
+    payment_status: merged.payment_status,
+    system_size_kw: merged.system_size_kw != null && merged.system_size_kw !== '' ? Number(merged.system_size_kw) : null,
+    contract_amount: merged.contract_amount != null && merged.contract_amount !== '' ? Number(merged.contract_amount) : null,
+    calculated_commission: calculated,
+    manual_override: override,
+    needs_review,
+    notes: merged.notes || '',
+  })
+  return getCommission(id)
+}
+
+export function deleteCommission(id: number) {
+  db.prepare('DELETE FROM commissions WHERE id = ?').run(id)
 }
 
 export { db }

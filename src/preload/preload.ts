@@ -103,6 +103,14 @@ const api = {
     update: (id: number, data: any) => ipcRenderer.invoke('expense:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('expense:delete', id),
   },
+  // Commissions
+  commissions: {
+    list: () => ipcRenderer.invoke('commissions:list'),
+    get: (id: number) => ipcRenderer.invoke('commissions:get', id),
+    create: (data: any) => ipcRenderer.invoke('commissions:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('commissions:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('commissions:delete', id),
+  },
   // Events from main process
   on: (channel: string, callback: (...args: any[]) => void) => {
     const subscription = (_event: any, ...args: any[]) => callback(...args)
