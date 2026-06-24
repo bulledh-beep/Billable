@@ -109,7 +109,18 @@ const api = {
     get: (id: number) => ipcRenderer.invoke('commissions:get', id),
     create: (data: any) => ipcRenderer.invoke('commissions:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('commissions:update', id, data),
+    patch: (id: number, patch: any) => ipcRenderer.invoke('commissions:patch', id, patch),
+    bulkPatch: (ids: number[], patch: any) => ipcRenderer.invoke('commissions:bulk-patch', ids, patch),
     delete: (id: number) => ipcRenderer.invoke('commissions:delete', id),
+  },
+  // Commission invoices
+  commissionInvoices: {
+    list: () => ipcRenderer.invoke('commission-invoices:list'),
+    get: (id: number) => ipcRenderer.invoke('commission-invoices:get', id),
+    create: (data: any) => ipcRenderer.invoke('commission-invoices:create', data),
+    updateStatus: (id: number, status: string) => ipcRenderer.invoke('commission-invoices:update-status', id, status),
+    delete: (id: number) => ipcRenderer.invoke('commission-invoices:delete', id),
+    exportPDF: (id: number) => ipcRenderer.invoke('commission-invoices:export-pdf', id),
   },
   // Events from main process
   on: (channel: string, callback: (...args: any[]) => void) => {

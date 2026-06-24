@@ -108,7 +108,28 @@ function runMigrations() {
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS commission_invoices (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      invoice_number TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'mixed' CHECK(category IN ('solar','roofing','mixed')),
+      date_from TEXT,
+      date_to TEXT,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','sent','paid','cancelled')),
+      job_count INTEGER DEFAULT 0,
+      total REAL DEFAULT 0,
+      notes TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      paid_at TEXT
+    );
   `)
+
+  // Invoice-tracking fields on commission jobs (additive)
+  addColumnIfMissing('commissions', 'invoice_id', 'INTEGER')
+  addColumnIfMissing('commissions', 'invoice_status', "TEXT DEFAULT 'not_invoiced'")
+  addColumnIfMissing('commissions', 'invoiced_at', 'TEXT')
+  addColumnIfMissing('commissions', 'paid_at', 'TEXT')
 }
 
 function addColumnIfMissing(table: string, column: string, def: string) {
@@ -1027,6 +1048,124 @@ export function updateCommission(id: number, data: any) {
 
 export function deleteCommission(id: number) {
   db.prepare('DELETE FROM commissions WHERE id = ?').run(id)
+}
+
+/** Effective payout for totals: override wins; review gap → 0. */
+function commissionEffective(c: any): number {
+  if (c.manual_override != null) return c.manual_override
+  if (c.needs_review) return 0
+  return c.calculated_commission || 0
+}
+
+const COMMISSION_PATCH_COLS = ['status', 'payment_status', 'invoice_status', 'invoiced_at', 'paid_at', 'invoice_id']
+
+/**
+ * Lightweight status patch for quick / bulk actions — updates only allowlisted
+ * lifecycle columns and does NOT recompute the commission amount (kW/contract
+ * are unchanged). Full edits still go through updateCommission.
+ */
+export function patchCommission(id: number, patch: any) {
+  const fields = Object.keys(patch).filter(k => COMMISSION_PATCH_COLS.includes(k))
+  if (fields.length === 0) return getCommission(id)
+  const sets = fields.map(f => `${f} = @${f}`).join(', ')
+  db.prepare(`UPDATE commissions SET ${sets}, updated_at = datetime('now') WHERE id = @id`).run({ ...patch, id })
+  return getCommission(id)
+}
+
+export function bulkPatchCommissions(ids: number[], patch: any) {
+  const tx = db.transaction((list: number[]) => {
+    for (const id of list) patchCommission(id, patch)
+  })
+  tx(ids)
+  return listCommissions()
+}
+
+// ============ Commission Invoices ============
+
+export function listCommissionInvoices() {
+  return db.prepare('SELECT * FROM commission_invoices ORDER BY created_at DESC, id DESC').all()
+}
+
+export function getCommissionInvoice(id: number) {
+  const inv = db.prepare('SELECT * FROM commission_invoices WHERE id = ?').get(id) as any
+  if (inv) {
+    inv.jobs = db.prepare('SELECT * FROM commissions WHERE invoice_id = ? ORDER BY job_type, appointment_date').all(id)
+  }
+  return inv
+}
+
+/**
+ * Create a commission invoice from a set of job ids. Stamps the jobs as
+ * "invoiced" and links them to the new invoice.
+ */
+export function createCommissionInvoice(data: { jobIds: number[]; category?: string; date_from?: string; date_to?: string; notes?: string }) {
+  const jobs = (data.jobIds || []).map(id => getCommission(id)).filter(Boolean) as any[]
+  if (jobs.length === 0) throw new Error('No jobs selected for the invoice')
+
+  const total = jobs.reduce((s, c) => s + commissionEffective(c), 0)
+  const types = new Set(jobs.map(j => j.job_type))
+  const category = data.category && data.category !== 'both'
+    ? data.category
+    : (types.size > 1 ? 'mixed' : (types.has('solar') ? 'solar' : 'roofing'))
+
+  const tx = db.transaction(() => {
+    const result = db.prepare(`
+      INSERT INTO commission_invoices (invoice_number, category, date_from, date_to, status, job_count, total, notes)
+      VALUES ('PENDING', @category, @date_from, @date_to, 'draft', @job_count, @total, @notes)
+    `).run({
+      category,
+      date_from: data.date_from || null,
+      date_to: data.date_to || null,
+      job_count: jobs.length,
+      total,
+      notes: data.notes || '',
+    })
+    const id = Number(result.lastInsertRowid)
+    const number = `COMM-${String(1000 + id).padStart(4, '0')}`
+    db.prepare('UPDATE commission_invoices SET invoice_number = ? WHERE id = ?').run(number, id)
+
+    const now = new Date().toISOString().slice(0, 10)
+    const upd = db.prepare(`
+      UPDATE commissions SET invoice_id = ?, invoice_status = 'invoiced', invoiced_at = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `)
+    for (const j of jobs) upd.run(id, now, j.id)
+    return id
+  })
+  const newId = tx()
+  return getCommissionInvoice(newId)
+}
+
+export function updateCommissionInvoiceStatus(id: number, status: string) {
+  if (status === 'paid') {
+    const now = new Date().toISOString().slice(0, 10)
+    const tx = db.transaction(() => {
+      db.prepare("UPDATE commission_invoices SET status = 'paid', paid_at = ?, updated_at = datetime('now') WHERE id = ?").run(now, id)
+      // Cascade: every job on this invoice is now paid out
+      db.prepare(`
+        UPDATE commissions SET payment_status = 'paid', status = 'paid', invoice_status = 'paid', paid_at = ?, updated_at = datetime('now')
+        WHERE invoice_id = ?
+      `).run(now, id)
+    })
+    tx()
+  } else {
+    db.prepare("UPDATE commission_invoices SET status = ?, updated_at = datetime('now') WHERE id = ?").run(status, id)
+  }
+  return getCommissionInvoice(id)
+}
+
+/** Delete an invoice and release its (unpaid) jobs back to "not invoiced". */
+export function deleteCommissionInvoice(id: number) {
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE commissions SET invoice_id = NULL, invoice_status = 'not_invoiced', invoiced_at = NULL, updated_at = datetime('now')
+      WHERE invoice_id = ? AND payment_status != 'paid'
+    `).run(id)
+    // Paid jobs keep their paid state but lose the (now-deleted) invoice link
+    db.prepare('UPDATE commissions SET invoice_id = NULL WHERE invoice_id = ?').run(id)
+    db.prepare('DELETE FROM commission_invoices WHERE id = ?').run(id)
+  })
+  tx()
 }
 
 export { db }

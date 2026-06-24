@@ -154,8 +154,33 @@ export interface Commission {
   /** 1 when roofing is $20,001–$29,999 and no override is set. */
   needs_review: number
   notes: string
+  // Invoice tracking
+  invoice_id?: number | null
+  invoice_status?: CommissionInvoiceStage
+  invoiced_at?: string | null
+  paid_at?: string | null
   created_at: string
   updated_at: string
+}
+
+export type CommissionInvoiceStage = 'not_invoiced' | 'invoiced' | 'paid'
+export type CommissionInvoiceCategory = 'solar' | 'roofing' | 'mixed'
+export type CommissionInvoiceStatus = 'draft' | 'sent' | 'paid' | 'cancelled'
+
+export interface CommissionInvoice {
+  id: number
+  invoice_number: string
+  category: CommissionInvoiceCategory
+  date_from: string | null
+  date_to: string | null
+  status: CommissionInvoiceStatus
+  job_count: number
+  total: number
+  notes: string
+  created_at: string
+  updated_at: string
+  paid_at: string | null
+  jobs?: Commission[]
 }
 
 export interface PaymentMethod {
@@ -293,7 +318,16 @@ export type IpcChannels = {
   'commissions:get': (id: number) => Commission | null
   'commissions:create': (data: Partial<Commission>) => Commission
   'commissions:update': (id: number, data: Partial<Commission>) => Commission
+  'commissions:patch': (id: number, patch: Partial<Commission>) => Commission
+  'commissions:bulk-patch': (ids: number[], patch: Partial<Commission>) => Commission[]
   'commissions:delete': (id: number) => void
+  // Commission invoices
+  'commission-invoices:list': () => CommissionInvoice[]
+  'commission-invoices:get': (id: number) => CommissionInvoice | null
+  'commission-invoices:create': (data: any) => CommissionInvoice
+  'commission-invoices:update-status': (id: number, status: string) => CommissionInvoice
+  'commission-invoices:delete': (id: number) => void
+  'commission-invoices:export-pdf': (id: number) => string | null
   // Expenses
   'expense:list': (taxYear?: number) => Expense[]
   'expense:get': (id: number) => Expense | null

@@ -5,6 +5,7 @@ import path from 'path'
 import * as db from './database'
 import { generateInvoicePDF } from './pdf'
 import { generateTaxSummaryPDF } from './tax-pdf'
+import { generateCommissionInvoicePDF } from './commission-pdf'
 import { TimerManager } from './timer-manager'
 import {
   listProfiles, getActiveProfile, createProfile, renameProfile,
@@ -187,7 +188,19 @@ export function registerIpcHandlers(timerManager: TimerManager) {
   ipcMain.handle('commissions:get', (_, id: number) => db.getCommission(id))
   ipcMain.handle('commissions:create', (_, data) => db.createCommission(data))
   ipcMain.handle('commissions:update', (_, id: number, data) => db.updateCommission(id, data))
+  ipcMain.handle('commissions:patch', (_, id: number, patch) => db.patchCommission(id, patch))
+  ipcMain.handle('commissions:bulk-patch', (_, ids: number[], patch) => db.bulkPatchCommissions(ids, patch))
   ipcMain.handle('commissions:delete', (_, id: number) => db.deleteCommission(id))
+
+  // ========== Commission Invoices ==========
+  ipcMain.handle('commission-invoices:list', () => db.listCommissionInvoices())
+  ipcMain.handle('commission-invoices:get', (_, id: number) => db.getCommissionInvoice(id))
+  ipcMain.handle('commission-invoices:create', (_, data) => db.createCommissionInvoice(data))
+  ipcMain.handle('commission-invoices:update-status', (_, id: number, status: string) => db.updateCommissionInvoiceStatus(id, status))
+  ipcMain.handle('commission-invoices:delete', (_, id: number) => db.deleteCommissionInvoice(id))
+  ipcMain.handle('commission-invoices:export-pdf', async (_, id: number) => {
+    return await generateCommissionInvoicePDF(id)
+  })
 
   // ========== Profiles ==========
   ipcMain.handle('profile:list', () => ({
