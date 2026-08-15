@@ -82,6 +82,10 @@ export function rebuildTrayMenu() {
 
     template = [
       {
+        label: 'Pause Timer',
+        click: () => timerManager!.pause(),
+      },
+      {
         label: 'Stop Timer',
         click: () => timerManager!.stop(),
       },
