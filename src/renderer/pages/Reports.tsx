@@ -14,9 +14,10 @@ const CHART_COLORS = ['#F5A623', '#3498DB', '#2ECC71', '#E74C3C', '#9B59B6', '#1
 
 interface ReportsProps {
   isTimerRunning: boolean
+  isTimerPaused: boolean
 }
 
-export default function Reports({ isTimerRunning }: ReportsProps) {
+export default function Reports({ isTimerRunning, isTimerPaused }: ReportsProps) {
   const [dateRange, setDateRange] = useState({
     start: new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0],
     end: new Date().toISOString().split('T')[0],
@@ -29,7 +30,7 @@ export default function Reports({ isTimerRunning }: ReportsProps) {
   useEffect(() => { loadReports() }, [dateRange])
 
   // Refresh whenever the timer starts/stops so new entries & projects appear in totals
-  useEffect(() => { loadReports() }, [isTimerRunning])
+  useEffect(() => { loadReports() }, [isTimerRunning, isTimerPaused])
 
   // Refresh on window focus so navigating back from another app / page picks up changes
   useEffect(() => {

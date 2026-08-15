@@ -50,10 +50,11 @@ app.whenReady().then(() => {
   initDatabase(getActiveProfileId())
 
   createWindow()
-  createMenu(mainWindow!)
 
   // Create TimerManager (picks up any running timer from DB)
   timerManager = new TimerManager()
+
+  createMenu(mainWindow!, timerManager)
 
   // Create tray and wire it to TimerManager
   createTray(mainWindow!, timerManager)

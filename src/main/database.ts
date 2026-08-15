@@ -36,6 +36,17 @@ export function closeDatabase() {
 
 // Idempotent migrations — safe to re-run on every app launch.
 function runMigrations() {
+  // ----- Timer pause/resume state -----
+  // Keep the original start time for reporting while active_since tracks the
+  // current running segment. Existing open timers continue from start_time.
+  addColumnIfMissing('time_entries', 'paused_at', 'TEXT')
+  addColumnIfMissing('time_entries', 'active_since', 'TEXT')
+  db.prepare(`
+    UPDATE time_entries
+    SET active_since = start_time
+    WHERE end_time IS NULL AND paused_at IS NULL AND active_since IS NULL
+  `).run()
+
   // ----- Phase 1: tax & expense tracking -----
   db.exec(`
     CREATE TABLE IF NOT EXISTS tax_settings (
@@ -175,6 +186,8 @@ function createTables() {
       start_time TEXT NOT NULL,
       end_time TEXT,
       duration_minutes REAL DEFAULT 0,
+      paused_at TEXT,
+      active_since TEXT,
       is_billable INTEGER DEFAULT 1,
       is_invoiced INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now')),
@@ -405,10 +418,10 @@ export function deleteTimeEntry(id: number) {
 export function startTimer(projectId: number, description: string = '') {
   const now = new Date().toISOString()
   const stmt = db.prepare(`
-    INSERT INTO time_entries (project_id, description, start_time, is_billable)
-    VALUES (?, ?, ?, 1)
+    INSERT INTO time_entries (project_id, description, start_time, active_since, is_billable)
+    VALUES (?, ?, ?, ?, 1)
   `)
-  const result = stmt.run(projectId, description, now)
+  const result = stmt.run(projectId, description, now, now)
   return getTimeEntry(result.lastInsertRowid as number)
 }
 
@@ -417,8 +430,7 @@ export function stopTimer(id: number) {
   if (!entry) return null
 
   const now = new Date()
-  const start = new Date(entry.start_time)
-  const durationMinutes = (now.getTime() - start.getTime()) / 60000
+  const durationMinutes = getAccumulatedDurationMinutes(entry, now)
 
   // Get rounding preference
   const rounding = db.prepare("SELECT value FROM settings WHERE key = 'time_rounding'").get() as any
@@ -426,8 +438,39 @@ export function stopTimer(id: number) {
   const roundedDuration = roundDuration(durationMinutes, roundTo)
 
   db.prepare(`
-    UPDATE time_entries SET end_time = ?, duration_minutes = ? WHERE id = ?
+    UPDATE time_entries
+    SET end_time = ?, duration_minutes = ?, paused_at = NULL, active_since = NULL
+    WHERE id = ?
   `).run(now.toISOString(), roundedDuration, id)
+
+  return getTimeEntry(id)
+}
+
+export function pauseTimer(id: number) {
+  const entry = db.prepare('SELECT * FROM time_entries WHERE id = ?').get(id) as any
+  if (!entry || entry.end_time || entry.paused_at) return entry ? getTimeEntry(id) : null
+
+  const now = new Date()
+  const durationMinutes = getAccumulatedDurationMinutes(entry, now)
+  db.prepare(`
+    UPDATE time_entries
+    SET duration_minutes = ?, paused_at = ?, active_since = NULL
+    WHERE id = ?
+  `).run(durationMinutes, now.toISOString(), id)
+
+  return getTimeEntry(id)
+}
+
+export function resumeTimer(id: number) {
+  const entry = db.prepare('SELECT * FROM time_entries WHERE id = ?').get(id) as any
+  if (!entry || entry.end_time || !entry.paused_at) return entry ? getTimeEntry(id) : null
+
+  const now = new Date().toISOString()
+  db.prepare(`
+    UPDATE time_entries
+    SET paused_at = NULL, active_since = ?
+    WHERE id = ?
+  `).run(now, id)
 
   return getTimeEntry(id)
 }
@@ -439,10 +482,32 @@ export function getActiveTimer() {
     FROM time_entries te
     LEFT JOIN projects p ON te.project_id = p.id
     LEFT JOIN clients c ON p.client_id = c.id
-    WHERE te.end_time IS NULL
+    WHERE te.end_time IS NULL AND te.paused_at IS NULL
     ORDER BY te.start_time DESC
     LIMIT 1
   `).get() || null
+}
+
+export function getPausedTimer() {
+  return db.prepare(`
+    SELECT te.*, p.name as project_name, p.color as project_color, p.rate,
+           c.name as client_name
+    FROM time_entries te
+    LEFT JOIN projects p ON te.project_id = p.id
+    LEFT JOIN clients c ON p.client_id = c.id
+    WHERE te.end_time IS NULL AND te.paused_at IS NOT NULL
+    ORDER BY te.paused_at DESC
+    LIMIT 1
+  `).get() || null
+}
+
+function getAccumulatedDurationMinutes(entry: any, now: Date) {
+  const accumulated = Number(entry.duration_minutes) || 0
+  if (entry.paused_at) return accumulated
+
+  const activeSince = new Date(entry.active_since || entry.start_time).getTime()
+  const runningMinutes = Math.max(0, now.getTime() - activeSince) / 60000
+  return accumulated + runningMinutes
 }
 
 function roundDuration(minutes: number, roundTo: string): number {

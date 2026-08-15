@@ -7,17 +7,19 @@ import {
   TrendingUp,
   AlertCircle,
   Play,
-  Square,
-  ChevronRight,
+  Pause,
 } from 'lucide-react'
 import AnimatedNumber from '../components/AnimatedNumber'
-import { formatMoney, formatHours, formatRelative, formatDuration, getAvatarColor, getInitials } from '../utils/format'
+import { formatMoney, formatHours, formatRelative, formatDuration } from '../utils/format'
 import type { DashboardStats, TimeEntry, Project } from '@shared/types'
 
 interface DashboardProps {
   onStartTimer: (projectId: number, description?: string) => Promise<any>
   onStopTimer: () => Promise<any>
+  onPauseTimer: () => Promise<any>
+  onResumeTimer: () => Promise<any>
   isTimerRunning: boolean
+  isTimerPaused: boolean
   activeEntry: TimeEntry | null
 }
 
@@ -31,7 +33,15 @@ const item = {
   show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' } },
 }
 
-export default function Dashboard({ onStartTimer, onStopTimer, isTimerRunning, activeEntry }: DashboardProps) {
+export default function Dashboard({
+  onStartTimer,
+  onStopTimer,
+  onPauseTimer,
+  onResumeTimer,
+  isTimerRunning,
+  isTimerPaused,
+  activeEntry,
+}: DashboardProps) {
   const navigate = useNavigate()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [recent, setRecent] = useState<TimeEntry[]>([])
@@ -42,7 +52,7 @@ export default function Dashboard({ onStartTimer, onStopTimer, isTimerRunning, a
   }, [])
 
   // Reload when timer starts/stops so stats and recent activity stay current
-  useEffect(() => { loadData() }, [isTimerRunning])
+  useEffect(() => { loadData() }, [isTimerRunning, isTimerPaused])
 
   const loadData = async () => {
     const [s, r, p] = await Promise.all([
@@ -60,8 +70,13 @@ export default function Dashboard({ onStartTimer, onStopTimer, isTimerRunning, a
     loadData()
   }
 
-  const handleQuickStop = async () => {
-    await onStopTimer()
+  const handleQuickPause = async () => {
+    await onPauseTimer()
+    loadData()
+  }
+
+  const handleQuickResume = async () => {
+    await onResumeTimer()
     loadData()
   }
 
@@ -214,13 +229,15 @@ export default function Dashboard({ onStartTimer, onStopTimer, isTimerRunning, a
           ) : (
             <div className="space-y-1">
               {projects.slice(0, 8).map((project: any) => {
-                const isActive = isTimerRunning && activeEntry?.project_id === project.id
+                const isCurrent = (isTimerRunning || isTimerPaused) && activeEntry?.project_id === project.id
                 return (
                   <button
                     key={project.id}
-                    onClick={() => isActive ? handleQuickStop() : handleQuickStart(project.id)}
+                    onClick={() => isCurrent
+                      ? (isTimerPaused ? handleQuickResume() : handleQuickPause())
+                      : handleQuickStart(project.id)}
                     className={`w-full flex items-center gap-3 py-2.5 px-3 rounded-lg transition-colors text-left group ${
-                      isActive ? 'bg-accent/10 hover:bg-red-500/10' : 'hover:bg-surface-200/50'
+                      isCurrent ? 'bg-accent/10 hover:bg-accent/15' : 'hover:bg-surface-200/50'
                     }`}
                   >
                     <div
@@ -231,8 +248,10 @@ export default function Dashboard({ onStartTimer, onStopTimer, isTimerRunning, a
                       <div className="text-sm text-text-primary truncate">{project.name}</div>
                       <div className="text-xs text-text-tertiary truncate">{project.client_name}</div>
                     </div>
-                    {isActive ? (
-                      <Square className="w-3.5 h-3.5 text-red-400 fill-current" />
+                    {isCurrent ? (
+                      isTimerPaused
+                        ? <Play className="w-3.5 h-3.5 text-accent fill-current" />
+                        : <Pause className="w-3.5 h-3.5 text-status-paused fill-current" />
                     ) : (
                       <Play className="w-3.5 h-3.5 text-text-tertiary group-hover:text-accent transition-colors" />
                     )}

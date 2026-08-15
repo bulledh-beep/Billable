@@ -63,6 +63,7 @@ export function rebuildTrayMenu() {
   if (!tray || !timerManager) return
 
   const active = timerManager.getActive()
+  const paused = timerManager.getPaused()
   const projects = db.listProjects() as any[]
   const activeProjects = projects.filter((p: any) => p.status === 'active')
   const todayHours = db.getTodayHours()
@@ -71,7 +72,11 @@ export function rebuildTrayMenu() {
 
   if (active) {
     // Timer is running
-    const elapsed = timerManager.formatElapsedReadable(active.start_time)
+    const elapsed = timerManager.formatElapsedReadable(
+      active.start_time,
+      active.duration_minutes,
+      active.active_since,
+    )
     const projectLabel = active.project_name || 'Unknown Project'
     const clientLabel = active.client_name ? ` — ${active.client_name}` : ''
 
@@ -98,6 +103,50 @@ export function rebuildTrayMenu() {
             label: `${p.name}${p.client_name ? ` (${p.client_name})` : ''}`,
             click: () => timerManager!.start(p.id),
           })),
+      },
+      { type: 'separator' },
+      {
+        label: 'Open Billable',
+        click: () => showMainWindow(),
+      },
+      {
+        label: `Today: ${todayHours.toFixed(1)} hrs tracked`,
+        enabled: false,
+      },
+      { type: 'separator' },
+      {
+        label: 'Quit Billable',
+        click: () => app.quit(),
+      },
+    ]
+  } else if (paused) {
+    // A paused timer remains resumable from the tray without counting the
+    // break toward the entry's duration.
+    const elapsed = timerManager.formatElapsedReadable(
+      paused.start_time,
+      paused.duration_minutes,
+      paused.active_since,
+    )
+    const projectLabel = paused.project_name || 'Unknown Project'
+    const clientLabel = paused.client_name ? ` — ${paused.client_name}` : ''
+
+    template = [
+      {
+        label: 'Resume Timer',
+        click: () => timerManager!.resume(),
+      },
+      {
+        label: 'Stop Timer',
+        click: () => timerManager!.stop(),
+      },
+      { type: 'separator' },
+      {
+        label: `⏸  ${projectLabel}${clientLabel}`,
+        enabled: false,
+      },
+      {
+        label: `     ${elapsed}`,
+        enabled: false,
       },
       { type: 'separator' },
       {

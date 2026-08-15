@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import {
-  Play, Square, Plus, Clock, Trash2, Pencil, Search, TimerReset,
+  Play, Pause, Square, Plus, Clock, Trash2, Pencil, Search, TimerReset,
 } from 'lucide-react'
 import Modal from '../components/Modal'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -16,13 +16,26 @@ const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }
 interface Props {
   onStartTimer: (projectId: number, description?: string) => Promise<any>
   onStopTimer: () => Promise<any>
+  onPauseTimer: () => Promise<any>
+  onResumeTimer: () => Promise<any>
   isTimerRunning: boolean
+  isTimerPaused: boolean
   activeEntry: TimeEntry | null
   elapsed: string
   checkActive: () => void
 }
 
-export default function TimeTracking({ onStartTimer, onStopTimer, isTimerRunning, activeEntry, elapsed, checkActive }: Props) {
+export default function TimeTracking({
+  onStartTimer,
+  onStopTimer,
+  onPauseTimer,
+  onResumeTimer,
+  isTimerRunning,
+  isTimerPaused,
+  activeEntry,
+  elapsed,
+  checkActive,
+}: Props) {
   const [entries, setEntries] = useState<TimeEntry[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [search, setSearch] = useState('')
@@ -55,7 +68,7 @@ export default function TimeTracking({ onStartTimer, onStopTimer, isTimerRunning
   useEffect(() => { loadData() }, [])
 
   // Reload when the timer transitions (starts or stops, including from tray/sidebar)
-  useEffect(() => { loadData() }, [isTimerRunning])
+  useEffect(() => { loadData() }, [isTimerRunning, isTimerPaused])
 
   const loadData = async () => {
     const [e, p] = await Promise.all([
@@ -80,6 +93,20 @@ export default function TimeTracking({ onStartTimer, onStopTimer, isTimerRunning
   const handleStop = async () => {
     await onStopTimer()
     toast.success('Timer stopped')
+    loadData()
+    checkActive()
+  }
+
+  const handlePause = async () => {
+    await onPauseTimer()
+    toast.success('Timer paused')
+    loadData()
+    checkActive()
+  }
+
+  const handleResume = async () => {
+    await onResumeTimer()
+    toast.success('Timer resumed')
     loadData()
     checkActive()
   }
@@ -158,10 +185,21 @@ export default function TimeTracking({ onStartTimer, onStopTimer, isTimerRunning
           <button onClick={() => setShowManual(true)} className="btn-secondary flex items-center gap-2">
             <Plus className="w-4 h-4" /> Manual Entry
           </button>
-          {isTimerRunning ? (
-            <button onClick={handleStop} className="btn-danger flex items-center gap-2">
-              <Square className="w-4 h-4 fill-current" /> Stop {elapsed}
-            </button>
+          {isTimerRunning || isTimerPaused ? (
+            <div className="flex gap-2">
+              <button
+                onClick={isTimerPaused ? handleResume : handlePause}
+                className={`${isTimerPaused ? 'btn-primary' : 'btn-secondary'} flex items-center gap-2`}
+              >
+                {isTimerPaused
+                  ? <Play className="w-4 h-4 fill-current" />
+                  : <Pause className="w-4 h-4 fill-current" />}
+                {isTimerPaused ? 'Resume' : 'Pause'} {elapsed}
+              </button>
+              <button onClick={handleStop} className="btn-danger flex items-center gap-2">
+                <Square className="w-4 h-4 fill-current" /> Stop
+              </button>
+            </div>
           ) : (
             <button onClick={() => setShowStartForm(true)} className="btn-primary flex items-center gap-2">
               <Play className="w-4 h-4" /> Start Timer
@@ -171,28 +209,36 @@ export default function TimeTracking({ onStartTimer, onStopTimer, isTimerRunning
       </motion.div>
 
       {/* Active Timer Display */}
-      {isTimerRunning && activeEntry && (
+      {(isTimerRunning || isTimerPaused) && activeEntry && (
         <motion.div
           variants={item}
-          className="glass-panel p-6 mb-6 border border-accent/20"
+          className={`glass-panel p-6 mb-6 border ${isTimerPaused ? 'border-status-paused/20' : 'border-accent/20'}`}
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <motion.div
-                animate={{ scale: [1, 1.2, 1] }}
-                transition={{ duration: 2, repeat: Infinity }}
-                className="w-3 h-3 rounded-full bg-accent"
+                animate={isTimerPaused ? undefined : { scale: [1, 1.2, 1] }}
+                transition={isTimerPaused ? undefined : { duration: 2, repeat: Infinity }}
+                className={`w-3 h-3 rounded-full ${isTimerPaused ? 'bg-status-paused' : 'bg-accent'}`}
               />
               <div>
-                <div className="font-mono text-3xl font-bold text-accent tracking-wider">{elapsed}</div>
+                <div className={`font-mono text-3xl font-bold tracking-wider ${isTimerPaused ? 'text-status-paused' : 'text-accent'}`}>{elapsed}</div>
                 <div className="text-sm text-text-secondary mt-1">
-                  {activeEntry.project_name} · {activeEntry.description || 'No description'}
+                  {activeEntry.project_name} · {activeEntry.description || 'No description'} · {isTimerPaused ? 'Paused' : 'Recording'}
                 </div>
               </div>
             </div>
-            <button onClick={handleStop} className="btn-danger flex items-center gap-2">
-              <Square className="w-4 h-4 fill-current" /> Stop Timer
-            </button>
+            <div className="flex gap-2">
+              <button onClick={isTimerPaused ? handleResume : handlePause} className={`${isTimerPaused ? 'btn-primary' : 'btn-secondary'} flex items-center gap-2`}>
+                {isTimerPaused
+                  ? <Play className="w-4 h-4 fill-current" />
+                  : <Pause className="w-4 h-4 fill-current" />}
+                {isTimerPaused ? 'Resume' : 'Pause'}
+              </button>
+              <button onClick={handleStop} className="btn-danger flex items-center gap-2">
+                <Square className="w-4 h-4 fill-current" /> Stop Timer
+              </button>
+            </div>
           </div>
         </motion.div>
       )}

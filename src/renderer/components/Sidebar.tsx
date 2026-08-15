@@ -12,6 +12,8 @@ import {
   Calculator,
   Receipt,
   HandCoins,
+  Pause,
+  Play,
   Square,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -36,9 +38,12 @@ const EGG_CLICK_WINDOW_MS = 3000
 
 interface SidebarProps {
   isRunning: boolean
+  isPaused: boolean
   elapsed: string
   activeProjectName?: string
-  onStopTimer: () => void
+  onPauseTimer: () => Promise<unknown>
+  onResumeTimer: () => Promise<unknown>
+  onStopTimer: () => Promise<unknown>
 }
 
 const navItems = [
@@ -56,7 +61,15 @@ const businessItems = [
   { to: '/tax-settings', icon: Receipt, label: 'Tax Settings' },
 ]
 
-export default function Sidebar({ isRunning, elapsed, activeProjectName, onStopTimer }: SidebarProps) {
+export default function Sidebar({
+  isRunning,
+  isPaused,
+  elapsed,
+  activeProjectName,
+  onPauseTimer,
+  onResumeTimer,
+  onStopTimer,
+}: SidebarProps) {
   const location = useLocation()
   const clickTimesRef = useRef<number[]>([])
   const [spinCount, setSpinCount] = useState(0)
@@ -163,29 +176,45 @@ export default function Sidebar({ isRunning, elapsed, activeProjectName, onStopT
       </nav>
 
       {/* Active Timer */}
-      {isRunning && (
+      {(isRunning || isPaused) && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mx-3 mb-2 p-3 rounded-xl bg-accent/[0.08] border border-accent/20"
+          className={`mx-3 mb-2 p-3 rounded-xl border ${isPaused
+            ? 'bg-status-paused/[0.08] border-status-paused/20'
+            : 'bg-accent/[0.08] border-accent/20'}`}
         >
           <div className="flex items-center justify-between mb-1.5">
             <div className="flex items-center gap-1.5">
               <motion.div
-                animate={{ scale: [1, 1.3, 1] }}
-                transition={{ duration: 2, repeat: Infinity }}
-                className="w-2 h-2 rounded-full bg-accent"
+                animate={isPaused ? undefined : { scale: [1, 1.3, 1] }}
+                transition={isPaused ? undefined : { duration: 2, repeat: Infinity }}
+                className={`w-2 h-2 rounded-full ${isPaused ? 'bg-status-paused' : 'bg-accent'}`}
               />
-              <span className="text-xs text-accent font-medium">Recording</span>
+              <span className={`text-xs font-medium ${isPaused ? 'text-status-paused' : 'text-accent'}`}>
+                {isPaused ? 'Paused' : 'Recording'}
+              </span>
             </div>
-            <button
-              onClick={onStopTimer}
-              className="p-1 hover:bg-accent/20 rounded transition-colors no-drag"
-            >
-              <Square className="w-3 h-3 text-accent fill-accent" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={isPaused ? onResumeTimer : onPauseTimer}
+                className="p-1 hover:bg-accent/20 rounded transition-colors no-drag"
+                title={isPaused ? 'Resume timer' : 'Pause timer'}
+              >
+                {isPaused
+                  ? <Play className="w-3 h-3 text-accent fill-accent" />
+                  : <Pause className="w-3 h-3 text-accent fill-accent" />}
+              </button>
+              <button
+                onClick={onStopTimer}
+                className="p-1 hover:bg-red-500/10 rounded transition-colors no-drag"
+                title="Stop timer"
+              >
+                <Square className="w-3 h-3 text-red-400 fill-current" />
+              </button>
+            </div>
           </div>
-          <div className="font-mono text-lg text-accent font-medium tracking-wider">
+          <div className={`font-mono text-lg font-medium tracking-wider ${isPaused ? 'text-status-paused' : 'text-accent'}`}>
             {elapsed}
           </div>
           {activeProjectName && (

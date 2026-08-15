@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Play, Square, Pencil, Trash2, FileText } from 'lucide-react'
+import { ArrowLeft, Play, Pause, Square, Pencil, Trash2, FileText } from 'lucide-react'
 import Modal from '../components/Modal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import StatusBadge from '../components/StatusBadge'
@@ -12,12 +12,24 @@ import toast from 'react-hot-toast'
 interface Props {
   onStartTimer: (projectId: number, description?: string) => Promise<any>
   onStopTimer: () => Promise<any>
+  onPauseTimer: () => Promise<any>
+  onResumeTimer: () => Promise<any>
   isTimerRunning: boolean
+  isTimerPaused: boolean
   activeEntry: TimeEntry | null
   elapsed: string
 }
 
-export default function ProjectDetail({ onStartTimer, onStopTimer, isTimerRunning, activeEntry, elapsed }: Props) {
+export default function ProjectDetail({
+  onStartTimer,
+  onStopTimer,
+  onPauseTimer,
+  onResumeTimer,
+  isTimerRunning,
+  isTimerPaused,
+  activeEntry,
+  elapsed,
+}: Props) {
   const { id } = useParams()
   const navigate = useNavigate()
   const [project, setProject] = useState<Project | null>(null)
@@ -36,7 +48,7 @@ export default function ProjectDetail({ onStartTimer, onStopTimer, isTimerRunnin
   // Reload entries when a timer starts/stops so the table stays in sync
   useEffect(() => {
     if (id) loadData(parseInt(id))
-  }, [isTimerRunning])
+  }, [isTimerRunning, isTimerPaused])
 
   const loadData = async (projectId: number) => {
     const [p, e] = await Promise.all([
@@ -123,10 +135,21 @@ export default function ProjectDetail({ onStartTimer, onStopTimer, isTimerRunnin
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge status={project.status} />
-          {isTimerRunning && activeEntry?.project_id === project.id ? (
-            <button onClick={() => onStopTimer()} className="btn-danger flex items-center gap-2">
-              <Square className="w-4 h-4 fill-current" /> Stop {elapsed}
-            </button>
+          {(isTimerRunning || isTimerPaused) && activeEntry?.project_id === project.id ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => isTimerPaused ? onResumeTimer() : onPauseTimer()}
+                className={`${isTimerPaused ? 'btn-primary' : 'btn-secondary'} flex items-center gap-2`}
+              >
+                {isTimerPaused
+                  ? <Play className="w-4 h-4 fill-current" />
+                  : <Pause className="w-4 h-4 fill-current" />}
+                {isTimerPaused ? 'Resume' : 'Pause'} {elapsed}
+              </button>
+              <button onClick={() => onStopTimer()} className="btn-danger flex items-center gap-2">
+                <Square className="w-4 h-4 fill-current" /> Stop
+              </button>
+            </div>
           ) : (
             <button onClick={() => onStartTimer(project.id)} className="btn-primary flex items-center gap-2">
               <Play className="w-4 h-4" /> Start Timer

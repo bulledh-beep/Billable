@@ -53,6 +53,7 @@ The uninstaller removes the app bundle and asks (with a confirmation prompt) bef
 
 ### Time tracking
 - One-click start/stop timer with live HH:MM:SS in the menu bar
+- Pause and resume the active project timer from the top Timer menu or active-timer controls
 - Persistent timer survives app restarts
 - Quick-start any active project from Dashboard, Projects list, or Project detail
 - Manual entries with date/time pickers
@@ -171,6 +172,8 @@ The script bumps the version, builds the DMG, pushes the tag, and publishes a Gi
 | Shortcut | Action |
 |---|---|
 | `Cmd+Shift+Space` | Toggle timer (global) |
+| `Cmd+Shift+P` | Pause or resume the active timer |
+| `Cmd+Shift+S` | Stop the active timer |
 | `Cmd+1` … `Cmd+6` | Jump to Dashboard / Clients / Projects / Time / Invoices / Reports |
 | `Cmd+,` | Settings |
 

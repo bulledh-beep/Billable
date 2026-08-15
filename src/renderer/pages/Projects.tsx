@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { Plus, FolderKanban, Search, Play, Square as StopIcon, ChevronRight, FileText, CheckSquare, Square, XCircle } from 'lucide-react'
+import { Plus, FolderKanban, Search, Play, Pause, Square as StopIcon, ChevronRight, FileText, CheckSquare, Square, XCircle } from 'lucide-react'
 import Modal from '../components/Modal'
 import EmptyState from '../components/EmptyState'
 import StatusBadge from '../components/StatusBadge'
@@ -17,11 +17,22 @@ const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }
 interface ProjectsProps {
   onStartTimer: (projectId: number, description?: string) => Promise<any>
   onStopTimer: () => Promise<any>
+  onPauseTimer: () => Promise<any>
+  onResumeTimer: () => Promise<any>
   isTimerRunning: boolean
+  isTimerPaused: boolean
   activeEntry: TimeEntry | null
 }
 
-export default function Projects({ onStartTimer, onStopTimer, isTimerRunning, activeEntry }: ProjectsProps) {
+export default function Projects({
+  onStartTimer,
+  onStopTimer,
+  onPauseTimer,
+  onResumeTimer,
+  isTimerRunning,
+  isTimerPaused,
+  activeEntry,
+}: ProjectsProps) {
   const navigate = useNavigate()
   const [projects, setProjects] = useState<Project[]>([])
   const [clients, setClients] = useState<Client[]>([])
@@ -36,7 +47,7 @@ export default function Projects({ onStartTimer, onStopTimer, isTimerRunning, ac
   useEffect(() => { loadData() }, [])
 
   // Refresh when timer starts/stops so hours/amounts stay current
-  useEffect(() => { loadData() }, [isTimerRunning])
+  useEffect(() => { loadData() }, [isTimerRunning, isTimerPaused])
 
   const loadData = async () => {
     const [p, c] = await Promise.all([
@@ -146,6 +157,7 @@ export default function Projects({ onStartTimer, onStopTimer, isTimerRunning, ac
         <motion.div variants={item} className="space-y-2">
           {filtered.map(project => {
             const isSelected = selectedIds.has(project.id)
+            const isCurrentTimerProject = (isTimerRunning || isTimerPaused) && activeEntry?.project_id === project.id
             return (
               <div
                 key={project.id}
@@ -174,14 +186,25 @@ export default function Projects({ onStartTimer, onStopTimer, isTimerRunning, ac
                   <div className="font-mono text-sm text-accent">{formatMoney((project.billed_total || 0) + (project.unbilled_hours || 0) * project.rate)}</div>
                   <div className="text-xs text-text-tertiary">{formatHours(project.total_hours || 0)}h · {formatHours(project.unbilled_hours || 0)}h unbilled</div>
                 </div>
-                {isTimerRunning && activeEntry?.project_id === project.id ? (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onStopTimer() }}
-                    className="p-2 hover:bg-red-500/10 rounded-lg transition-all"
-                    title="Stop timer"
-                  >
-                    <StopIcon className="w-4 h-4 text-red-400 fill-current" />
-                  </button>
+                {isCurrentTimerProject ? (
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); isTimerPaused ? onResumeTimer() : onPauseTimer() }}
+                      className="p-2 hover:bg-accent/10 rounded-lg transition-all"
+                      title={isTimerPaused ? 'Resume timer' : 'Pause timer'}
+                    >
+                      {isTimerPaused
+                        ? <Play className="w-4 h-4 text-accent fill-current" />
+                        : <Pause className="w-4 h-4 text-status-paused fill-current" />}
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onStopTimer() }}
+                      className="p-2 hover:bg-red-500/10 rounded-lg transition-all"
+                      title="Stop timer"
+                    >
+                      <StopIcon className="w-4 h-4 text-red-400 fill-current" />
+                    </button>
+                  </div>
                 ) : (
                   <button
                     onClick={(e) => { e.stopPropagation(); onStartTimer(project.id) }}

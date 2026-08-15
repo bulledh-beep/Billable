@@ -37,7 +37,10 @@ export function registerIpcHandlers(timerManager: TimerManager) {
   ipcMain.handle('time:delete', (_, id: number) => db.deleteTimeEntry(id))
   ipcMain.handle('time:start', (_, projectId: number, description?: string) => timerManager.start(projectId, description))
   ipcMain.handle('time:stop', () => timerManager.stop())
+  ipcMain.handle('time:pause', () => timerManager.pause())
+  ipcMain.handle('time:resume', () => timerManager.resume())
   ipcMain.handle('time:active', () => timerManager.getActive())
+  ipcMain.handle('time:state', () => ({ active: timerManager.getActive(), paused: timerManager.getPaused() }))
 
   // ========== Invoices ==========
   ipcMain.handle('invoices:list', (_, status?: string) => db.listInvoices(status))

@@ -1,6 +1,7 @@
 import { Menu, BrowserWindow, app } from 'electron'
+import { TimerManager } from './timer-manager'
 
-export function createMenu(mainWindow: BrowserWindow) {
+export function createMenu(mainWindow: BrowserWindow, timerManager: TimerManager) {
   const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: app.name,
@@ -61,6 +62,31 @@ export function createMenu(mainWindow: BrowserWindow) {
       ],
     },
     {
+      label: 'Timer',
+      submenu: [
+        {
+          id: 'timer-pause',
+          label: 'Pause Timer',
+          accelerator: 'Cmd+Shift+P',
+          enabled: false,
+          click: () => timerManager.togglePause(),
+        },
+        {
+          id: 'timer-stop',
+          label: 'Stop Timer',
+          accelerator: 'Cmd+Shift+S',
+          enabled: false,
+          click: () => timerManager.stop(),
+        },
+        { type: 'separator' },
+        {
+          id: 'timer-status',
+          label: 'No timer running',
+          enabled: false,
+        },
+      ],
+    },
+    {
       label: 'View',
       submenu: [
         {
@@ -114,4 +140,28 @@ export function createMenu(mainWindow: BrowserWindow) {
 
   const menu = Menu.buildFromTemplate(template)
   Menu.setApplicationMenu(menu)
+
+  const refreshTimerMenu = () => {
+    const applicationMenu = Menu.getApplicationMenu()
+    const pauseItem = applicationMenu?.getMenuItemById('timer-pause')
+    const stopItem = applicationMenu?.getMenuItemById('timer-stop')
+    const statusItem = applicationMenu?.getMenuItemById('timer-status')
+    const active = timerManager.getActive()
+    const paused = timerManager.getPaused()
+    const current = active || paused
+
+    if (pauseItem) {
+      pauseItem.label = active ? 'Pause Timer' : paused ? 'Resume Timer' : 'Pause Timer'
+      pauseItem.enabled = !!current
+    }
+    if (stopItem) stopItem.enabled = !!current
+    if (statusItem) {
+      statusItem.label = current
+        ? `${active ? 'Recording' : 'Paused'}: ${current.project_name || 'Unknown Project'}`
+        : 'No timer running'
+    }
+  }
+
+  timerManager.setMenuCallbacks({ updateTimerMenu: refreshTimerMenu })
+  refreshTimerMenu()
 }

@@ -33,6 +33,8 @@ export interface TimeEntry {
   start_time: string
   end_time: string | null
   duration_minutes: number
+  paused_at?: string | null
+  active_since?: string | null
   is_billable: number
   is_invoiced: number
   created_at: string
@@ -41,6 +43,11 @@ export interface TimeEntry {
   project_color?: string
   client_name?: string
   rate?: number
+}
+
+export interface TimerState {
+  active: TimeEntry | null
+  paused: TimeEntry | null
 }
 
 export interface Invoice {
@@ -278,8 +285,11 @@ export type IpcChannels = {
   'time:update': (id: number, data: Partial<TimeEntry>) => TimeEntry
   'time:delete': (id: number) => void
   'time:start': (projectId: number, description?: string) => TimeEntry
-  'time:stop': (id: number) => TimeEntry | null
+  'time:stop': () => TimeEntry | null
+  'time:pause': () => TimeEntry | null
+  'time:resume': () => TimeEntry | null
   'time:active': () => TimeEntry | null
+  'time:state': () => TimerState
   'time:unbilled': (projectId: number) => TimeEntry[]
   'time:unbilled-multi': (projectIds: number[]) => TimeEntry[]
   'time:unbilled-by-client': (clientId: number) => TimeEntry[]
