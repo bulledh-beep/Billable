@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { Trash2, Pencil, Undo2, AlertTriangle, CheckCircle2, Circle, Mail, MapPin } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import StatusBadge from '../components/StatusBadge'
+import Stamp from '../components/Stamp'
 import ConfirmDialog from '../components/ConfirmDialog'
 import RecordPaymentModal from '../components/RecordPaymentModal'
 import Menu from '../components/Menu'
@@ -123,6 +124,15 @@ export default function InvoiceDetail() {
     { label: invoice.payment_method ? `Paid by ${invoice.payment_method}` : 'Paid', date: invoice.payment_date, done: invoice.status === 'paid', tone: 'green' },
   ]
 
+  const stampDate = (d?: string | null) => (d ? formatDate(d).toUpperCase().replace(',', '') : undefined)
+  const stamp = invoice.status === 'paid'
+    ? { label: 'Paid', detail: stampDate(invoice.payment_date), tone: 'green' as const }
+    : invoice.status === 'overdue'
+      ? { label: 'Overdue', detail: `${invoice.days_past_due} day${invoice.days_past_due === 1 ? '' : 's'} late`, tone: 'red' as const }
+      : invoice.status === 'draft'
+        ? { label: 'Draft', detail: 'Not sent', tone: 'gray' as const }
+        : null
+
   return (
     <div className="page">
       <PageHeader
@@ -148,7 +158,8 @@ export default function InvoiceDetail() {
 
       <div className="grid grid-cols-[minmax(0,1fr)_300px] gap-6 items-start">
         {/* Paper preview, matching the PDF */}
-        <div className="rounded-[3px] overflow-hidden bg-white text-[#18181b] shadow-[0_0_0_0.5px_rgb(0_0_0/0.12),0_2px_4px_rgb(0_0_0/0.06),0_12px_32px_-12px_rgb(0_0_0/0.25)]">
+        <div className="relative rounded-[3px] overflow-hidden bg-white text-[#18181b] shadow-[0_0_0_0.5px_rgb(0_0_0/0.12),0_2px_4px_rgb(0_0_0/0.06),0_12px_32px_-12px_rgb(0_0_0/0.25)]">
+          {stamp && <Stamp {...stamp} className="absolute top-[34px] right-[190px]" />}
           <div className="px-10 py-9">
             <div className="flex justify-between gap-8">
               <div className="min-w-0">
@@ -160,11 +171,6 @@ export default function InvoiceDetail() {
               <div className="text-right shrink-0">
                 <div className="text-2xl font-semibold tracking-tight">Invoice</div>
                 <div className="text-sm text-[#52525b] num mt-0.5">{invoice.invoice_number}</div>
-                {invoice.status === 'paid' && (
-                  <div className="inline-flex items-center gap-1 mt-2 px-2 py-0.5 rounded bg-[#dcfce7] text-[#15803d] text-xs font-semibold">
-                    <CheckCircle2 className="w-3 h-3" /> Paid
-                  </div>
-                )}
               </div>
             </div>
 
@@ -241,7 +247,7 @@ export default function InvoiceDetail() {
         <div className="space-y-4">
           <div className="card p-4">
             <div className="text-xs text-fg-3">{invoice.status === 'paid' ? 'Paid' : 'Amount due'}</div>
-            <div className="text-[24px] leading-[30px] font-semibold num text-fg tracking-[-0.018em] mt-1">{money(invoice.total)}</div>
+            <div className="font-figures text-[30px] leading-[34px] text-fg mt-1.5">{money(invoice.total)}</div>
             {invoice.status === 'draft' && (
               <button onClick={markSent} className="btn-primary w-full mt-3">Mark as sent</button>
             )}

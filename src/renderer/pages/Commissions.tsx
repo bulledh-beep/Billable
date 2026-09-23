@@ -32,19 +32,19 @@ const PAYMENT_OPTIONS: { value: CommissionPaymentStatus; label: string }[] = [
   { value: 'paid', label: 'Paid' },
 ]
 const STATUS_STYLE: Record<CommissionStatus, string> = {
-  appointment_set: 'bg-blue/12 text-blue',
-  appointment_attended: 'bg-violet/12 text-violet',
-  closed_waiting: 'bg-amber/12 text-amber',
-  paid: 'bg-green/12 text-green',
-  lost: 'bg-red/12 text-red',
-  cancelled: 'bg-fg/[0.07] text-fg-3',
-  needs_review: 'bg-accent/12 text-accent-text',
+  appointment_set: 'text-blue',
+  appointment_attended: 'text-violet',
+  closed_waiting: 'text-amber',
+  paid: 'text-green',
+  lost: 'text-red',
+  cancelled: 'text-fg-3',
+  needs_review: 'text-accent-text',
 }
 const INVOICE_STATUS_STYLE: Record<CommissionInvoiceStatus, string> = {
-  draft: 'bg-fg/[0.07] text-fg-2',
-  sent: 'bg-blue/12 text-blue',
-  paid: 'bg-green/12 text-green',
-  cancelled: 'bg-red/12 text-red',
+  draft: 'text-fg-2',
+  sent: 'text-blue',
+  paid: 'text-green',
+  cancelled: 'text-red',
 }
 
 const statusLabel = (s: CommissionStatus) => STATUS_OPTIONS.find(o => o.value === s)?.label || s

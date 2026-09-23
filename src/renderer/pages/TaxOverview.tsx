@@ -152,9 +152,9 @@ export default function TaxOverview() {
           <div className="p-5">
             <div className="flex items-center gap-2">
               <span className="text-xs text-fg-3">Estimated to set aside for {year}</span>
-              <span className="badge bg-fg/[0.06] text-fg-3">Estimate</span>
+              <span className="badge text-fg-3">Estimate</span>
             </div>
-            <div className="text-3xl font-semibold num text-fg tracking-tight mt-1.5">{money(totalSetAside)}</div>
+            <div className="font-figures text-[34px] leading-[38px] text-fg mt-1.5">{money(totalSetAside)}</div>
             <p className="text-sm text-fg-3 mt-1.5 max-w-lg">
               Based on invoices you've been paid for. Record payments on the Billing page to keep this current.
             </p>

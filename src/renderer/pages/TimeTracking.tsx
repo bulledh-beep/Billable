@@ -15,7 +15,8 @@ import {
   formatTime, formatDurationShort, formatMoney, todayISO, addDays, toLocalISODate, parseLocalDate,
 } from '../utils/format'
 import { notifyBillingChanged } from '../utils/events'
-import { useElapsed } from '../hooks/useTimer'
+import { useTimerClock } from '../hooks/useTimer'
+import { StopwatchDial, DialGlyph } from '../components/Dial'
 import type { TimeEntry, Project } from '@shared/types'
 import toast from 'react-hot-toast'
 
@@ -54,7 +55,6 @@ export default function TimeTracking({
   onStartTimer, onStopTimer, onPauseTimer, onResumeTimer,
   isTimerRunning, isTimerPaused, activeEntry, checkActive,
 }: Props) {
-  const elapsed = useElapsed(activeEntry)
   const [searchParams, setSearchParams] = useSearchParams()
   const [entries, setEntries] = useState<TimeEntry[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -209,19 +209,8 @@ export default function TimeTracking({
 
       {/* Running timer */}
       {(isTimerRunning || isTimerPaused) && activeEntry && (
-        <div className="card mb-5 px-4 py-3.5 flex items-center gap-4">
-          <span
-            className={`w-2 h-2 rounded-full shrink-0 ${isTimerPaused ? 'bg-fg-4' : 'bg-accent animate-[timer-breathe_2s_ease-in-out_infinite]'}`}
-            aria-hidden="true"
-          />
-          <div className="min-w-0 flex-1">
-            <div className="text-xs text-fg-3">{isTimerPaused ? 'Paused' : 'Recording'}</div>
-            <div className="text-[13px] font-semibold text-fg truncate">
-              {activeEntry.project_name}
-              {activeEntry.description && <span className="font-normal text-fg-3"> · {activeEntry.description}</span>}
-            </div>
-          </div>
-          <div className={`num text-[26px] leading-none font-semibold tracking-[-0.02em] ${isTimerPaused ? 'text-fg-3' : 'text-fg'}`}>{elapsed}</div>
+        <div className="card mb-5 pl-3 pr-4 py-3 flex items-center gap-4">
+          <RunningClock entry={activeEntry} paused={isTimerPaused} />
           <div className="flex gap-2">
             <button onClick={isTimerPaused ? handleResume : handlePause} className="btn-secondary">
               {isTimerPaused ? <Play className="fill-current" /> : <Pause className="fill-current" />}
@@ -327,8 +316,8 @@ export default function TimeTracking({
       {grouped.length === 0 ? (
         <div className="card">
           <EmptyState
-            icon={Clock}
-            title={completed.length === 0 ? 'No time tracked yet' : filter !== 'all' || search ? 'Nothing matches' : selectedDay ? `Nothing logged ${dayLabel(selectedDay) === 'Today' ? 'today' : `on ${dayLabel(selectedDay)}`}` : 'Nothing logged this week'}
+            icon={DialGlyph}
+            title={completed.length === 0 ? 'Nothing on the clock yet' : filter !== 'all' || search ? 'Nothing matches' : selectedDay ? `Nothing logged ${dayLabel(selectedDay) === 'Today' ? 'today' : `on ${dayLabel(selectedDay)}`}` : 'Nothing logged this week'}
             description={completed.length === 0 ? 'Start a timer from the toolbar or add time by hand.' : 'Try another week or filter, or add time by hand.'}
             action={{ label: 'Add time', onClick: openAdd }}
           />
@@ -384,6 +373,31 @@ export default function TimeTracking({
           : 'This removes the entry for good.'}
       />
     </div>
+  )
+}
+
+/** The running timer as a meter. Only this re-renders each second, not the page. */
+function RunningClock({ entry, paused }: { entry: TimeEntry; paused: boolean }) {
+  const { text, seconds, earned } = useTimerClock(entry)
+  return (
+    <>
+      <StopwatchDial seconds={seconds} size={52} paused={paused} />
+      <div className="min-w-0 flex-1">
+        <div className="text-xs text-fg-3">{paused ? 'Paused' : 'On the clock'}</div>
+        <div className="text-[13px] font-semibold text-fg truncate">
+          {entry.project_name}
+          {entry.description && <span className="font-normal text-fg-3"> · {entry.description}</span>}
+        </div>
+      </div>
+      <div className="text-right">
+        <div className={`font-figures text-[32px] leading-none ${paused ? 'text-fg-3' : 'text-fg'}`}>{text}</div>
+        {earned > 0 && (
+          <div className="text-xs text-fg-3 mt-1.5">
+            <span className="font-figures text-[15px] text-fg-2">{formatMoney(earned)}</span> at {formatMoney(entry.rate || 0)}/hr
+          </div>
+        )}
+      </div>
+    </>
   )
 }
 

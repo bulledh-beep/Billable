@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Pause, Play, Square, Search } from 'lucide-react'
 import { Popover } from './Menu'
-import { useElapsed } from '../hooks/useTimer'
+import { useTimerClock } from '../hooks/useTimer'
+import { StopwatchDial } from './Dial'
+import { formatMoney, formatDurationShort } from '../utils/format'
 import type { Project, TimeEntry } from '@shared/types'
 import toast from 'react-hot-toast'
 
@@ -19,31 +21,37 @@ interface TimerControlProps {
 /** Timer that lives in the window toolbar on every page. */
 export default function TimerControl({ entry, isRunning, isPaused, onPause, onResume, onStop, onStart }: TimerControlProps) {
   const navigate = useNavigate()
-  const elapsed = useElapsed(entry)
+  const { text: elapsed, seconds, earned } = useTimerClock(entry)
   const [open, setOpen] = useState(false)
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
 
   const stop = async () => {
     const result = await onStop()
     if (result?.discarded) toast('Timer ran under a minute, so it was discarded')
-    else if (result) toast.success('Timer stopped')
+    else if (result) {
+      const mins = Number(result.duration_minutes) || 0
+      const earnedNow = result.is_billable && result.rate ? (mins / 60) * result.rate : 0
+      toast.success(`Logged ${formatDurationShort(mins)}${earnedNow > 0 ? ` · ${formatMoney(earnedNow)}` : ''} on ${result.project_name || 'the project'}`)
+    }
   }
 
   if (entry) {
     return (
-      <div className="no-drag flex items-center h-[28px] pl-2.5 pr-0.5 gap-2 rounded-[7px] border border-line-strong bg-panel dark:bg-fg/[0.07] dark:border-transparent">
-        <span
-          className={`w-[7px] h-[7px] rounded-full shrink-0 ${isPaused ? 'bg-fg-4' : 'bg-accent animate-[timer-breathe_2s_ease-in-out_infinite]'}`}
-          aria-hidden="true"
-        />
+      <div className="no-drag flex items-center h-[28px] pl-1.5 pr-0.5 gap-2 rounded-[7px] border border-line-strong bg-panel dark:bg-fg/[0.07] dark:border-transparent">
+        <StopwatchDial seconds={seconds} size={18} paused={isPaused} />
         <button
           onClick={() => navigate('/time')}
-          className="text-[13px] text-fg-2 hover:text-fg max-w-[180px] truncate"
+          className="text-[13px] text-fg-2 hover:text-fg max-w-[170px] truncate"
           title="Open Time"
         >
           {entry.project_name || 'Timer'}
         </button>
-        <span className={`num text-[13px] font-semibold tabular-nums ${isPaused ? 'text-fg-3' : 'text-fg'}`}>{elapsed}</span>
+        <span className={`font-figures text-[15px] leading-none pt-[2px] ${isPaused ? 'text-fg-3' : 'text-fg'}`}>{elapsed}</span>
+        {earned > 0 && (
+          <span className="font-figures text-[15px] leading-none pt-[2px] text-fg-3" title={`Earned so far at ${formatMoney(entry.rate || 0)}/hr`}>
+            {formatMoney(earned)}
+          </span>
+        )}
         <div className="w-px h-3.5 bg-line-strong mx-0.5" />
         {isPaused ? (
           <button onClick={onResume} className="btn-icon-sm text-accent-text" title="Resume (⌘⇧P)" aria-label="Resume timer">

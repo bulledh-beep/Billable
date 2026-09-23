@@ -21,7 +21,7 @@ export function Badge({ tone = 'gray', dot = false, children, className = '' }: 
 }) {
   const t = TONE_CLASSES[tone]
   return (
-    <span className={`badge ${t.bg} ${t.text} ${className}`}>
+    <span className={`badge ${t.text} ${className}`}>
       {dot && <span className={`w-1.5 h-1.5 rounded-full ${t.dot}`} />}
       {children}
     </span>

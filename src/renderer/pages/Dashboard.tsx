@@ -6,6 +6,8 @@ import Metric, { MetricStrip } from '../components/Metric'
 import Money from '../components/Money'
 import { BillingChip } from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
+import TodayRuler from '../components/TodayRuler'
+import { DialGlyph } from '../components/Dial'
 import {
   formatMoney, formatDurationShort, formatHoursShort, formatRelative, todayISO, addDays, toLocalISODate, parseLocalDate,
 } from '../utils/format'
@@ -120,6 +122,10 @@ export default function Dashboard({
         />
       </MetricStrip>
 
+      <div className="mb-7">
+        <TodayRuler entries={entries} activeEntry={activeEntry} />
+      </div>
+
       <div className="grid grid-cols-[minmax(0,1fr)_300px] gap-6 items-start">
         <div className="space-y-6 min-w-0">
           {/* Needs attention */}
@@ -137,7 +143,7 @@ export default function Dashboard({
               {attention.length === 0 ? (
                 <div className="flex items-center gap-2.5 px-4 h-[46px]">
                   <CheckCircle2 className="w-4 h-4 text-green" strokeWidth={1.75} />
-                  <span className="text-[13px] text-fg-2">Nothing is overdue or waiting to be billed.</span>
+                  <span className="text-[13px] text-fg-2">All square. Nothing is late or waiting to be billed.</span>
                 </div>
               ) : attention.map(item => {
                 const Icon = ATTENTION_ICON[item.kind]
@@ -174,7 +180,7 @@ export default function Dashboard({
             </div>
             <div className="card overflow-hidden">
               {recent.length === 0 ? (
-                <EmptyState compact icon={Clock} title="No time tracked yet" description="Start a timer from the toolbar to begin." />
+                <EmptyState compact icon={DialGlyph} title="Nothing on the clock yet" description="Start a timer from the toolbar, and your time shows up here." />
               ) : recent.map(entry => (
                 <div key={entry.id} className="list-row [--inset:36px] flex items-center gap-3 px-4 h-[44px]">
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: entry.project_color }} />
@@ -198,7 +204,7 @@ export default function Dashboard({
           <section>
             <div className="group-head">
               <h2 className="section-title">This week</h2>
-              <span className="text-xs font-medium text-fg-2 num">{formatDurationShort(week.total)}</span>
+              <span className="font-figures text-[14px] text-fg-2">{formatDurationShort(week.total)}</span>
             </div>
             <div className="card px-4 pt-4 pb-3">
               <div className="grid grid-cols-7 gap-2 h-[92px] items-end">
@@ -235,8 +241,12 @@ export default function Dashboard({
               </div>
               <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-line">
                 <div>
-                  <div className="text-2xs text-fg-3">Today</div>
-                  <div className="text-[13px] font-semibold text-fg num">{formatHoursShort(stats.hours_today)}</div>
+                  <div className="text-2xs text-fg-3">Busiest day</div>
+                  <div className="text-[13px] font-semibold text-fg num">
+                    {week.total > 0
+                      ? `${parseLocalDate(week.days[week.totals.indexOf(Math.max(...week.totals))]).toLocaleDateString('en-US', { weekday: 'short' })} · ${formatDurationShort(Math.max(...week.totals))}`
+                      : '—'}
+                  </div>
                 </div>
                 <div>
                   <div className="text-2xs text-fg-3">{monthName}</div>

@@ -16,6 +16,7 @@ import {
 import toast from 'react-hot-toast'
 import ProfileSwitcher from './ProfileSwitcher'
 import UpdateBanner from './UpdateBanner'
+import { LiveClockMark } from './Dial'
 import { onBillingChanged } from '../utils/events'
 
 // 🥚 Tap the logo 7 times in 3 seconds to discover this.
@@ -53,26 +54,6 @@ const businessItems = [
   { to: '/tax-overview', icon: Calculator, label: 'Tax overview' },
   { to: '/tax-settings', icon: Receipt, label: 'Tax settings' },
 ]
-
-/** The app icon in miniature: a graphite dial with an amber hand. */
-export function BillableMark({ size = 18 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" className="shrink-0">
-      <defs>
-        <linearGradient id="billable-mark-bg" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#2E2E33" />
-          <stop offset="1" stopColor="#141417" />
-        </linearGradient>
-      </defs>
-      <rect width="32" height="32" rx="7.5" fill="url(#billable-mark-bg)" />
-      <rect x="0.25" y="0.25" width="31.5" height="31.5" rx="7.25" fill="none" stroke="rgb(255 255 255 / 0.12)" strokeWidth="0.5" />
-      <circle cx="16" cy="16" r="10" fill="none" stroke="rgb(255 255 255 / 0.2)" strokeWidth="1.1" />
-      <path d="M16 16 L10.6 13" stroke="#E6E6E9" strokeWidth="2" strokeLinecap="round" />
-      <path d="M16 16 L16 8.2" stroke="#F5A623" strokeWidth="1.6" strokeLinecap="round" />
-      <circle cx="16" cy="16" r="1.9" fill="#F5A623" />
-    </svg>
-  )
-}
 
 /** How many billing items need a look. Refreshes on navigation, focus, and billing changes. */
 function useAttentionCount(isRunning: boolean) {
@@ -144,10 +125,11 @@ export default function Sidebar({ isRunning, onStopTimer }: SidebarProps) {
               )}
             </AnimatePresence>
             <motion.div animate={{ rotate: spinCount * 360 }} transition={{ duration: 0.7, ease: [0.4, 0, 0.2, 1] }}>
-              <BillableMark size={18} />
+              <LiveClockMark size={18} />
             </motion.div>
           </div>
-          <span className="text-[13px] font-semibold text-fg">Billable</span>
+          {/* Set like the maker's name on a watch dial */}
+          <span className="font-stamp text-[15px] leading-none pt-[3px] tracking-[0.16em] text-fg">BILLABLE</span>
         </NavLink>
       </div>
 

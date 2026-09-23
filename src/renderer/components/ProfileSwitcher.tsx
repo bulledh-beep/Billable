@@ -357,7 +357,7 @@ function ManageProfilesModal({
                     <div className="text-sm font-medium text-fg truncate flex items-center gap-2">
                       {p.name}
                       {p.id === active.id && (
-                        <span className="badge bg-accent/12 text-accent-text">Active</span>
+                        <span className="badge text-accent-text">Active</span>
                       )}
                     </div>
                     <div className="flex gap-1 mt-1.5">

@@ -66,6 +66,10 @@ export default {
         sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"', '"Helvetica Neue"', 'Arial', 'sans-serif'],
         display: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Display"', '"Helvetica Neue"', 'Arial', 'sans-serif'],
         mono: ['ui-monospace', '"SF Mono"', 'Menlo', 'monospace'],
+        // Meter-style numerals for the figures that matter (money, running time)
+        figures: ['"Billable Figures"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+        // Condensed caps for stamps and the wordmark
+        stamp: ['"Billable Stamp"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
       },
       fontSize: {
         '2xs': ['11px', { lineHeight: '14px' }],

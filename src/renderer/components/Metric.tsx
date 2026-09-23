@@ -37,7 +37,7 @@ export default function Metric({ label, value, sub, onClick, active, className =
       } ${active ? 'bg-fg/[0.035]' : ''} ${className}`}
     >
       <div className={`text-xs truncate ${active ? 'text-fg font-medium' : 'text-fg-3'}`}>{label}</div>
-      <div className="mt-1 text-[24px] leading-[30px] font-semibold text-fg num tracking-[-0.018em] truncate">{value}</div>
+      <div className="mt-1.5 font-figures text-[27px] leading-[30px] text-fg truncate">{value}</div>
       {sub && <div className="text-xs text-fg-3 truncate">{sub}</div>}
       {active && <span className="absolute left-4 right-4 bottom-0 h-[2px] rounded-full bg-accent" />}
     </Tag>

@@ -1,15 +1,21 @@
 import { useState, useEffect } from 'react'
 import type { TimeEntry, TimerState } from '@shared/types'
 
-export function formatElapsed(entry: TimeEntry | null) {
-  if (!entry) return ''
-
+/** Whole seconds on a timer, counting time before any pause. */
+export function elapsedSeconds(entry: TimeEntry | null) {
+  if (!entry) return 0
   const accumulatedSeconds = Math.max(0, Number(entry.duration_minutes) || 0) * 60
   const activeSince = new Date(entry.active_since || entry.start_time).getTime()
   const runningSeconds = entry.paused_at
     ? 0
     : Math.max(0, Date.now() - activeSince) / 1000
-  const totalSeconds = Math.floor(accumulatedSeconds + runningSeconds)
+  return Math.floor(accumulatedSeconds + runningSeconds)
+}
+
+export function formatElapsed(entry: TimeEntry | null) {
+  if (!entry) return ''
+
+  const totalSeconds = elapsedSeconds(entry)
   const h = Math.floor(totalSeconds / 3600)
   const m = Math.floor((totalSeconds % 3600) / 60)
   const s = totalSeconds % 60
@@ -22,14 +28,24 @@ export function formatElapsed(entry: TimeEntry | null) {
  * re-renders each second, instead of the whole app.
  */
 export function useElapsed(entry: TimeEntry | null) {
-  const [elapsed, setElapsed] = useState(() => formatElapsed(entry))
+  return useTimerClock(entry).text
+}
+
+/** Live text and seconds for a timer, plus what it has earned so far at the entry's rate. */
+export function useTimerClock(entry: TimeEntry | null) {
+  const read = () => {
+    const seconds = elapsedSeconds(entry)
+    const earned = entry && entry.is_billable !== 0 && entry.rate ? (seconds / 3600) * entry.rate : 0
+    return { text: formatElapsed(entry), seconds, earned }
+  }
+  const [clock, setClock] = useState(read)
   useEffect(() => {
-    setElapsed(formatElapsed(entry))
+    setClock(read())
     if (!entry || entry.paused_at) return
-    const interval = setInterval(() => setElapsed(formatElapsed(entry)), 1000)
+    const interval = setInterval(() => setClock(read()), 1000)
     return () => clearInterval(interval)
   }, [entry])
-  return elapsed
+  return clock
 }
 
 export function useTimer() {

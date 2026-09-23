@@ -504,7 +504,7 @@ export default function InvoiceCreate() {
                             <input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleEntry(e.id)} />
                             <span className="text-xs text-fg-3 num w-24 shrink-0">{formatDay(day)}</span>
                             <span className="text-sm text-fg-2 truncate flex-1">{e.description}</span>
-                            {e.invoice_id === editId && editId && <span className="badge bg-fg/[0.06] text-fg-3">On this invoice</span>}
+                            {e.invoice_id === editId && editId && <span className="badge text-fg-3">On this invoice</span>}
                             <span className="text-xs text-fg-2 num w-16 text-right">{formatDurationShort(e.duration_minutes)}</span>
                             <span className="text-sm num text-fg-2 w-24 text-right">{money((e.duration_minutes / 60) * (e.rate || 0))}</span>
                           </label>
@@ -679,7 +679,7 @@ export default function InvoiceCreate() {
                 )}
                 <div className="flex justify-between items-baseline pt-3 mt-1 border-t border-line">
                   <span className="font-semibold text-fg">Total</span>
-                  <span className="num text-2xl font-semibold text-fg">{money(total)}</span>
+                  <span className="font-figures text-[28px] leading-8 text-fg">{money(total)}</span>
                 </div>
                 {selectedMinutes > 0 && (
                   <p className="text-xs text-fg-3 pt-1">{formatHoursShort(selectedMinutes / 60)} of tracked time will be marked as billed on this invoice.</p>

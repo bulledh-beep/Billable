@@ -139,7 +139,19 @@ function generateInvoiceHTML(invoice: any, settings: any): string {
   .faint { color: #71717a; }
   .title { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; text-align: right; line-height: 1.1; }
   .number { text-align: right; color: #52525b; margin-top: 4px; }
-  .paid-tag { display: inline-block; margin-top: 10px; padding: 2px 8px; border-radius: 4px; background: #dcfce7; color: #15803d; font-size: 11px; font-weight: 600; }
+  .page { position: relative; }
+  /* A rubber PAID stamp, matching the invoice page in the app */
+  .stamp {
+    position: absolute; top: 46px; right: 212px;
+    display: inline-flex; flex-direction: column; align-items: center;
+    padding: 6px 14px 4px; border-radius: 7px;
+    border: 2.5px solid #1E7F3C; box-shadow: inset 0 0 0 2px #fff, inset 0 0 0 3px #1E7F3C;
+    color: #1E7F3C; opacity: 0.88; transform: rotate(-8deg);
+    font-family: "DIN Condensed", "DIN Alternate", "Helvetica Neue", Arial, sans-serif; font-weight: 700;
+    text-transform: uppercase;
+  }
+  .stamp-label { font-size: 32px; line-height: 28px; letter-spacing: 0.1em; padding-left: 0.1em; }
+  .stamp-date { font-size: 10.5px; line-height: 12px; letter-spacing: 0.16em; padding-left: 0.16em; margin-top: 3px; }
   .meta { display: flex; justify-content: space-between; gap: 32px; margin-top: 44px; }
   .label { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a1a1aa; margin-bottom: 6px; }
   .client-name { font-weight: 600; font-size: 13.5px; }
@@ -178,9 +190,9 @@ function generateInvoiceHTML(invoice: any, settings: any): string {
       <div>
         <div class="title">Invoice</div>
         <div class="number">${escapeHtml(invoice.invoice_number)}</div>
-        ${isPaid ? '<div style="text-align:right"><span class="paid-tag">Paid</span></div>' : ''}
       </div>
     </div>
+    ${isPaid ? `<div class="stamp"><span class="stamp-label">Paid</span>${invoice.payment_date ? `<span class="stamp-date">${escapeHtml(formatDay(invoice.payment_date))}</span>` : ''}</div>` : ''}
 
     <div class="meta">
       <div>
