@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -6,19 +6,17 @@ import {
   Users,
   FolderKanban,
   Clock,
-  FileText,
+  Wallet,
   BarChart3,
   Settings,
   Calculator,
   Receipt,
   HandCoins,
-  Pause,
-  Play,
-  Square,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import ProfileSwitcher from './ProfileSwitcher'
 import UpdateBanner from './UpdateBanner'
+import { onBillingChanged } from '../utils/events'
 
 // 🥚 Tap the logo 7 times in 3 seconds to discover this.
 const SECRET_MESSAGES = [
@@ -38,11 +36,6 @@ const EGG_CLICK_WINDOW_MS = 3000
 
 interface SidebarProps {
   isRunning: boolean
-  isPaused: boolean
-  elapsed: string
-  activeProjectName?: string
-  onPauseTimer: () => Promise<unknown>
-  onResumeTimer: () => Promise<unknown>
   onStopTimer: () => Promise<unknown>
 }
 
@@ -51,38 +44,66 @@ const navItems = [
   { to: '/clients', icon: Users, label: 'Clients' },
   { to: '/projects', icon: FolderKanban, label: 'Projects' },
   { to: '/time', icon: Clock, label: 'Time' },
-  { to: '/invoices', icon: FileText, label: 'Invoices' },
+  { to: '/billing', icon: Wallet, label: 'Billing', badge: true },
   { to: '/reports', icon: BarChart3, label: 'Reports' },
 ]
 
 const businessItems = [
   { to: '/commissions', icon: HandCoins, label: 'Commissions' },
-  { to: '/tax-overview', icon: Calculator, label: 'Tax Overview' },
-  { to: '/tax-settings', icon: Receipt, label: 'Tax Settings' },
+  { to: '/tax-overview', icon: Calculator, label: 'Tax overview' },
+  { to: '/tax-settings', icon: Receipt, label: 'Tax settings' },
 ]
 
-export default function Sidebar({
-  isRunning,
-  isPaused,
-  elapsed,
-  activeProjectName,
-  onPauseTimer,
-  onResumeTimer,
-  onStopTimer,
-}: SidebarProps) {
+/** The app icon in miniature: a graphite dial with an amber hand. */
+export function BillableMark({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" className="shrink-0">
+      <defs>
+        <linearGradient id="billable-mark-bg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#2E2E33" />
+          <stop offset="1" stopColor="#141417" />
+        </linearGradient>
+      </defs>
+      <rect width="32" height="32" rx="7.5" fill="url(#billable-mark-bg)" />
+      <rect x="0.25" y="0.25" width="31.5" height="31.5" rx="7.25" fill="none" stroke="rgb(255 255 255 / 0.12)" strokeWidth="0.5" />
+      <circle cx="16" cy="16" r="10" fill="none" stroke="rgb(255 255 255 / 0.2)" strokeWidth="1.1" />
+      <path d="M16 16 L10.6 13" stroke="#E6E6E9" strokeWidth="2" strokeLinecap="round" />
+      <path d="M16 16 L16 8.2" stroke="#F5A623" strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="16" cy="16" r="1.9" fill="#F5A623" />
+    </svg>
+  )
+}
+
+/** How many billing items need a look. Refreshes on navigation, focus, and billing changes. */
+function useAttentionCount(isRunning: boolean) {
   const location = useLocation()
+  const [count, setCount] = useState(0)
+  useEffect(() => {
+    let alive = true
+    const load = () => window.api.billing.overview()
+      .then((o: any) => { if (alive) setCount(o.attention.filter((a: any) => a.kind !== 'duplicate_clients').length) })
+      .catch(() => {})
+    load()
+    const off = onBillingChanged(load)
+    window.addEventListener('focus', load)
+    return () => { alive = false; off(); window.removeEventListener('focus', load) }
+  }, [location.pathname, isRunning])
+  return count
+}
+
+export default function Sidebar({ isRunning, onStopTimer }: SidebarProps) {
+  const location = useLocation()
+  const attention = useAttentionCount(isRunning)
   const clickTimesRef = useRef<number[]>([])
   const [spinCount, setSpinCount] = useState(0)
   const [showRing, setShowRing] = useState(false)
 
   const handleLogoClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
     const now = Date.now()
-    // Drop click timestamps older than the rolling window
     clickTimesRef.current = clickTimesRef.current.filter(t => now - t < EGG_CLICK_WINDOW_MS)
     clickTimesRef.current.push(now)
 
     if (clickTimesRef.current.length >= EGG_CLICK_THRESHOLD) {
-      // 🥚 fire — keep the user on the current page so they can enjoy it in context
       e.preventDefault()
       clickTimesRef.current = []
       setSpinCount(c => c + 1)
@@ -93,149 +114,88 @@ export default function Sidebar({
     }
   }
 
+  const isBillingActive = location.pathname.startsWith('/billing') || location.pathname.startsWith('/invoices')
+
   return (
-    <aside className="w-56 flex-shrink-0 bg-surface border-r border-rim/[0.04] flex flex-col h-full">
-      {/* Traffic light spacer — drag-only, no content */}
-      <div className="drag-region h-[52px] flex-shrink-0" />
+    <aside className="w-[220px] shrink-0 flex flex-col h-full">
+      {/* Traffic-light row doubles as the window drag handle */}
+      <div className="drag-region h-[44px] shrink-0" />
 
-      {/* Logo — clicks through to the Dashboard (and there's an easter egg) */}
-      <NavLink
-        to="/"
-        end
-        onClick={handleLogoClick}
-        className="px-5 pb-3 flex items-center gap-2.5 flex-shrink-0 group no-drag"
-        title="Go to Dashboard"
-      >
-        <div className="relative w-7 h-7 flex-shrink-0">
-          {/* Pulse ring on egg fire */}
-          <AnimatePresence>
-            {showRing && (
-              <motion.div
-                key="egg-ring"
-                initial={{ scale: 0.85, opacity: 0.7 }}
-                animate={{ scale: 2.6, opacity: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.9, ease: 'easeOut' }}
-                className="absolute inset-0 rounded-lg border-2 border-accent pointer-events-none"
-              />
-            )}
-          </AnimatePresence>
-          <motion.div
-            animate={{ rotate: spinCount * 360 }}
-            transition={{ duration: 0.7, ease: [0.4, 0, 0.2, 1] }}
-            className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center transition-transform group-hover:scale-105 group-active:scale-95"
-          >
-            <Clock className="w-4 h-4 text-surface" />
-          </motion.div>
+      {/* Brand, goes to the Dashboard (and hides an easter egg) */}
+      <div className="px-2.5 shrink-0">
+        <NavLink
+          to="/"
+          end
+          onClick={handleLogoClick}
+          className="flex items-center gap-2 h-[30px] px-2 rounded-[6px] hover:bg-fg/[0.05] transition-colors"
+          title="Go to Dashboard"
+        >
+          <div className="relative w-[18px] h-[18px] shrink-0">
+            <AnimatePresence>
+              {showRing && (
+                <motion.div
+                  key="egg-ring"
+                  initial={{ scale: 0.85, opacity: 0.7 }}
+                  animate={{ scale: 2.6, opacity: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.9, ease: 'easeOut' }}
+                  className="absolute inset-0 rounded-[5px] border-2 border-accent pointer-events-none"
+                />
+              )}
+            </AnimatePresence>
+            <motion.div animate={{ rotate: spinCount * 360 }} transition={{ duration: 0.7, ease: [0.4, 0, 0.2, 1] }}>
+              <BillableMark size={18} />
+            </motion.div>
+          </div>
+          <span className="text-[13px] font-semibold text-fg">Billable</span>
+        </NavLink>
+      </div>
+
+      <nav className="flex-1 overflow-y-auto px-2.5 pt-3 pb-2">
+        <div className="space-y-px">
+          {navItems.map(({ to, icon: Icon, label, badge }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === '/'}
+              className={({ isActive }) => `sidebar-link ${isActive || (badge && isBillingActive) ? 'active' : ''}`}
+            >
+              <Icon strokeWidth={2} />
+              <span className="flex-1">{label}</span>
+              {badge && attention > 0 && (
+                <span
+                  className="num min-w-[18px] h-[16px] px-1.5 rounded-full bg-fg/[0.09] text-fg-2 text-2xs font-semibold flex items-center justify-center"
+                  title={`${attention} billing item${attention === 1 ? '' : 's'} need attention`}
+                >
+                  {attention}
+                </span>
+              )}
+            </NavLink>
+          ))}
         </div>
-        <span className="text-base font-semibold text-text-primary tracking-tight group-hover:text-accent transition-colors">
-          Billable
-        </span>
-      </NavLink>
 
-      {/* Profile switcher */}
-      <ProfileSwitcher
-        isTimerRunning={isRunning}
-        onStopTimer={onStopTimer as unknown as () => Promise<unknown>}
-      />
-
-      {/* Update banner (only shown when an update is available) */}
-      <UpdateBanner />
-
-      {/* Navigation */}
-      <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
-        {navItems.map(({ to, icon: Icon, label }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={to === '/'}
-            className={({ isActive }) =>
-              `sidebar-link ${isActive ? 'active' : ''}`
-            }
-          >
-            <Icon className="w-4.5 h-4.5 flex-shrink-0" style={{ width: 18, height: 18 }} />
-            <span>{label}</span>
-          </NavLink>
-        ))}
-
-        <div className="pt-4 pb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
-          Business
+        <div className="sidebar-heading">Business</div>
+        <div className="space-y-px">
+          {businessItems.map(({ to, icon: Icon, label }) => (
+            <NavLink key={to} to={to} className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
+              <Icon strokeWidth={2} />
+              <span>{label}</span>
+            </NavLink>
+          ))}
         </div>
-        {businessItems.map(({ to, icon: Icon, label }) => (
-          <NavLink
-            key={to}
-            to={to}
-            className={({ isActive }) =>
-              `sidebar-link ${isActive ? 'active' : ''}`
-            }
-          >
-            <Icon className="w-4.5 h-4.5 flex-shrink-0" style={{ width: 18, height: 18 }} />
-            <span>{label}</span>
-          </NavLink>
-        ))}
       </nav>
 
-      {/* Active Timer */}
-      {(isRunning || isPaused) && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className={`mx-3 mb-2 p-3 rounded-xl border ${isPaused
-            ? 'bg-status-paused/[0.08] border-status-paused/20'
-            : 'bg-accent/[0.08] border-accent/20'}`}
-        >
-          <div className="flex items-center justify-between mb-1.5">
-            <div className="flex items-center gap-1.5">
-              <motion.div
-                animate={isPaused ? undefined : { scale: [1, 1.3, 1] }}
-                transition={isPaused ? undefined : { duration: 2, repeat: Infinity }}
-                className={`w-2 h-2 rounded-full ${isPaused ? 'bg-status-paused' : 'bg-accent'}`}
-              />
-              <span className={`text-xs font-medium ${isPaused ? 'text-status-paused' : 'text-accent'}`}>
-                {isPaused ? 'Paused' : 'Recording'}
-              </span>
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={isPaused ? onResumeTimer : onPauseTimer}
-                className="p-1 hover:bg-accent/20 rounded transition-colors no-drag"
-                title={isPaused ? 'Resume timer' : 'Pause timer'}
-              >
-                {isPaused
-                  ? <Play className="w-3 h-3 text-accent fill-accent" />
-                  : <Pause className="w-3 h-3 text-accent fill-accent" />}
-              </button>
-              <button
-                onClick={onStopTimer}
-                className="p-1 hover:bg-red-500/10 rounded transition-colors no-drag"
-                title="Stop timer"
-              >
-                <Square className="w-3 h-3 text-red-400 fill-current" />
-              </button>
-            </div>
-          </div>
-          <div className={`font-mono text-lg font-medium tracking-wider ${isPaused ? 'text-status-paused' : 'text-accent'}`}>
-            {elapsed}
-          </div>
-          {activeProjectName && (
-            <div className="text-xs text-text-secondary mt-1 truncate">
-              {activeProjectName}
-            </div>
-          )}
-        </motion.div>
-      )}
+      <UpdateBanner />
 
-      {/* Settings */}
-      <div className="px-3 pb-4">
-        <NavLink
-          to="/settings"
-          className={({ isActive }) =>
-            `sidebar-link ${isActive ? 'active' : ''}`
-          }
-        >
-          <Settings className="w-4.5 h-4.5 flex-shrink-0" style={{ width: 18, height: 18 }} />
-          <span>Settings</span>
+      <div className="px-2.5 pt-1 shrink-0">
+        <NavLink to="/settings" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
+          <Settings strokeWidth={2} />
+          <span className="flex-1">Settings</span>
+          <span className="text-2xs text-fg-4">⌘,</span>
         </NavLink>
+      </div>
+      <div className="pt-1 pb-2.5 shrink-0">
+        <ProfileSwitcher isTimerRunning={isRunning} onStopTimer={onStopTimer} />
       </div>
     </aside>
   )

@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import type { TimeEntry, TimerState } from '@shared/types'
 
-function formatElapsed(entry: TimeEntry | null) {
+export function formatElapsed(entry: TimeEntry | null) {
   if (!entry) return ''
 
   const accumulatedSeconds = Math.max(0, Number(entry.duration_minutes) || 0) * 60
@@ -17,17 +17,26 @@ function formatElapsed(entry: TimeEntry | null) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
+/**
+ * Live "HH:MM:SS" for a timer. Only the component that shows the clock
+ * re-renders each second, instead of the whole app.
+ */
+export function useElapsed(entry: TimeEntry | null) {
+  const [elapsed, setElapsed] = useState(() => formatElapsed(entry))
+  useEffect(() => {
+    setElapsed(formatElapsed(entry))
+    if (!entry || entry.paused_at) return
+    const interval = setInterval(() => setElapsed(formatElapsed(entry)), 1000)
+    return () => clearInterval(interval)
+  }, [entry])
+  return elapsed
+}
+
 export function useTimer() {
   // activeEntry contains either the currently running or currently paused
   // timer. Keeping one current entry makes the resume action available from
   // every screen without duplicating timer lookup logic.
   const [activeEntry, setActiveEntry] = useState<TimeEntry | null>(null)
-  const [elapsed, setElapsed] = useState('')
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  const updateElapsed = useCallback(() => {
-    setElapsed(formatElapsed(activeEntry))
-  }, [activeEntry])
 
   const checkActive = async () => {
     const state = await window.api.time.state() as TimerState
@@ -66,24 +75,6 @@ export function useTimer() {
     return () => { unsub?.(); unsubStateChange?.() }
   }, [activeEntry])
 
-  useEffect(() => {
-    if (activeEntry) {
-      updateElapsed()
-      if (!activeEntry.paused_at) {
-        intervalRef.current = setInterval(updateElapsed, 1000)
-      }
-    } else {
-      setElapsed('')
-    }
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-        intervalRef.current = null
-      }
-    }
-  }, [activeEntry, updateElapsed])
-
   const startTimer = async (projectId: number, description: string = '') => {
     // Stop any existing running timer first. A paused timer is finalized by
     // the main process if the user starts a different project.
@@ -104,7 +95,6 @@ export function useTimer() {
 
   return {
     activeEntry,
-    elapsed,
     isRunning: !!activeEntry && !activeEntry.paused_at,
     isPaused: !!activeEntry?.paused_at,
     startTimer,

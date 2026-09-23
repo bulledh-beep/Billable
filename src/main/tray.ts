@@ -9,6 +9,21 @@ let mainWindow: BrowserWindow | null = null
 let idleIcon: Electron.NativeImage
 let activeIcon: Electron.NativeImage
 
+const money = (n: number) =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n || 0)
+
+/** "Ready to bill" line so unbilled work stays visible from the menu bar. */
+function readyToBillItem(): Electron.MenuItemConstructorOptions {
+  const { amount } = db.getUnbilledTotals()
+  return {
+    label: amount > 0 ? `Ready to bill: ${money(amount)}` : 'Nothing waiting to be billed',
+    click: () => {
+      showMainWindow()
+      mainWindow?.webContents.send('navigate', '/billing')
+    },
+  }
+}
+
 function getResourcePath() {
   if (app.isPackaged) {
     return process.resourcesPath
@@ -117,6 +132,7 @@ export function rebuildTrayMenu() {
         label: `Today: ${todayHours.toFixed(1)} hrs tracked`,
         enabled: false,
       },
+      readyToBillItem(),
       { type: 'separator' },
       {
         label: 'Quit Billable',
@@ -161,6 +177,7 @@ export function rebuildTrayMenu() {
         label: `Today: ${todayHours.toFixed(1)} hrs tracked`,
         enabled: false,
       },
+      readyToBillItem(),
       { type: 'separator' },
       {
         label: 'Quit Billable',
@@ -202,6 +219,7 @@ export function rebuildTrayMenu() {
         label: `Today: ${todayHours.toFixed(1)} hrs tracked`,
         enabled: false,
       },
+      readyToBillItem(),
       { type: 'separator' },
       {
         label: 'Quit Billable',

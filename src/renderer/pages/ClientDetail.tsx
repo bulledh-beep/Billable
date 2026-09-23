@@ -1,139 +1,220 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
-import { ArrowLeft, Mail, MapPin, DollarSign } from 'lucide-react'
+import { Mail, MapPin, FileText, Trash2, Merge, Plus, FolderKanban, ChevronRight } from 'lucide-react'
+import PageHeader from '../components/PageHeader'
 import StatusBadge from '../components/StatusBadge'
-import { getInitials, getAvatarColor, formatMoney, formatHours, formatDate } from '../utils/format'
+import Metric, { MetricStrip } from '../components/Metric'
+import Money from '../components/Money'
+import Menu from '../components/Menu'
+import ConfirmDialog from '../components/ConfirmDialog'
+import ClientForm, { type ClientFormValues } from '../components/ClientForm'
+import MergeClientsModal from '../components/MergeClientsModal'
+import ProjectForm, { type ProjectFormValues } from '../components/ProjectForm'
+import EmptyState from '../components/EmptyState'
+import { ClientAvatar } from './Clients'
+import { formatMoney, formatDay, formatHoursShort, relativeDays } from '../utils/format'
+import { notifyBillingChanged } from '../utils/events'
 import type { Client, Project, Invoice } from '@shared/types'
+import toast from 'react-hot-toast'
 
 export default function ClientDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const clientId = id ? parseInt(id) : 0
   const [client, setClient] = useState<Client | null>(null)
+  const [clients, setClients] = useState<Client[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [invoices, setInvoices] = useState<Invoice[]>([])
+  const [editOpen, setEditOpen] = useState(false)
+  const [projectOpen, setProjectOpen] = useState(false)
+  const [mergeOpen, setMergeOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
 
-  useEffect(() => {
-    if (id) loadData(parseInt(id))
-  }, [id])
+  useEffect(() => { if (clientId) loadData() }, [clientId])
 
-  const loadData = async (clientId: number) => {
-    const [c, p, allInvoices] = await Promise.all([
+  const loadData = async () => {
+    const [c, all, p, inv] = await Promise.all([
       window.api.clients.get(clientId),
+      window.api.clients.list(),
       window.api.projects.list(clientId),
       window.api.invoices.list(),
     ])
     setClient(c)
+    setClients(all)
     setProjects(p)
-    setInvoices(allInvoices.filter((inv: any) => inv.client_id === clientId))
+    setInvoices(inv.filter((i: Invoice) => i.client_id === clientId))
   }
+
+  const sortedProjects = useMemo(() => [...projects].sort((a, b) =>
+    (b.unbilled_amount || 0) - (a.unbilled_amount || 0) ||
+    String(b.last_activity || b.created_at).localeCompare(String(a.last_activity || a.created_at))), [projects])
 
   if (!client) return null
 
-  const totalBilled = invoices
-    .filter((i: any) => i.status === 'paid')
-    .reduce((sum: number, i: any) => sum + i.total, 0)
-  const totalOutstanding = invoices
-    .filter((i: any) => ['sent', 'overdue'].includes(i.status))
-    .reduce((sum: number, i: any) => sum + i.total, 0)
+  const handleSave = async (values: ClientFormValues) => {
+    const result: any = await window.api.clients.update(client.id, values)
+    const cascaded = result?.cascaded_projects || 0
+    toast.success(cascaded > 0 ? `Client updated · ${cascaded} project${cascaded === 1 ? '' : 's'} moved to the new rate` : 'Client updated')
+    setEditOpen(false)
+    notifyBillingChanged()
+    loadData()
+  }
+
+  const handleCreateProject = async (values: ProjectFormValues) => {
+    const created = await window.api.projects.create(values)
+    toast.success('Project created')
+    setProjectOpen(false)
+    navigate(`/projects/${created.id}`)
+  }
+
+  const handleDelete = async () => {
+    await window.api.clients.delete(client.id)
+    toast.success('Client deleted')
+    notifyBillingChanged()
+    navigate('/clients')
+  }
+
+  const unbilled = client.unbilled_amount || 0
+  const outstanding = client.outstanding_amount || 0
+  const overdue = client.overdue_amount || 0
+  const paidCount = invoices.filter(i => i.status === 'paid').length
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-8">
-      <button
-        onClick={() => navigate('/clients')}
-        className="flex items-center gap-1.5 text-sm text-text-secondary hover:text-text-primary transition-colors mb-6"
-      >
-        <ArrowLeft className="w-4 h-4" /> Clients
-      </button>
-
-      {/* Client Header */}
-      <div className="flex items-start gap-5 mb-8">
-        <div
-          className="w-14 h-14 rounded-2xl flex items-center justify-center text-lg font-semibold text-white"
-          style={{ backgroundColor: getAvatarColor(client.name) }}
-        >
-          {getInitials(client.name)}
-        </div>
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold text-text-primary">{client.name}</h1>
-          {client.company && <p className="text-sm text-text-secondary">{client.company}</p>}
-          <div className="flex items-center gap-4 mt-2 text-xs text-text-tertiary">
-            {client.email && (
-              <span className="flex items-center gap-1"><Mail className="w-3 h-3" /> {client.email}</span>
+    <div className="page">
+      <PageHeader
+        crumbs={[{ label: 'Clients', to: '/clients' }]}
+        title={client.name}
+        actions={
+          <>
+            {unbilled > 0 && (
+              <button onClick={() => navigate(`/invoices/new?client_id=${client.id}`)} className="btn-secondary">
+                Invoice unbilled time
+              </button>
             )}
-            {client.address && (
-              <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {client.address}</span>
-            )}
-            <span className="flex items-center gap-1">
-              <DollarSign className="w-3 h-3" /> {formatMoney(client.default_rate)}/hr
-            </span>
+            <button onClick={() => setEditOpen(true)} className="btn-secondary">Edit</button>
+            <Menu
+              items={[
+                { label: 'New project', icon: Plus, onClick: () => setProjectOpen(true) },
+                clients.length > 1 && { label: 'Merge into another client…', icon: Merge, onClick: () => setMergeOpen(true) },
+                'separator',
+                { label: 'Delete client', icon: Trash2, danger: true, onClick: () => setDeleteOpen(true) },
+              ]}
+            />
+          </>
+        }
+      />
+
+      {/* Identity */}
+      <div className="flex items-center gap-4 mb-5">
+        <ClientAvatar name={client.name} size={40} />
+        <div className="min-w-0">
+          <div className="text-[17px] leading-6 font-semibold text-fg">{client.name}</div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-3">
+            {client.company && <span>{client.company}</span>}
+            {client.email && <span className="flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" />{client.email}</span>}
+            {client.address && <span className="flex items-center gap-1.5 truncate max-w-[420px]"><MapPin className="w-3.5 h-3.5 shrink-0" />{client.address.split('\n').map(l => l.trim().replace(/,$/, '')).filter(Boolean).join(', ')}</span>}
           </div>
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-8">
-        <div className="glass-panel p-4">
-          <div className="text-xs text-text-tertiary mb-1">Lifetime Billed</div>
-          <div className="font-mono text-lg font-semibold text-status-paid">{formatMoney(totalBilled)}</div>
-        </div>
-        <div className="glass-panel p-4">
-          <div className="text-xs text-text-tertiary mb-1">Outstanding</div>
-          <div className="font-mono text-lg font-semibold text-status-overdue">{formatMoney(totalOutstanding)}</div>
-        </div>
-        <div className="glass-panel p-4">
-          <div className="text-xs text-text-tertiary mb-1">Projects</div>
-          <div className="font-mono text-lg font-semibold text-text-primary">{projects.length}</div>
-        </div>
+      <MetricStrip className="mb-5">
+        <Metric
+          label="Unbilled"
+          value={<Money amount={unbilled} />}
+          sub={unbilled > 0 ? `${formatHoursShort(client.unbilled_hours || 0)} since ${formatDay(client.oldest_unbilled || '')}` : 'Nothing waiting'}
+        />
+        <Metric
+          label="Outstanding"
+          value={<Money amount={outstanding} className={overdue > 0 ? 'text-red' : ''} />}
+          sub={overdue > 0 ? `${formatMoney(overdue)} overdue` : outstanding > 0 ? 'Sent, not yet paid' : 'Nothing owed'}
+        />
+        <Metric label="Paid" value={<Money amount={client.paid_amount || 0} />} sub={`${paidCount} invoice${paidCount === 1 ? '' : 's'}`} />
+        <Metric label="Rate" value={<><Money amount={client.default_rate} /><span className="text-sm font-normal text-fg-3">/hr</span></>} sub={client.currency} />
+      </MetricStrip>
+
+      <div className="grid grid-cols-2 gap-6 items-start">
+        {/* Projects */}
+        <section className="min-w-0">
+          <div className="group-head">
+            <h2 className="section-title">Projects <span className="ml-1 font-normal text-fg-3 num">{sortedProjects.length}</span></h2>
+            <button onClick={() => setProjectOpen(true)} className="head-link">New project</button>
+          </div>
+          <div className="card overflow-hidden">
+          {sortedProjects.length === 0 ? (
+            <EmptyState compact icon={FolderKanban} title="No projects yet" description="Create a project to start tracking time for this client." />
+          ) : sortedProjects.map(p => (
+            <button
+              key={p.id}
+              onClick={() => navigate(`/projects/${p.id}`)}
+              className="list-row [--inset:36px] w-full flex items-center gap-3 px-4 h-[44px] hover:bg-fg/[0.025] text-left"
+            >
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-medium text-fg truncate">{p.name}</div>
+                <div className="text-xs text-fg-3">
+                  {formatHoursShort(p.total_hours || 0)} tracked{p.last_activity ? ` · ${relativeDays(p.last_activity)}` : ''}
+                </div>
+              </div>
+              {(p.unbilled_amount || 0) > 0 && (
+                <div className="text-right">
+                  <div className="text-[13px] num font-medium text-amber">{formatMoney(p.unbilled_amount || 0)}</div>
+                  <div className="text-2xs text-fg-3">unbilled</div>
+                </div>
+              )}
+              <StatusBadge status={p.status} />
+            </button>
+          ))}
+          </div>
+        </section>
+
+        {/* Invoices */}
+        <section className="min-w-0">
+          <div className="group-head">
+            <h2 className="section-title">Invoices <span className="ml-1 font-normal text-fg-3 num">{invoices.length}</span></h2>
+            <button onClick={() => navigate(`/invoices/new?client_id=${client.id}`)} className="head-link">New invoice</button>
+          </div>
+          <div className="card overflow-hidden">
+          {invoices.length === 0 ? (
+            <EmptyState compact icon={FileText} title="No invoices yet" description="Invoices you create for this client show up here." />
+          ) : invoices.map(inv => (
+            <button
+              key={inv.id}
+              onClick={() => navigate(`/invoices/${inv.id}`)}
+              className="list-row group w-full flex items-center gap-3 px-4 h-[44px] hover:bg-fg/[0.025] text-left"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-medium text-fg">{inv.invoice_number}</div>
+                <div className="text-xs text-fg-3 truncate">
+                  {formatDay(inv.issue_date)}
+                  {inv.status === 'paid' && inv.payment_date ? ` · paid ${formatDay(inv.payment_date)}` : inv.status !== 'draft' ? ` · due ${formatDay(inv.due_date)}` : ''}
+                </div>
+              </div>
+              <div className="text-[13px] num text-fg">{formatMoney(inv.total)}</div>
+              <StatusBadge status={inv.status} />
+              <ChevronRight className="w-3.5 h-3.5 text-fg-4 group-hover:text-fg-3" />
+            </button>
+          ))}
+          </div>
+        </section>
       </div>
 
-      {/* Projects */}
-      <h2 className="text-sm font-semibold text-text-primary mb-3">Projects</h2>
-      <div className="space-y-2 mb-8">
-        {projects.map((project: any) => (
-          <div
-            key={project.id}
-            onClick={() => navigate(`/projects/${project.id}`)}
-            className="glass-panel-hover p-4 flex items-center gap-3 cursor-pointer"
-          >
-            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: project.color }} />
-            <div className="flex-1">
-              <span className="text-sm font-medium text-text-primary">{project.name}</span>
-            </div>
-            <StatusBadge status={project.status} />
-            <span className="font-mono text-sm text-text-secondary ml-4">
-              {formatHours(project.total_hours || 0)}h
-            </span>
-          </div>
-        ))}
-        {projects.length === 0 && (
-          <p className="text-sm text-text-tertiary text-center py-4">No projects for this client</p>
-        )}
-      </div>
-
-      {/* Invoices */}
-      <h2 className="text-sm font-semibold text-text-primary mb-3">Invoices</h2>
-      <div className="space-y-2">
-        {invoices.map((invoice: any) => (
-          <div
-            key={invoice.id}
-            onClick={() => navigate(`/invoices/${invoice.id}`)}
-            className="glass-panel-hover p-4 flex items-center gap-3 cursor-pointer"
-          >
-            <div className="flex-1">
-              <span className="text-sm font-medium text-text-primary">{invoice.invoice_number}</span>
-              <span className="text-xs text-text-tertiary ml-3">{formatDate(invoice.issue_date)}</span>
-            </div>
-            <StatusBadge status={invoice.status} />
-            <span className="font-mono text-sm font-medium text-text-primary ml-4">
-              {formatMoney(invoice.total)}
-            </span>
-          </div>
-        ))}
-        {invoices.length === 0 && (
-          <p className="text-sm text-text-tertiary text-center py-4">No invoices for this client</p>
-        )}
-      </div>
-    </motion.div>
+      <ClientForm open={editOpen} client={client} onClose={() => setEditOpen(false)} onSubmit={handleSave} />
+      <ProjectForm open={projectOpen} clients={clients} defaultClientId={client.id} onClose={() => setProjectOpen(false)} onSubmit={handleCreateProject} />
+      <MergeClientsModal
+        open={mergeOpen}
+        clients={clients}
+        sourceId={client.id}
+        onClose={() => setMergeOpen(false)}
+        onMerged={target => { setMergeOpen(false); navigate(`/clients/${target}`) }}
+      />
+      <ConfirmDialog
+        isOpen={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={handleDelete}
+        title={`Delete ${client.name}?`}
+        message="This permanently deletes the client with all of their projects, time entries, and invoices. If they were added twice, merge them instead."
+        confirmText="Delete client"
+      />
+    </div>
   )
 }

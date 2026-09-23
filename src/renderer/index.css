@@ -3,187 +3,445 @@
 @tailwind utilities;
 
 /* ---------- Theme palettes ----------
- * The Tailwind tokens (surface, text-primary, …) reference these CSS variables
- * via rgb(var(--name) / <alpha-value>). Toggle the class on <html> to swap themes.
- * Triplets are space-separated R G B values (no commas) so Tailwind can apply alpha.
+ * Values are "R G B" triplets so Tailwind can apply opacity (bg-accent/10).
+ * Toggle `dark` / `light` on <html> to switch. Neutrals and status colors
+ * follow Apple's system palette so the app sits naturally on macOS.
  */
 :root,
 :root.dark {
-  --surface: 15 15 17;
-  --surface-50: 26 26 30;
-  --surface-100: 34 34 38;
-  --surface-200: 42 42 47;
-  --surface-300: 51 51 56;
-  --surface-400: 61 61 66;
+  --bg: 30 30 32;
+  --sidebar: 38 38 41;
+  --panel: 40 40 43;
+  --panel-2: 48 48 52;
+  --field: 44 44 47;
+  --line: 60 60 65;
+  --line-strong: 82 82 88;
 
-  --text-primary: 240 237 232;
-  --text-secondary: 155 154 151;
-  --text-tertiary: 107 106 103;
+  --fg: 245 245 247;
+  --fg-2: 200 200 206;
+  --fg-3: 152 152 159;
+  --fg-4: 104 104 110;
 
-  /* Border lines / panel rims (white on dark, black on light) */
+  --accent: 245 166 35;
+  --accent-hover: 250 182 66;
+  --accent-text: 255 186 76;
+  --accent-fg: 36 26 8;
+  --accent-icon: 245 166 35;
+
+  --green: 52 206 98;
+  --blue: 88 166 255;
+  --red: 255 105 97;
+  --amber: 255 180 64;
+  --violet: 191 124 255;
+  --gray: 152 152 159;
+
   --rim: 255 255 255;
-  --rim-strong: 255 255 255;
+  --shadow-card: inset 0 0.5px 0 rgb(255 255 255 / 0.05);
+  --shadow-pop: 0 0 0 0.5px rgb(255 255 255 / 0.1), 0 18px 40px -10px rgb(0 0 0 / 0.65), 0 3px 10px rgb(0 0 0 / 0.35);
 
   color-scheme: dark;
 }
 
 :root.light {
-  --surface: 250 248 244;       /* warm off-white background */
-  --surface-50: 255 254 251;    /* highest panel */
-  --surface-100: 252 250 246;   /* glass-panel base */
-  --surface-200: 244 241 235;   /* hovered panel / subtle bg */
-  --surface-300: 234 230 222;   /* pressed / borders */
-  --surface-400: 220 215 205;   /* deeper edge */
+  --bg: 246 246 247;
+  --sidebar: 234 234 236;
+  --panel: 255 255 255;
+  --panel-2: 249 249 250;
+  --field: 255 255 255;
+  --line: 222 222 226;
+  --line-strong: 200 200 206;
 
-  --text-primary: 28 26 24;
-  --text-secondary: 90 86 82;
-  --text-tertiary: 130 124 118;
+  --fg: 29 29 31;
+  --fg-2: 70 70 76;
+  --fg-3: 128 128 134;
+  --fg-4: 172 172 178;
+
+  --accent: 245 166 35;
+  --accent-hover: 238 154 22;
+  --accent-text: 163 92 0;
+  --accent-fg: 36 26 8;
+  --accent-icon: 196 110 0;
+
+  --green: 30 136 58;
+  --blue: 0 108 218;
+  --red: 214 40 46;
+  --amber: 170 96 0;
+  --violet: 128 72 204;
+  --gray: 128 128 134;
 
   --rim: 0 0 0;
-  --rim-strong: 0 0 0;
+  --shadow-card: 0 0.5px 1.5px rgb(0 0 0 / 0.05);
+  --shadow-pop: 0 0 0 0.5px rgb(0 0 0 / 0.1), 0 14px 36px -8px rgb(0 0 0 / 0.2), 0 2px 6px rgb(0 0 0 / 0.06);
 
   color-scheme: light;
 }
 
 @layer base {
-  * {
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+  html {
+    font-size: 13px;
+  }
+
+  /* Transparent so the sidebar can show the Mac's sidebar material */
+  html, body, #root {
+    background: transparent;
   }
 
   body {
     overflow: hidden;
     user-select: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.003em;
+    color: rgb(var(--fg));
   }
 
-  input, textarea, select {
+  input, textarea, select, [contenteditable] {
     user-select: text;
   }
 
-  /* Disable default macOS link-dragging on anchors, images, and dnd-prone elements.
-     Otherwise dragging a sidebar nav link surfaces the underlying file:// URL as
-     a ghost tooltip — see Electron + React Router on a file:// protocol. */
+  /* Stop macOS from surfacing file:// URLs when links or images get dragged */
   a, img {
     -webkit-user-drag: none;
-    user-drag: none;
+  }
+
+  ::selection {
+    background: rgb(var(--accent) / 0.3);
   }
 
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 10px;
+    height: 10px;
   }
-
   ::-webkit-scrollbar-track {
     background: transparent;
   }
-
   ::-webkit-scrollbar-thumb {
-    background: rgb(var(--rim) / 0.1);
-    border-radius: 3px;
+    background: rgb(var(--fg) / 0.14);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--fg) / 0.26);
+    background-clip: content-box;
   }
 
-  ::-webkit-scrollbar-thumb:hover {
-    background: rgb(var(--rim) / 0.2);
+  input[type='date'], input[type='time'] {
+    font-variant-numeric: tabular-nums;
+  }
+  input[type='date']::-webkit-calendar-picker-indicator,
+  input[type='time']::-webkit-calendar-picker-indicator {
+    opacity: 0.5;
+    cursor: pointer;
+    margin-left: 2px;
+    padding: 0;
+  }
+  :root.dark input[type='date']::-webkit-calendar-picker-indicator,
+  :root.dark input[type='time']::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+  }
+
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type='checkbox'] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: 0.5px solid rgb(var(--line-strong));
+    background: rgb(var(--field));
+    box-shadow: 0 0.5px 1px rgb(0 0 0 / 0.08);
+    display: inline-grid;
+    place-content: center;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: background-color 100ms, border-color 100ms;
+  }
+  input[type='checkbox']::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+    background: rgb(var(--accent-fg));
+    transform: scale(0);
+    transition: transform 90ms ease-out;
+  }
+  input[type='checkbox']:checked,
+  input[type='checkbox']:indeterminate {
+    background: rgb(var(--accent));
+    border-color: rgb(var(--accent));
+  }
+  input[type='checkbox']:checked::before {
+    transform: scale(1);
+  }
+  input[type='checkbox']:indeterminate::before {
+    clip-path: none;
+    height: 2px;
+    transform: scale(1);
+  }
+  input[type='checkbox']:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgb(var(--accent) / 0.35);
   }
 }
 
 @layer components {
-  .glass-panel {
-    @apply bg-surface-100/80 backdrop-blur-xl rounded-xl;
-    border: 1px solid rgb(var(--rim) / 0.05);
-    box-shadow:
-      inset 0 1px 1px rgb(var(--rim) / 0.03),
-      0 2px 8px rgba(0, 0, 0, 0.18);
+  /* ---------- Layout ---------- */
+  .page {
+    @apply relative w-full max-w-[1160px] mx-auto px-7 pt-5 pb-14 animate-fade-in;
   }
 
-  :root.light .glass-panel {
-    /* Light mode wants a slightly stronger rim and softer shadow */
-    border-color: rgb(var(--rim) / 0.08);
-    box-shadow:
-      inset 0 1px 1px rgb(255 255 255 / 0.6),
-      0 1px 3px rgba(0, 0, 0, 0.05),
-      0 2px 8px rgba(0, 0, 0, 0.04);
-  }
-
-  .glass-panel-hover {
-    @apply glass-panel transition-all duration-200;
-  }
-
-  .glass-panel-hover:hover {
-    @apply bg-surface-200/80;
-    box-shadow:
-      inset 0 1px 1px rgb(var(--rim) / 0.05),
-      0 4px 16px rgba(0, 0, 0, 0.25);
-    transform: translateY(-1px);
-  }
-
-  :root.light .glass-panel-hover:hover {
-    box-shadow:
-      inset 0 1px 1px rgb(255 255 255 / 0.7),
-      0 2px 6px rgba(0, 0, 0, 0.06),
-      0 6px 20px rgba(0, 0, 0, 0.06);
-  }
-
-  .input-field {
-    @apply w-full bg-surface-200 rounded-lg px-3 py-2
-           text-text-primary placeholder:text-text-tertiary
-           focus:outline-none focus:ring-1 focus:ring-accent/50 focus:border-accent/30
-           transition-all duration-200 text-sm;
-    border: 1px solid rgb(var(--rim) / 0.06);
-  }
-
-  .btn-primary {
-    @apply bg-accent hover:bg-accent-light font-medium px-4 py-2 rounded-lg
-           transition-all duration-200 text-sm
-           active:scale-[0.98] shadow-lg shadow-accent/20;
-    /* Gold button always wants dark text — independent of theme */
-    color: #1a1a1a;
-  }
-
-  .btn-secondary {
-    @apply bg-surface-200 hover:bg-surface-300 text-text-primary font-medium px-4 py-2 rounded-lg
-           transition-all duration-200 text-sm
-           active:scale-[0.98];
-    border: 1px solid rgb(var(--rim) / 0.06);
-  }
-
-  .btn-ghost {
-    @apply hover:bg-surface-200 text-text-secondary hover:text-text-primary px-3 py-2 rounded-lg
-           transition-all duration-200 text-sm;
-  }
-
-  .btn-danger {
-    @apply bg-red-500/10 hover:bg-red-500/20 text-red-400 font-medium px-4 py-2 rounded-lg
-           border border-red-500/20 transition-all duration-200 text-sm
-           active:scale-[0.98];
-  }
-
-  .sidebar-link {
-    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
-           text-text-secondary hover:text-text-primary hover:bg-surface-200
-           transition-all duration-200 relative;
-  }
-
-  .sidebar-link.active {
-    @apply text-accent bg-accent/[0.08];
-  }
-
-  .sidebar-link.active::before {
-    content: '';
-    @apply absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-accent rounded-r-full;
-  }
-
-  .status-badge {
-    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium;
+  /* Large tabular figures */
+  .font-display {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.012em;
   }
 
   .drag-region {
     -webkit-app-region: drag;
-    app-region: drag;
   }
-
   .no-drag {
     -webkit-app-region: no-drag;
-    app-region: no-drag;
   }
+
+  /* ---------- Surfaces ---------- */
+  .card {
+    @apply bg-panel border border-line rounded-card shadow-card;
+  }
+  .card-hover {
+    @apply transition-colors duration-100 hover:border-line-strong;
+  }
+  .card-header {
+    @apply flex items-center justify-between gap-3 px-4 h-[38px] border-b border-line;
+  }
+  .card-title {
+    @apply text-[13px] font-semibold text-fg;
+  }
+  .glass-panel {
+    @apply card;
+  }
+  .glass-panel-hover {
+    @apply card transition-colors hover:border-line-strong;
+  }
+
+  /* Heading that sits above a grouped box, like macOS Settings */
+  .group-head {
+    @apply flex items-center justify-between gap-3 min-h-[24px] mb-1.5 px-0.5;
+  }
+  .section-title {
+    @apply text-[13px] font-semibold text-fg;
+  }
+  .section-sub {
+    @apply text-xs text-fg-3;
+  }
+  /* Small text button used in group headings */
+  .head-link {
+    @apply inline-flex items-center gap-1 text-xs font-medium text-fg-3 hover:text-fg transition-colors;
+  }
+  .head-link svg {
+    @apply w-3 h-3;
+  }
+
+  /* ---------- Buttons ---------- */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 h-[28px] px-3 rounded-[6px] text-[13px] font-medium
+           whitespace-nowrap select-none transition-[background-color,border-color,color,filter] duration-100
+           focus-visible:outline-none focus-visible:shadow-focus
+           disabled:opacity-40 disabled:pointer-events-none;
+  }
+  .btn svg, .btn-primary svg, .btn-secondary svg, .btn-ghost svg, .btn-danger svg, .btn-icon svg {
+    @apply w-[14px] h-[14px] shrink-0;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-accent-fg font-semibold hover:bg-accent-hover active:brightness-95;
+    box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.4), 0 0 0 0.5px rgb(160 90 0 / 0.45), 0 1px 1.5px rgb(0 0 0 / 0.12);
+  }
+  .btn-primary:disabled {
+    @apply bg-fg/[0.08] text-fg-4 opacity-100;
+    box-shadow: none;
+  }
+  .btn-secondary {
+    @apply btn text-fg bg-panel border border-line-strong hover:bg-panel-2 active:bg-fg/[0.07];
+    box-shadow: 0 0.5px 1px rgb(0 0 0 / 0.06);
+  }
+  :root.dark .btn-secondary {
+    @apply bg-fg/[0.09] border-transparent hover:bg-fg/[0.13] active:bg-fg/[0.17];
+    box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.07), 0 0.5px 1px rgb(0 0 0 / 0.3);
+  }
+  .btn-ghost {
+    @apply btn text-fg-2 hover:text-fg hover:bg-fg/[0.06] active:bg-fg/[0.09];
+  }
+  .btn-danger {
+    @apply btn bg-red/10 text-red hover:bg-red/15;
+  }
+  .btn-sm {
+    @apply h-[24px] px-2 text-xs gap-1 rounded-[5px];
+  }
+  .btn-sm svg {
+    @apply w-[13px] h-[13px];
+  }
+  .btn-icon {
+    @apply btn text-fg-3 hover:text-fg hover:bg-fg/[0.06] w-[28px] px-0;
+  }
+  .btn-icon-sm {
+    @apply btn-icon w-[24px] h-[24px] rounded-[5px];
+  }
+  .btn-icon-sm svg {
+    @apply w-[14px] h-[14px];
+  }
+
+  /* ---------- Forms ---------- */
+  .input {
+    @apply w-full h-[28px] px-2.5 rounded-[6px] border border-line-strong bg-field text-[13px] text-fg
+           placeholder:text-fg-4 outline-none transition-[border-color,box-shadow] duration-100
+           focus:border-accent focus:shadow-focus
+           disabled:opacity-50;
+  }
+  :root.light .input {
+    box-shadow: 0 0.5px 1px rgb(0 0 0 / 0.04);
+  }
+  :root.light .input:focus {
+    box-shadow: 0 0 0 3px rgb(var(--accent) / 0.35);
+  }
+  textarea.input {
+    @apply h-auto py-1.5 leading-5 resize-none;
+  }
+  select.input {
+    @apply pr-7 appearance-none bg-no-repeat;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238a8a93' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
+    background-position: right 7px center;
+    background-size: 13px;
+  }
+  .input-field {
+    @apply input;
+  }
+  .label {
+    @apply block text-xs font-medium text-fg-2 mb-1.5;
+  }
+  .hint {
+    @apply text-xs text-fg-3 mt-1.5;
+  }
+
+  /* ---------- Segmented control (macOS style) ---------- */
+  .seg {
+    @apply relative inline-flex items-center p-[2px] rounded-[7px] bg-fg/[0.07];
+  }
+  .seg-item {
+    @apply relative inline-flex items-center gap-1.5 h-[22px] px-2.5 rounded-[5px] text-xs font-medium text-fg-2
+           transition-colors hover:text-fg whitespace-nowrap;
+  }
+  .seg-item.active {
+    @apply text-fg;
+  }
+  .seg-thumb {
+    @apply absolute inset-0 rounded-[5px] bg-panel;
+    box-shadow: 0 0 0 0.5px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.12);
+  }
+  :root.dark .seg-thumb {
+    background: rgb(var(--fg) / 0.16);
+    box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.08), 0 1px 2px rgb(0 0 0 / 0.3);
+  }
+
+  /* ---------- Tables ----------
+   * :where() keeps these at element-level specificity so utilities like
+   * text-right or w-24 on a cell still win. */
+  .tbl {
+    @apply w-full text-[13px] border-collapse;
+  }
+  :where(.tbl) th {
+    @apply h-[30px] px-3 text-left text-xs font-medium text-fg-3 border-b border-line whitespace-nowrap;
+  }
+  /* Two standard row heights: 44px for two-line rows, 36px for single-line tables */
+  :where(.tbl) td {
+    @apply h-[44px] px-3 border-b border-line align-middle;
+  }
+  :where(.tbl-compact) td {
+    @apply h-[36px];
+  }
+  :where(.tbl) tbody tr:last-child td {
+    @apply border-b-0;
+  }
+  :where(.tbl) tbody tr.row-hover {
+    @apply transition-colors hover:bg-fg/[0.03] cursor-pointer;
+  }
+  :where(.tbl) :is(th, td):first-child {
+    @apply pl-4;
+  }
+  :where(.tbl) :is(th, td):last-child {
+    @apply pr-4;
+  }
+
+  /* ---------- Badges ---------- */
+  .badge {
+    @apply inline-flex items-center gap-1 h-[18px] px-1.5 rounded-[4px] text-2xs font-medium whitespace-nowrap;
+  }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar-link {
+    @apply flex items-center gap-2 h-[28px] px-2 rounded-[6px] text-[13px] text-fg/85
+           hover:bg-fg/[0.05] transition-colors;
+  }
+  .sidebar-link > svg {
+    @apply w-4 h-4 shrink-0;
+    color: rgb(var(--accent-icon));
+  }
+  .sidebar-link.active {
+    @apply text-fg bg-fg/[0.09] font-medium;
+  }
+  .sidebar-heading {
+    @apply px-2 mt-4 mb-1 text-2xs font-semibold text-fg-3;
+  }
+
+  /* ---------- Misc ---------- */
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+  .kbd {
+    @apply inline-flex items-center h-[17px] px-1 rounded-[4px] border border-line-strong text-2xs text-fg-3 font-sans;
+  }
+  .link {
+    @apply text-accent-text hover:underline underline-offset-2 cursor-pointer;
+  }
+  .status-badge {
+    @apply badge;
+  }
+}
+
+/* Running-timer dot: a slow fade instead of a ping ring */
+@keyframes timer-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* Page actions and the global timer are separate groups in the toolbar */
+.toolbar-actions:empty + .toolbar-divider {
+  display: none;
+}
+
+/* Keep row hover fills inside a box's rounded corners */
+.card:has(> table), .card:has(> .tbl) {
+  overflow: hidden;
+}
+
+/* List rows with inset hairline separators, like macOS lists.
+   Set --inset to where the row's text starts. */
+.list-row {
+  position: relative;
+}
+.list-row::after {
+  content: '';
+  position: absolute;
+  left: var(--inset, 16px);
+  right: 0;
+  bottom: 0;
+  border-bottom: 0.5px solid rgb(var(--line));
+  pointer-events: none;
+}
+.list-row:last-child::after {
+  display: none;
 }

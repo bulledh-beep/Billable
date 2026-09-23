@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Sparkles, ExternalLink } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 import Modal from './Modal'
 
 const STORAGE_KEY = 'billable.lastSeenVersion'
@@ -77,38 +77,28 @@ export default function WhatsNewModal() {
   if (!info) return null
 
   return (
-    <Modal isOpen={open} onClose={close} title={`What's new in ${info.name}`}>
-      <div className="space-y-4">
-        <div className="flex items-start gap-3 p-4 rounded-lg bg-accent/[0.05] border border-accent/20">
-          <Sparkles className="w-4 h-4 text-accent flex-shrink-0 mt-0.5" />
-          <div>
-            <div className="text-sm font-medium text-text-primary">
-              You just updated to v{version}
-            </div>
-            <div className="text-xs text-text-tertiary mt-0.5">
-              Here's everything that's changed since your last version.
-            </div>
-          </div>
-        </div>
-
-        <pre className="max-h-80 overflow-y-auto text-xs text-text-secondary whitespace-pre-wrap font-mono leading-relaxed p-3 rounded-lg bg-surface-200">
-          {info.body}
-        </pre>
-
-        <div className="flex items-center justify-between gap-3 pt-1">
+    <Modal
+      isOpen={open}
+      onClose={close}
+      title={`What's new in ${info.name}`}
+      description={`You're now on version ${version}.`}
+      footer={
+        <>
           <a
             href={info.html_url}
             target="_blank"
             rel="noreferrer"
-            className="text-xs text-text-tertiary hover:text-accent inline-flex items-center gap-1.5 transition-colors"
+            className="mr-auto text-xs text-fg-3 hover:text-accent-text inline-flex items-center gap-1.5"
           >
             View on GitHub <ExternalLink className="w-3 h-3" />
           </a>
-          <button onClick={close} className="btn-primary text-sm">
-            Got it
-          </button>
-        </div>
-      </div>
+          <button onClick={close} className="btn-primary">Got it</button>
+        </>
+      }
+    >
+      <pre className="max-h-80 overflow-y-auto text-sm text-fg-2 whitespace-pre-wrap font-sans leading-6">
+        {info.body}
+      </pre>
     </Modal>
   )
 }

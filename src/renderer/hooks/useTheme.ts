@@ -4,6 +4,7 @@ export type ThemePreference = 'dark' | 'light' | 'auto'
 export type ResolvedTheme = 'dark' | 'light'
 
 const STORAGE_KEY = 'billable.theme'
+const CHANGE_EVENT = 'billable:theme-change'
 
 function readStoredPreference(): ThemePreference {
   try {
@@ -33,34 +34,32 @@ function applyToDocument(theme: ResolvedTheme) {
   root.classList.toggle('light', theme === 'light')
 }
 
+/** Tell the main process so the sidebar material and native menus match. */
+function syncNative(pref: ThemePreference) {
+  try {
+    window.api?.appearance?.set(pref)?.catch?.(() => {})
+  } catch {
+    // Not running inside Electron
+  }
+}
+
 /**
- * Theme controller. Stores the user's preference in localStorage so it survives
- * profile switches and app restarts. Returns the active preference, the resolved
- * theme, and a setter.
+ * Theme controller for the Settings toggle. The preference lives in
+ * localStorage so it survives profile switches and restarts.
  */
 export function useTheme() {
   const [preference, setPreferenceState] = useState<ThemePreference>(() => readStoredPreference())
   const [resolved, setResolved] = useState<ResolvedTheme>(() => resolve(readStoredPreference()))
 
-  // Apply on mount + whenever preference changes
   useEffect(() => {
-    const r = resolve(preference)
-    setResolved(r)
-    applyToDocument(r)
-  }, [preference])
-
-  // Listen for system theme changes when in 'auto'
-  useEffect(() => {
-    if (preference !== 'auto') return
-    const mql = window.matchMedia('(prefers-color-scheme: dark)')
     const onChange = () => {
-      const r: ResolvedTheme = mql.matches ? 'dark' : 'light'
-      setResolved(r)
-      applyToDocument(r)
+      const pref = readStoredPreference()
+      setPreferenceState(pref)
+      setResolved(resolve(pref))
     }
-    mql.addEventListener('change', onChange)
-    return () => mql.removeEventListener('change', onChange)
-  }, [preference])
+    window.addEventListener(CHANGE_EVENT, onChange)
+    return () => window.removeEventListener(CHANGE_EVENT, onChange)
+  }, [])
 
   const setPreference = useCallback((pref: ThemePreference) => {
     try {
@@ -68,16 +67,29 @@ export function useTheme() {
     } catch {
       // ignore
     }
+    // Native first: in auto mode the page's color-scheme follows it
+    syncNative(pref)
+    applyToDocument(resolve(pref))
     setPreferenceState(pref)
+    setResolved(resolve(pref))
+    window.dispatchEvent(new Event(CHANGE_EVENT))
   }, [])
 
   return { preference, resolved, setPreference }
 }
 
 /**
- * Apply the stored theme as early as possible (called from App entry).
- * Avoids a flash of wrong theme before React mounts.
+ * Apply the stored theme before React mounts, and keep following the Mac's
+ * appearance while the preference is Auto.
  */
 export function applyInitialTheme() {
-  applyToDocument(resolve(readStoredPreference()))
+  const pref = readStoredPreference()
+  syncNative(pref)
+  applyToDocument(resolve(pref))
+  window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (readStoredPreference() === 'auto') {
+      applyToDocument(resolve('auto'))
+      window.dispatchEvent(new Event(CHANGE_EVENT))
+    }
+  })
 }

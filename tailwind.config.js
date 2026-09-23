@@ -1,4 +1,9 @@
 /** @type {import('tailwindcss').Config} */
+
+// Every color reads a CSS variable holding an "R G B" triplet, so the theme can
+// swap by class on <html> and Tailwind opacity modifiers (bg-accent/10) still work.
+const v = name => `rgb(var(--${name}) / <alpha-value>)`
+
 export default {
   content: [
     './index.html',
@@ -8,53 +13,97 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Surface tokens read from CSS variables so the theme can swap by class on <html>.
-        // The "<alpha-value>" placeholder lets us keep using /80, /40 etc. opacities.
-        surface: {
-          DEFAULT: 'rgb(var(--surface) / <alpha-value>)',
-          50: 'rgb(var(--surface-50) / <alpha-value>)',
-          100: 'rgb(var(--surface-100) / <alpha-value>)',
-          200: 'rgb(var(--surface-200) / <alpha-value>)',
-          300: 'rgb(var(--surface-300) / <alpha-value>)',
-          400: 'rgb(var(--surface-400) / <alpha-value>)',
-        },
+        // ---- Surfaces ----
+        bg: v('bg'),                 // content canvas
+        sidebar: v('sidebar'),       // fallback when the sidebar material is off
+        panel: { DEFAULT: v('panel'), 2: v('panel-2') }, // grouped boxes, raised rows
+        field: v('field'),           // inputs
+        line: { DEFAULT: v('line'), strong: v('line-strong') },
+
+        // ---- Text ----
+        fg: { DEFAULT: v('fg'), 2: v('fg-2'), 3: v('fg-3'), 4: v('fg-4') },
+
+        // ---- Brand ----
         accent: {
-          DEFAULT: '#F5A623',
-          light: '#F7B94D',
-          dark: '#D4901E',
-          glow: 'rgba(245, 166, 35, 0.15)',
+          DEFAULT: v('accent'),
+          hover: v('accent-hover'),
+          text: v('accent-text'),
+          fg: v('accent-fg'),
         },
-        text: {
-          primary: 'rgb(var(--text-primary) / <alpha-value>)',
-          secondary: 'rgb(var(--text-secondary) / <alpha-value>)',
-          tertiary: 'rgb(var(--text-tertiary) / <alpha-value>)',
+
+        // ---- Meaning (text color; use /10 or /12 for tinted backgrounds) ----
+        green: v('green'),
+        blue: v('blue'),
+        red: v('red'),
+        amber: v('amber'),
+        violet: v('violet'),
+        gray: v('gray'),
+
+        // ---- Older names, mapped onto the new palette ----
+        surface: {
+          DEFAULT: v('bg'),
+          50: v('panel'),
+          100: v('panel'),
+          200: v('panel-2'),
+          300: v('line'),
+          400: v('line-strong'),
         },
-        // Rim/divider color: white in dark, black in light. Used for subtle borders.
-        rim: 'rgb(var(--rim) / <alpha-value>)',
+        text: { primary: v('fg'), secondary: v('fg-2'), tertiary: v('fg-3') },
+        rim: v('rim'),
         status: {
-          active: '#34D399',
-          paused: '#FBBF24',
-          complete: '#60A5FA',
-          archived: '#9B9A97',
-          paid: '#34D399',
-          sent: '#60A5FA',
-          overdue: '#F87171',
-          draft: '#9B9A97',
+          active: v('green'),
+          paused: v('amber'),
+          complete: v('blue'),
+          archived: v('gray'),
+          paid: v('green'),
+          sent: v('blue'),
+          overdue: v('red'),
+          draft: v('gray'),
         },
       },
       fontFamily: {
-        sans: ['Outfit', 'Geist', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
-        mono: ['DM Mono', 'SF Mono', 'monospace'],
+        // San Francisco everywhere. -apple-system picks the Text or Display cut by size.
+        sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"', '"Helvetica Neue"', 'Arial', 'sans-serif'],
+        display: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Display"', '"Helvetica Neue"', 'Arial', 'sans-serif'],
+        mono: ['ui-monospace', '"SF Mono"', 'Menlo', 'monospace'],
+      },
+      fontSize: {
+        '2xs': ['11px', { lineHeight: '14px' }],
+        xs: ['12px', { lineHeight: '16px' }],
+        sm: ['13px', { lineHeight: '18px' }],
+        base: ['14px', { lineHeight: '20px' }],
+        lg: ['16px', { lineHeight: '22px' }],
+        xl: ['18px', { lineHeight: '24px' }],
+        '2xl': ['22px', { lineHeight: '28px' }],
+        '3xl': ['28px', { lineHeight: '34px' }],
+      },
+      // Hairlines: one device pixel on Retina, one pixel elsewhere
+      borderWidth: {
+        DEFAULT: '0.5px',
+        hair: '0.5px',
+      },
+      borderRadius: {
+        card: '10px',
+        tile: '6px',
+      },
+      opacity: {
+        12: '0.12',
+        35: '0.35',
+        45: '0.45',
+        55: '0.55',
+        65: '0.65',
+        85: '0.85',
       },
       boxShadow: {
-        'inner-soft': 'inset 0 1px 2px rgba(0,0,0,0.3), inset 0 -1px 1px rgba(255,255,255,0.03)',
-        'card': '0 2px 8px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.2)',
-        'card-hover': '0 4px 16px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.3)',
-        'glow': '0 0 20px rgba(245, 166, 35, 0.15)',
+        card: 'var(--shadow-card)',
+        pop: 'var(--shadow-pop)',
+        focus: '0 0 0 3px rgb(var(--accent) / 0.35)',
+      },
+      keyframes: {
+        'fade-in': { from: { opacity: '0' }, to: { opacity: '1' } },
       },
       animation: {
-        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-        'count-up': 'countUp 0.5s ease-out',
+        'fade-in': 'fade-in 120ms ease-out',
       },
     },
   },

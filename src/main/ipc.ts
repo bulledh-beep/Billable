@@ -1,4 +1,4 @@
-import { ipcMain, dialog, BrowserWindow } from 'electron'
+import { ipcMain, dialog, BrowserWindow, nativeTheme } from 'electron'
 import { app } from 'electron'
 import fs from 'fs'
 import path from 'path'
@@ -13,14 +13,23 @@ import {
   setProfileAvatar, clearProfileAvatar,
 } from './profiles'
 import { checkForUpdates, downloadAndOpenUpdate, getCachedStatus, installUpdate, getReleaseNotesForTag, getAppBundlePath } from './updater'
+import { getProfileDbPath, getActiveProfileId as activeProfileId } from './profiles'
 
 export function registerIpcHandlers(timerManager: TimerManager) {
+  // ========== Appearance ==========
+  // Keeps native pieces (sidebar material, menus, dialogs) in step with the
+  // theme chosen in Settings.
+  ipcMain.handle('appearance:set', (_, pref: string) => {
+    nativeTheme.themeSource = pref === 'light' || pref === 'dark' ? pref : 'system'
+  })
+
   // ========== Clients ==========
   ipcMain.handle('clients:list', () => db.listClients())
   ipcMain.handle('clients:get', (_, id: number) => db.getClient(id))
   ipcMain.handle('clients:create', (_, data) => db.createClient(data))
   ipcMain.handle('clients:update', (_, id: number, data) => db.updateClient(id, data))
   ipcMain.handle('clients:delete', (_, id: number) => db.deleteClient(id))
+  ipcMain.handle('clients:merge', (_, sourceId: number, targetId: number) => db.mergeClients(sourceId, targetId))
 
   // ========== Projects ==========
   ipcMain.handle('projects:list', (_, clientId?: number) => db.listProjects(clientId))
@@ -41,6 +50,8 @@ export function registerIpcHandlers(timerManager: TimerManager) {
   ipcMain.handle('time:resume', () => timerManager.resume())
   ipcMain.handle('time:active', () => timerManager.getActive())
   ipcMain.handle('time:state', () => ({ active: timerManager.getActive(), paused: timerManager.getPaused() }))
+  ipcMain.handle('time:set-billable', (_, ids: number[], billable: boolean) => db.setEntriesBillable(ids, billable))
+  ipcMain.handle('time:invoiceable', (_, clientId: number, invoiceId?: number | null) => db.listInvoiceableEntries(clientId, invoiceId))
 
   // ========== Invoices ==========
   ipcMain.handle('invoices:list', (_, status?: string) => db.listInvoices(status))
@@ -48,6 +59,13 @@ export function registerIpcHandlers(timerManager: TimerManager) {
   ipcMain.handle('invoices:create', (_, data) => db.createInvoice(data))
   ipcMain.handle('invoices:update', (_, id: number, data) => db.updateInvoice(id, data))
   ipcMain.handle('invoices:delete', (_, id: number) => db.deleteInvoice(id))
+  ipcMain.handle('invoices:mark-sent', (_, ids: number[]) => db.markInvoicesSent(ids))
+  ipcMain.handle('invoices:mark-paid', (_, ids: number[], date?: string, method?: string | null) => db.markInvoicesPaid(ids, date, method))
+  ipcMain.handle('invoices:mark-unpaid', (_, id: number) => db.markInvoiceUnpaid(id))
+
+  // ========== Billing ==========
+  ipcMain.handle('billing:overview', () => db.getBillingOverview())
+  ipcMain.handle('billing:dismiss', (_, key: string) => db.dismissAttention(key))
   ipcMain.handle('invoices:export-pdf', async (_, id: number) => {
     return await generateInvoicePDF(id)
   })
@@ -65,20 +83,22 @@ export function registerIpcHandlers(timerManager: TimerManager) {
   ipcMain.handle('settings:get', () => db.getSettings())
   ipcMain.handle('settings:update', (_, data) => db.updateSettings(data))
 
+  // Export the active profile's database as a single consistent file
   ipcMain.handle('settings:export-db', async () => {
     const win = BrowserWindow.getFocusedWindow()
     if (!win) return null
     const result = await dialog.showSaveDialog(win, {
       title: 'Export Database',
-      defaultPath: `billable-backup-${new Date().toISOString().split('T')[0]}.db`,
+      defaultPath: `billable-backup-${db.localToday()}.db`,
       filters: [{ name: 'SQLite Database', extensions: ['db'] }],
     })
     if (result.canceled || !result.filePath) return null
-    const dbPath = path.join(app.getPath('userData'), 'billable.db')
-    fs.copyFileSync(dbPath, result.filePath)
+    if (fs.existsSync(result.filePath)) fs.unlinkSync(result.filePath)
+    db.getDatabase().exec(`VACUUM INTO '${result.filePath.replace(/'/g, "''")}'`)
     return result.filePath
   })
 
+  // Replace the active profile's database with a backup, keeping a copy of the current one
   ipcMain.handle('settings:import-db', async () => {
     const win = BrowserWindow.getFocusedWindow()
     if (!win) return null
@@ -88,8 +108,26 @@ export function registerIpcHandlers(timerManager: TimerManager) {
       properties: ['openFile'],
     })
     if (result.canceled || result.filePaths.length === 0) return null
-    const dbPath = path.join(app.getPath('userData'), 'billable.db')
-    fs.copyFileSync(result.filePaths[0], dbPath)
+
+    const source = result.filePaths[0]
+    const header = Buffer.alloc(16)
+    const fd = fs.openSync(source, 'r')
+    fs.readSync(fd, header, 0, 16, 0)
+    fs.closeSync(fd)
+    if (header.toString('utf8', 0, 15) !== 'SQLite format 3') {
+      throw new Error('That file is not a Billable database')
+    }
+
+    if (timerManager.getActive()) timerManager.stop()
+    if (!db.backupDatabase('before-import')) {
+      throw new Error("Couldn't back up your current data first, so nothing was replaced.")
+    }
+    db.closeDatabase()
+    const target = getProfileDbPath(activeProfileId())
+    for (const ext of ['-wal', '-shm']) {
+      if (fs.existsSync(target + ext)) fs.unlinkSync(target + ext)
+    }
+    fs.copyFileSync(source, target)
     app.relaunch()
     app.exit()
     return true

@@ -7,6 +7,17 @@ export interface Client {
   default_rate: number
   currency: string
   created_at: string
+  // Money totals (computed)
+  project_count?: number
+  active_project_count?: number
+  unbilled_amount?: number
+  unbilled_hours?: number
+  oldest_unbilled?: string | null
+  outstanding_amount?: number
+  overdue_amount?: number
+  paid_amount?: number
+  invoice_count?: number
+  last_activity?: string | null
 }
 
 export interface Project {
@@ -22,8 +33,18 @@ export interface Project {
   client_name?: string
   client_company?: string
   total_hours?: number
+  /** Same as invoiced_amount (kept for older code). */
   billed_total?: number
   unbilled_hours?: number
+  unbilled_entries?: number
+  /** Unbilled hours at the project's current rate. */
+  unbilled_amount?: number
+  oldest_unbilled?: string | null
+  /** Sum of this project's invoice lines, before tax. */
+  invoiced_amount?: number
+  /** Invoice lines on paid invoices, before tax. */
+  paid_amount?: number
+  last_activity?: string | null
 }
 
 export interface TimeEntry {
@@ -37,13 +58,27 @@ export interface TimeEntry {
   active_since?: string | null
   is_billable: number
   is_invoiced: number
+  invoice_id?: number | null
   created_at: string
   // Joined fields
   project_name?: string
   project_color?: string
+  project_status?: Project['status']
+  client_id?: number
   client_name?: string
   rate?: number
+  invoice_number?: string | null
+  invoice_status?: InvoiceStatus | null
+  billing_state?: BillingState
+  /** Set on a stop result when a sub-minute timer was thrown away. */
+  discarded?: boolean
 }
+
+/** Where a time entry's money is. `invoiced` = flagged by an older version with no invoice link. */
+export type BillingState = 'unbilled' | 'nonbillable' | 'draft' | 'sent' | 'overdue' | 'paid' | 'invoiced'
+
+/** Invoice status as shown. Overdue is derived from the due date. */
+export type InvoiceStatus = 'draft' | 'sent' | 'overdue' | 'paid'
 
 export interface TimerState {
   active: TimeEntry | null
@@ -57,7 +92,9 @@ export interface Invoice {
   invoice_number: string
   issue_date: string
   due_date: string
-  status: 'draft' | 'sent' | 'paid' | 'overdue'
+  status: InvoiceStatus
+  stored_status?: 'draft' | 'sent' | 'paid' | 'overdue'
+  days_past_due?: number
   subtotal: number
   tax_rate: number
   total: number
@@ -73,14 +110,23 @@ export interface Invoice {
   gst_hst_number?: string | null
   gst_hst_rate?: number
   gst_hst_amount?: number
+  sent_at?: string | null
+  line_style?: LineStyle | null
   // Joined fields
   client_name?: string
   client_company?: string
   client_email?: string
   client_address?: string
   project_name?: string
+  entry_count?: number
+  entry_hours?: number
+  project_count?: number
   items?: InvoiceItem[]
+  entries?: TimeEntry[]
 }
+
+/** How the invoice builder turns time into lines. */
+export type LineStyle = 'entry' | 'project' | 'day' | 'manual'
 
 export type CanadianProvince =
   | 'AB' | 'BC' | 'MB' | 'NB' | 'NL' | 'NS' | 'NT' | 'NU' | 'ON' | 'PE' | 'QC' | 'SK' | 'YT'
@@ -128,6 +174,10 @@ export interface InvoiceItem {
   quantity: number
   unit_price: number
   total: number
+  project_id?: number | null
+  /** entry:ID, project:ID or day:YYYY-MM-DD:PROJECT for lines built from time. Null for manual lines. */
+  source_key?: string | null
+  custom_description?: number
 }
 
 // ===== Commission tracking (appointment-setting commissions) =====
@@ -244,11 +294,84 @@ export interface ProfileListResponse {
 }
 
 export interface DashboardStats {
+  hours_today: number
   hours_this_week: number
   hours_this_month: number
   unbilled_hours: number
+  unbilled_amount: number
   outstanding_total: number
+  overdue_total: number
   paid_total: number
+  paid_ytd: number
+}
+
+export interface BillingPipeline {
+  unbilled_amount: number
+  unbilled_hours: number
+  unbilled_entries: number
+  unbilled_projects: number
+  draft_amount: number
+  draft_count: number
+  awaiting_amount: number
+  awaiting_count: number
+  overdue_amount: number
+  overdue_count: number
+  paid_ytd_amount: number
+  paid_ytd_count: number
+}
+
+export interface UnbilledProject {
+  project_id: number
+  project_name: string
+  project_color: string
+  project_status: Project['status']
+  rate: number
+  client_id: number
+  client_name: string
+  entry_count: number
+  hours: number
+  amount: number
+  oldest: string
+  newest: string
+  oldest_day: string
+  age_days: number
+}
+
+export interface UnbilledClient {
+  client_id: number
+  client_name: string
+  amount: number
+  hours: number
+  entry_count: number
+  oldest_day: string
+  projects: UnbilledProject[]
+}
+
+export type AttentionKind = 'overdue' | 'unbilled' | 'draft' | 'accidental_timer' | 'duplicate_clients'
+
+export interface AttentionItem {
+  key: string
+  kind: AttentionKind
+  tone: 'danger' | 'warning' | 'neutral'
+  title: string
+  detail: string
+  amount?: number
+  invoice_id?: number
+  project_id?: number
+  client_id?: number
+  entry_id?: number
+  closed?: boolean
+  oldest_day?: string
+  client_ids?: number[]
+  client_names?: string[]
+}
+
+export interface BillingOverview {
+  today: string
+  pipeline: BillingPipeline
+  ready_to_bill: UnbilledClient[]
+  attention: AttentionItem[]
+  invoices: Invoice[]
 }
 
 export interface TaxOverview {

@@ -1,12 +1,21 @@
-import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
-import { ArrowLeft, Play, Pause, Square, Pencil, Trash2, FileText } from 'lucide-react'
-import Modal from '../components/Modal'
+import { useState, useEffect, useMemo } from 'react'
+import { useParams, useNavigate, Link } from 'react-router-dom'
+import { Play, Trash2, CheckCircle2, Archive, Clock, ChevronRight } from 'lucide-react'
+import PageHeader from '../components/PageHeader'
 import ConfirmDialog from '../components/ConfirmDialog'
 import StatusBadge from '../components/StatusBadge'
-import { formatHours, formatMoney, formatDate, formatTime, formatDuration } from '../utils/format'
-import type { Project, TimeEntry } from '@shared/types'
+import Metric, { MetricStrip } from '../components/Metric'
+import Money from '../components/Money'
+import Menu from '../components/Menu'
+import Segmented from '../components/Segmented'
+import EmptyState from '../components/EmptyState'
+import EntryEditor from '../components/EntryEditor'
+import ProjectForm, { type ProjectFormValues } from '../components/ProjectForm'
+import CloseOutModal, { type CloseOutChoice } from '../components/CloseOutModal'
+import { EntryRow } from './TimeTracking'
+import { formatMoney, formatDay, formatHoursShort, relativeDays, formatDurationShort } from '../utils/format'
+import { notifyBillingChanged } from '../utils/events'
+import type { Client, Invoice, Project, TimeEntry } from '@shared/types'
 import toast from 'react-hot-toast'
 
 interface Props {
@@ -17,365 +26,304 @@ interface Props {
   isTimerRunning: boolean
   isTimerPaused: boolean
   activeEntry: TimeEntry | null
-  elapsed: string
 }
 
-export default function ProjectDetail({
-  onStartTimer,
-  onStopTimer,
-  onPauseTimer,
-  onResumeTimer,
-  isTimerRunning,
-  isTimerPaused,
-  activeEntry,
-  elapsed,
-}: Props) {
+type EntryFilter = 'all' | 'unbilled' | 'billed'
+
+export default function ProjectDetail({ onStartTimer, isTimerRunning, isTimerPaused, activeEntry }: Props) {
   const { id } = useParams()
   const navigate = useNavigate()
   const [project, setProject] = useState<Project | null>(null)
   const [entries, setEntries] = useState<TimeEntry[]>([])
-  const [showEdit, setShowEdit] = useState(false)
+  const [invoices, setInvoices] = useState<Invoice[]>([])
+  const [clients, setClients] = useState<Client[]>([])
+  const [filter, setFilter] = useState<EntryFilter>('all')
+  const [showForm, setShowForm] = useState(false)
   const [showDelete, setShowDelete] = useState(false)
-  const [deleteEntryId, setDeleteEntryId] = useState<number | null>(null)
-  const [editEntry, setEditEntry] = useState<TimeEntry | null>(null)
-  const [editForm, setEditForm] = useState({ description: '', duration_minutes: 0, is_billable: true })
-  const [form, setForm] = useState({ name: '', description: '', rate: 0, status: 'active' as string, color: '#F5A623' })
+  const [closing, setClosing] = useState<{ values: ProjectFormValues } | null>(null)
+  const [editorMode, setEditorMode] = useState<'add' | 'edit' | null>(null)
+  const [editing, setEditing] = useState<TimeEntry | null>(null)
+  const [deleting, setDeleting] = useState<TimeEntry | null>(null)
 
-  useEffect(() => {
-    if (id) loadData(parseInt(id))
-  }, [id])
+  const projectId = id ? parseInt(id) : 0
 
-  // Reload entries when a timer starts/stops so the table stays in sync
-  useEffect(() => {
-    if (id) loadData(parseInt(id))
-  }, [isTimerRunning, isTimerPaused])
+  useEffect(() => { if (projectId) loadData() }, [projectId, isTimerRunning, isTimerPaused])
 
-  const loadData = async (projectId: number) => {
-    const [p, e] = await Promise.all([
+  const loadData = async () => {
+    const [p, e, inv, c] = await Promise.all([
       window.api.projects.get(projectId),
       window.api.time.list(projectId),
+      window.api.invoices.list(),
+      window.api.clients.list(),
     ])
     setProject(p)
     setEntries(e)
-    if (p) setForm({ name: p.name, description: p.description, rate: p.rate, status: p.status, color: p.color })
+    setInvoices(inv)
+    setClients(c)
   }
 
-  const handleUpdate = async () => {
-    if (!project) return
-    await window.api.projects.update(project.id, form)
-    toast.success('Project updated')
-    setShowEdit(false)
-    loadData(project.id)
-  }
+  const reload = () => { loadData(); notifyBillingChanged() }
 
-  const handleDelete = async () => {
-    if (!project) return
-    await window.api.projects.delete(project.id)
-    toast.success('Project deleted')
-    navigate('/projects')
-  }
+  const done = useMemo(() => entries.filter(e => e.end_time), [entries])
+  const visible = useMemo(() => done.filter(e =>
+    filter === 'all' || (filter === 'unbilled' ? e.billing_state === 'unbilled' : !!e.invoice_id || e.billing_state === 'invoiced'),
+  ), [done, filter])
 
-  const handleEditEntrySave = async () => {
-    if (!editEntry || !project) return
-    const newEnd = new Date(new Date(editEntry.start_time).getTime() + editForm.duration_minutes * 60000)
-    await window.api.time.update(editEntry.id, {
-      description: editForm.description,
-      duration_minutes: editForm.duration_minutes,
-      end_time: newEnd.toISOString(),
-      is_billable: editForm.is_billable ? 1 : 0,
-    })
-    toast.success('Entry updated')
-    setEditEntry(null)
-    loadData(project.id)
-  }
-
-  const handleAddTime = async (entryId: number, minutesToAdd: number) => {
-    const entry = entries.find(e => e.id === entryId)
-    if (!entry || !project) return
-    const newDuration = entry.duration_minutes + minutesToAdd
-    const newEnd = new Date(new Date(entry.start_time).getTime() + newDuration * 60000)
-    await window.api.time.update(entryId, {
-      duration_minutes: newDuration,
-      end_time: newEnd.toISOString(),
-    })
-    toast.success(`Added ${minutesToAdd >= 60 ? `${minutesToAdd / 60}h` : `${minutesToAdd}m`}`)
-    loadData(project.id)
-  }
-
-  const handleDeleteEntry = async () => {
-    if (!deleteEntryId || !project) return
-    await window.api.time.delete(deleteEntryId)
-    toast.success('Entry deleted')
-    setDeleteEntryId(null)
-    loadData(project.id)
-  }
+  // Invoices that carry this project's time
+  const projectInvoices = useMemo(() => {
+    const ids = new Set(done.map(e => e.invoice_id).filter(Boolean) as number[])
+    return invoices.filter(i => ids.has(i.id) || i.project_id === projectId)
+  }, [done, invoices, projectId])
 
   if (!project) return null
 
-  const unbilledAmount = (project.unbilled_hours || 0) * project.rate
-  const totalEarned = (project.billed_total || 0) + unbilledAmount
+  const isTimingThis = (isTimerRunning || isTimerPaused) && activeEntry?.project_id === project.id
+  const unbilledIds = done.filter(e => e.billing_state === 'unbilled').map(e => e.id)
+
+  // ---- Project changes (with the close-out check) ----
+  const applyProject = async (values: ProjectFormValues) => {
+    await window.api.projects.update(project.id, values)
+    toast.success('Project updated')
+    reload()
+  }
+
+  const handleSubmit = async (values: ProjectFormValues) => {
+    setShowForm(false)
+    const closingNow = (values.status === 'complete' || values.status === 'archived') && values.status !== project.status
+    if (closingNow && unbilledIds.length > 0) {
+      setClosing({ values })
+      return
+    }
+    await applyProject(values)
+  }
+
+  const changeStatus = (status: Project['status']) => handleSubmit({
+    client_id: project.client_id, name: project.name, description: project.description,
+    rate: project.rate, status, color: project.color,
+  })
+
+  const handleCloseOut = async (choice: CloseOutChoice) => {
+    if (!closing) return
+    const { values } = closing
+    setClosing(null)
+    await window.api.projects.update(project.id, values)
+    if (choice === 'dont-bill') {
+      await window.api.time.setBillable(unbilledIds, false)
+      toast.success(`Project marked ${values.status}. Its leftover time won't be billed.`)
+    } else if (choice === 'invoice') {
+      notifyBillingChanged()
+      navigate(`/invoices/new?project_id=${project.id}`)
+      return
+    } else {
+      toast.success(`Project marked ${values.status}. Its unbilled time stays on your Billing page.`)
+    }
+    reload()
+  }
+
+  const handleDeleteProject = async () => {
+    await window.api.projects.delete(project.id)
+    toast.success('Project deleted')
+    notifyBillingChanged()
+    navigate('/projects')
+  }
+
+  const handleAddTime = async (entry: TimeEntry, minutes: number) => {
+    const newDuration = entry.duration_minutes + minutes
+    const newEnd = new Date(new Date(entry.start_time).getTime() + newDuration * 60_000)
+    await window.api.time.update(entry.id, { duration_minutes: newDuration, end_time: newEnd.toISOString() })
+    toast.success(`Added ${formatDurationShort(minutes)}`)
+    reload()
+  }
+
+  const handleDeleteEntry = async () => {
+    if (!deleting) return
+    await window.api.time.delete(deleting.id)
+    toast.success('Entry deleted')
+    setDeleting(null)
+    reload()
+  }
+
+  const counts = {
+    all: done.length,
+    unbilled: unbilledIds.length,
+    billed: done.filter(e => !!e.invoice_id || e.billing_state === 'invoiced').length,
+  }
+  const unbilledAmount = project.unbilled_amount || 0
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-8">
-      <button
-        onClick={() => navigate('/projects')}
-        className="flex items-center gap-1.5 text-sm text-text-secondary hover:text-text-primary transition-colors mb-6"
-      >
-        <ArrowLeft className="w-4 h-4" /> Projects
-      </button>
+    <div className="page">
+      <PageHeader
+        crumbs={[{ label: 'Projects', to: '/projects' }]}
+        title={project.name}
+        subtitle={project.client_name}
+        meta={<StatusBadge status={project.status} />}
+        actions={
+          <>
+            {unbilledAmount > 0 && (
+              <button onClick={() => navigate(`/invoices/new?project_id=${project.id}`)} className="btn-secondary" title="Bill this project's unbilled time">
+                Create invoice
+              </button>
+            )}
+            <button onClick={() => setShowForm(true)} className="btn-secondary">Edit</button>
+            <Menu
+              items={[
+                project.status !== 'complete' && { label: 'Mark complete', icon: CheckCircle2, onClick: () => changeStatus('complete') },
+                project.status !== 'active' && { label: 'Mark active', icon: Play, onClick: () => changeStatus('active') },
+                project.status !== 'archived' && { label: 'Archive', icon: Archive, onClick: () => changeStatus('archived') },
+                'separator',
+                { label: 'Delete project', icon: Trash2, danger: true, onClick: () => setShowDelete(true) },
+              ]}
+            />
+          </>
+        }
+      />
 
-      <div className="flex items-start justify-between mb-8">
-        <div className="flex items-start gap-4">
-          <div className="w-4 h-4 rounded-full mt-2" style={{ backgroundColor: project.color }} />
-          <div>
-            <h1 className="text-2xl font-bold text-text-primary">{project.name}</h1>
-            <p className="text-sm text-text-secondary">{project.client_name} · {formatMoney(project.rate)}/hr</p>
-            {project.description && <p className="text-sm text-text-tertiary mt-1">{project.description}</p>}
+      {/* Identity */}
+      <div className="flex items-start gap-3 mb-5">
+        <span className="w-3 h-3 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: project.color }} />
+        <div className="min-w-0">
+          <div className="text-sm text-fg-2">
+            <Link to={`/clients/${project.client_id}`} className="font-medium text-fg hover:underline underline-offset-2">{project.client_name}</Link>
+            <span className="text-fg-4"> · </span>
+            <span className="num">{formatMoney(project.rate)}</span>/hr
+            {project.last_activity && <><span className="text-fg-4"> · </span>last tracked {relativeDays(project.last_activity)}</>}
           </div>
+          {project.description && <p className="text-sm text-fg-3 mt-1 max-w-2xl">{project.description}</p>}
         </div>
-        <div className="flex items-center gap-2">
-          <StatusBadge status={project.status} />
-          {(isTimerRunning || isTimerPaused) && activeEntry?.project_id === project.id ? (
+      </div>
+
+      <MetricStrip className="mb-5">
+        <Metric label="Tracked" value={formatHoursShort(project.total_hours || 0)} sub={`${done.length} ${done.length === 1 ? 'entry' : 'entries'}`} />
+        <Metric
+          label="Unbilled"
+          value={<Money amount={unbilledAmount} />}
+          sub={unbilledAmount > 0 ? `${formatHoursShort(project.unbilled_hours || 0)} since ${formatDay(project.oldest_unbilled || '')}` : 'All time is billed'}
+        />
+        <Metric label="Invoiced" value={<Money amount={project.invoiced_amount || 0} />} sub="Before tax" />
+        <Metric label="Paid" value={<Money amount={project.paid_amount || 0} />} sub={`${projectInvoices.filter(i => i.status === 'paid').length} paid invoice${projectInvoices.filter(i => i.status === 'paid').length === 1 ? '' : 's'}`} />
+      </MetricStrip>
+
+      <div className="grid grid-cols-[minmax(0,1fr)_280px] gap-6 items-start">
+        {/* Time entries */}
+        <section className="min-w-0">
+          <div className="group-head">
+            <h2 className="section-title">Time entries</h2>
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => isTimerPaused ? onResumeTimer() : onPauseTimer()}
-                className={`${isTimerPaused ? 'btn-primary' : 'btn-secondary'} flex items-center gap-2`}
-              >
-                {isTimerPaused
-                  ? <Play className="w-4 h-4 fill-current" />
-                  : <Pause className="w-4 h-4 fill-current" />}
-                {isTimerPaused ? 'Resume' : 'Pause'} {elapsed}
-              </button>
-              <button onClick={() => onStopTimer()} className="btn-danger flex items-center gap-2">
-                <Square className="w-4 h-4 fill-current" /> Stop
-              </button>
+              <Segmented
+                value={filter}
+                onChange={setFilter}
+                options={[
+                  { value: 'all', label: 'All', count: counts.all },
+                  { value: 'unbilled', label: 'Unbilled', count: counts.unbilled },
+                  { value: 'billed', label: 'Invoiced', count: counts.billed },
+                ]}
+              />
+              <button onClick={() => { setEditing(null); setEditorMode('add') }} className="btn-secondary btn-sm">Add time</button>
+              {!isTimingThis && project.status === 'active' && (
+                <button onClick={() => onStartTimer(project.id)} className="btn-secondary btn-sm"><Play className="!w-2.5 !h-2.5 text-accent fill-current" /> Start timer</button>
+              )}
             </div>
+          </div>
+          <div className="card overflow-hidden">
+          {visible.length === 0 ? (
+            <EmptyState
+              compact
+              icon={Clock}
+              title={done.length === 0 ? 'No time on this project yet' : 'Nothing here'}
+              description={done.length === 0 ? 'Start a timer or add time by hand.' : 'Try another filter.'}
+            />
           ) : (
-            <button onClick={() => onStartTimer(project.id)} className="btn-primary flex items-center gap-2">
-              <Play className="w-4 h-4" /> Start Timer
-            </button>
+            visible.map(entry => (
+              <EntryRow
+                key={entry.id}
+                entry={entry}
+                showProject={false}
+                onEdit={() => { setEditing(entry); setEditorMode('edit') }}
+                onDelete={() => setDeleting(entry)}
+                onRestart={() => onStartTimer(entry.project_id, entry.description)}
+                onAddTime={m => handleAddTime(entry, m)}
+                onSetBillable={async b => { await window.api.time.setBillable([entry.id], b); reload() }}
+              />
+            ))
           )}
-          <button onClick={() => setShowEdit(true)} className="btn-secondary p-2">
-            <Pencil className="w-4 h-4" />
-          </button>
-          <button onClick={() => setShowDelete(true)} className="btn-danger p-2">
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-5 gap-4 mb-8">
-        <div className="glass-panel p-4">
-          <div className="text-xs text-text-tertiary mb-1">Total Hours</div>
-          <div className="font-mono text-lg font-semibold">{formatHours(project.total_hours || 0)}h</div>
-        </div>
-        <div className="glass-panel p-4">
-          <div className="text-xs text-text-tertiary mb-1">Total Earned</div>
-          <div className="font-mono text-lg font-semibold text-accent">{formatMoney(totalEarned)}</div>
-        </div>
-        <div className="glass-panel p-4">
-          <div className="text-xs text-text-tertiary mb-1">Billed</div>
-          <div className="font-mono text-lg font-semibold text-status-paid">{formatMoney(project.billed_total || 0)}</div>
-        </div>
-        <div className="glass-panel p-4">
-          <div className="text-xs text-text-tertiary mb-1">Unbilled Hours</div>
-          <div className="font-mono text-lg font-semibold text-status-paused">{formatHours(project.unbilled_hours || 0)}h</div>
-        </div>
-        <div className="glass-panel p-4">
-          <div className="text-xs text-text-tertiary mb-1">Unbilled Amount</div>
-          <div className="font-mono text-lg font-semibold text-accent">{formatMoney(unbilledAmount)}</div>
-        </div>
-      </div>
-
-      {/* Generate invoice button */}
-      {(project.unbilled_hours || 0) > 0 && (
-        <div className="mb-6">
-          <button
-            onClick={() => navigate(`/invoices/new?project_id=${project.id}`)}
-            className="btn-primary flex items-center gap-2"
-          >
-            <FileText className="w-4 h-4" /> Generate Invoice ({formatMoney(unbilledAmount)})
-          </button>
-        </div>
-      )}
-
-      {/* Time Entries Table */}
-      <h2 className="text-sm font-semibold text-text-primary mb-3">Time Entries</h2>
-      <div className="glass-panel overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-rim/[0.04]">
-              <th className="text-left px-4 py-3 text-xs font-medium text-text-tertiary">Date</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-text-tertiary">Description</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-text-tertiary">Time</th>
-              <th className="text-right px-4 py-3 text-xs font-medium text-text-tertiary">Duration</th>
-              <th className="text-right px-4 py-3 text-xs font-medium text-text-tertiary">Amount</th>
-              <th className="w-48"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.filter((e: any) => e.end_time).map((entry: any) => (
-              <tr key={entry.id} className="border-b border-rim/[0.02] hover:bg-surface-200/30 transition-colors">
-                <td className="px-4 py-3 text-sm text-text-secondary">{formatDate(entry.start_time)}</td>
-                <td className="px-4 py-3 text-sm text-text-primary">{entry.description || '—'}</td>
-                <td className="px-4 py-3 text-sm text-text-tertiary font-mono">
-                  {formatTime(entry.start_time)} – {entry.end_time ? formatTime(entry.end_time) : '...'}
-                </td>
-                <td className="px-4 py-3 text-sm text-text-primary font-mono text-right">
-                  {formatDuration(entry.duration_minutes)}
-                </td>
-                <td className="px-4 py-3 text-sm font-mono text-right text-text-primary">
-                  {formatMoney((entry.duration_minutes / 60) * project.rate)}
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-0.5 justify-end">
-                    {[15, 30, 60].map(mins => (
-                      <button
-                        key={mins}
-                        onClick={() => handleAddTime(entry.id, mins)}
-                        className="px-1.5 py-0.5 text-[10px] font-mono font-medium text-text-tertiary hover:text-accent
-                                   hover:bg-accent/10 rounded transition-colors"
-                        title={`Add ${mins >= 60 ? `${mins / 60}h` : `${mins}m`}`}
-                      >
-                        +{mins >= 60 ? `${mins / 60}h` : `${mins}m`}
-                      </button>
-                    ))}
-                    <div className="w-px h-4 bg-rim/[0.04] mx-0.5" />
-                    <button
-                      onClick={() => {
-                        setEditEntry(entry)
-                        setEditForm({
-                          description: entry.description || '',
-                          duration_minutes: entry.duration_minutes,
-                          is_billable: !!entry.is_billable,
-                        })
-                      }}
-                      className="p-1.5 hover:bg-surface-300 rounded transition-colors"
-                    >
-                      <Pencil className="w-3.5 h-3.5 text-text-tertiary" />
-                    </button>
-                    <button
-                      onClick={() => setDeleteEntryId(entry.id)}
-                      className="p-1.5 hover:bg-red-500/10 rounded transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5 text-text-tertiary hover:text-red-400" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {entries.filter((e: any) => e.end_time).length === 0 && (
-          <p className="text-sm text-text-tertiary text-center py-8">No time entries yet</p>
-        )}
-      </div>
-
-      {/* Edit Modal */}
-      <Modal isOpen={showEdit} onClose={() => setShowEdit(false)} title="Edit Project">
-        <div className="space-y-4">
-          <div>
-            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Name</label>
-            <input className="input-field" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
           </div>
-          <div>
-            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Description</label>
-            <textarea className="input-field" rows={2} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-medium text-text-secondary mb-1.5 block">Rate</label>
-              <input className="input-field" type="number" value={form.rate || ''} onChange={e => setForm(f => ({ ...f, rate: parseFloat(e.target.value) || 0 }))} />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-text-secondary mb-1.5 block">Status</label>
-              <select className="input-field" value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
-                <option value="active">Active</option>
-                <option value="paused">Paused</option>
-                <option value="complete">Complete</option>
-                <option value="archived">Archived</option>
-              </select>
-            </div>
-          </div>
-          <div className="flex justify-end gap-3 pt-2">
-            <button onClick={() => setShowEdit(false)} className="btn-secondary">Cancel</button>
-            <button onClick={handleUpdate} className="btn-primary">Save Changes</button>
-          </div>
-        </div>
-      </Modal>
+        </section>
 
-      {/* Edit Time Entry Modal */}
-      <Modal isOpen={!!editEntry} onClose={() => setEditEntry(null)} title="Edit Time Entry" size="sm">
-        <div className="space-y-4">
-          <div>
-            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Description</label>
-            <input
-              className="input-field"
-              value={editForm.description}
-              onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
-              placeholder="What did you work on?"
-            />
+        {/* Invoices */}
+        <section>
+          <div className="group-head">
+            <h2 className="section-title">
+              Invoices <span className="ml-1 font-normal text-fg-3 num">{projectInvoices.length}</span>
+            </h2>
           </div>
-          <div>
-            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Duration (minutes)</label>
-            <input
-              className="input-field"
-              type="number"
-              value={editForm.duration_minutes ? Math.round(editForm.duration_minutes) : ''}
-              onChange={e => setEditForm(f => ({ ...f, duration_minutes: parseInt(e.target.value) || 0 }))}
-            />
-            <div className="flex gap-1.5 mt-2">
-              <span className="text-xs text-text-tertiary self-center mr-1">Quick add:</span>
-              {[
-                { label: '+15m', mins: 15 },
-                { label: '+30m', mins: 30 },
-                { label: '+1h', mins: 60 },
-                { label: '+2h', mins: 120 },
-              ].map(({ label, mins }) => (
+          <div className="card overflow-hidden">
+            {projectInvoices.length === 0 ? (
+              <p className="px-4 py-5 text-[13px] text-fg-3 text-center">Not invoiced yet</p>
+            ) : (
+              projectInvoices.map(inv => (
                 <button
-                  key={mins}
-                  type="button"
-                  onClick={() => setEditForm(f => ({ ...f, duration_minutes: f.duration_minutes + mins }))}
-                  className="px-2.5 py-1 text-xs font-mono font-medium text-accent bg-accent/10
-                             hover:bg-accent/20 rounded-md transition-colors"
+                  key={inv.id}
+                  onClick={() => navigate(`/invoices/${inv.id}`)}
+                  className="list-row group w-full flex items-center gap-3 px-4 h-[44px] hover:bg-fg/[0.025] text-left"
                 >
-                  {label}
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] font-medium text-fg">{inv.invoice_number}</div>
+                    <div className="text-xs text-fg-3">{formatDay(inv.issue_date)}</div>
+                  </div>
+                  <div className="text-right flex flex-col items-end gap-0.5">
+                    <div className="text-[13px] num text-fg">{formatMoney(inv.total)}</div>
+                    <StatusBadge status={inv.status} />
+                  </div>
+                  <ChevronRight className="w-3.5 h-3.5 text-fg-4 group-hover:text-fg-3" />
                 </button>
-              ))}
-            </div>
+              ))
+            )}
           </div>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={editForm.is_billable}
-              onChange={e => setEditForm(f => ({ ...f, is_billable: e.target.checked }))}
-              className="rounded border-rim/20 bg-surface-300 text-accent focus:ring-accent"
-            />
-            <span className="text-sm text-text-secondary">Billable</span>
-          </label>
-          <div className="flex justify-end gap-3">
-            <button onClick={() => setEditEntry(null)} className="btn-secondary">Cancel</button>
-            <button onClick={handleEditEntrySave} className="btn-primary">Save</button>
-          </div>
-        </div>
-      </Modal>
+        </section>
+      </div>
+
+      <ProjectForm
+        open={showForm}
+        project={project}
+        clients={clients}
+        onClose={() => setShowForm(false)}
+        onSubmit={handleSubmit}
+      />
+
+      <CloseOutModal
+        project={closing ? project : null}
+        nextStatus={closing?.values.status || 'complete'}
+        onChoose={handleCloseOut}
+        onClose={() => setClosing(null)}
+      />
+
+      <EntryEditor
+        mode={editorMode}
+        entry={editing}
+        projects={[project]}
+        defaultProjectId={project.id}
+        onClose={() => setEditorMode(null)}
+        onSaved={() => { setEditorMode(null); loadData() }}
+      />
 
       <ConfirmDialog
         isOpen={showDelete}
         onClose={() => setShowDelete(false)}
-        onConfirm={handleDelete}
-        title="Delete Project"
-        message="This will permanently delete this project and all its time entries."
+        onConfirm={handleDeleteProject}
+        title={`Delete ${project.name}?`}
+        message="This permanently deletes the project and all of its time entries. Invoices stay, but lose their link to this project."
+        confirmText="Delete project"
       />
 
       <ConfirmDialog
-        isOpen={deleteEntryId !== null}
-        onClose={() => setDeleteEntryId(null)}
+        isOpen={deleting !== null}
+        onClose={() => setDeleting(null)}
         onConfirm={handleDeleteEntry}
-        title="Delete Time Entry"
-        message="Are you sure you want to delete this time entry?"
+        title="Delete this time entry?"
+        message={deleting?.invoice_id
+          ? <>It's on <b className="text-fg">{deleting.invoice_number}</b>. The invoice keeps its lines, but this time will no longer be linked to it.</>
+          : 'This removes the entry for good.'}
       />
-    </motion.div>
+    </div>
   )
 }

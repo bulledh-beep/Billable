@@ -45,6 +45,11 @@ export function createMenu(mainWindow: BrowserWindow, timerManager: TimerManager
           accelerator: 'Cmd+T',
           click: () => mainWindow.webContents.send('navigate', '/time?action=new'),
         },
+        {
+          label: 'New Invoice',
+          accelerator: 'Cmd+Shift+I',
+          click: () => mainWindow.webContents.send('navigate', '/invoices/new'),
+        },
         { type: 'separator' },
         { role: 'close' },
       ],
@@ -110,9 +115,9 @@ export function createMenu(mainWindow: BrowserWindow, timerManager: TimerManager
           click: () => mainWindow.webContents.send('navigate', '/time'),
         },
         {
-          label: 'Invoices',
+          label: 'Billing',
           accelerator: 'Cmd+5',
-          click: () => mainWindow.webContents.send('navigate', '/invoices'),
+          click: () => mainWindow.webContents.send('navigate', '/billing'),
         },
         {
           label: 'Reports',

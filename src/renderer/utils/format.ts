@@ -1,14 +1,29 @@
 export function formatMoney(amount: number, currency: string = 'USD'): string {
-  return new Intl.NumberFormat('en-US', {
+  // en-CA renders CAD as "$" (en-US would show "CA$")
+  const locale = currency === 'CAD' ? 'en-CA' : 'en-US'
+  return new Intl.NumberFormat(locale, {
     style: 'currency',
     currency,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(amount)
+  }).format(Number(amount) || 0)
+}
+
+/** "$1,154" / "$12.4k" for tight spots like badges and chart axes. */
+export function formatMoneyCompact(amount: number): string {
+  const n = Number(amount) || 0
+  if (Math.abs(n) >= 10_000) return `$${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  return `$${Math.round(n).toLocaleString('en-US')}`
 }
 
 export function formatHours(hours: number): string {
-  return hours.toFixed(1)
+  return (Number(hours) || 0).toFixed(1)
+}
+
+/** Decimal hours shown the same way as durations: "14h 45m", "45m", "3h", "0h". Invoice lines keep decimals. */
+export function formatHoursShort(hours: number): string {
+  const minutes = Math.round((Number(hours) || 0) * 60)
+  return minutes === 0 ? '0h' : formatDurationShort(minutes)
 }
 
 export function formatDuration(minutes: number): string {
@@ -29,36 +44,68 @@ export function formatElapsed(startTime: string): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
+/** Parse "YYYY-MM-DD" as a local day, SQLite "YYYY-MM-DD HH:MM:SS" as UTC, anything else natively. */
+export function toDate(dateStr: string): Date {
+  const s = String(dateStr || '')
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return parseLocalDate(s)
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)) return new Date(s.replace(' ', 'T') + 'Z')
+  return new Date(s)
+}
+
 export function formatDate(dateStr: string): string {
-  const date = new Date(dateStr)
-  return date.toLocaleDateString('en-US', {
+  if (!dateStr) return ''
+  return toDate(dateStr).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
   })
 }
 
+/** "Jun 12", or "Jun 12, 2025" outside the current year. */
+export function formatDay(dateStr: string): string {
+  if (!dateStr) return ''
+  const d = toDate(dateStr)
+  const sameYear = d.getFullYear() === new Date().getFullYear()
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) })
+}
+
+/** Whole days from dateStr to today (positive = in the past). */
+export function daysSince(dateStr: string): number {
+  const d = toDate(dateStr)
+  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  return Math.round((today - day) / 86_400_000)
+}
+
+/** "today", "yesterday", "12 days ago", "in 3 days". */
+export function relativeDays(dateStr: string): string {
+  const n = daysSince(dateStr)
+  if (n === 0) return 'today'
+  if (n === 1) return 'yesterday'
+  if (n === -1) return 'tomorrow'
+  if (n > 1) return `${n} days ago`
+  return `in ${-n} days`
+}
+
 export function formatTime(dateStr: string): string {
-  const date = new Date(dateStr)
-  return date.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  return toDate(dateStr).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 }
 
 export function formatRelative(dateStr: string): string {
-  const date = new Date(dateStr)
+  const date = toDate(dateStr)
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
   const diffMins = Math.floor(diffMs / 60000)
   const diffHours = Math.floor(diffMs / 3600000)
-  const diffDays = Math.floor(diffMs / 86400000)
 
   if (diffMins < 1) return 'Just now'
   if (diffMins < 60) return `${diffMins}m ago`
-  if (diffHours < 24) return `${diffHours}h ago`
-  if (diffDays < 7) return `${diffDays}d ago`
-  return formatDate(dateStr)
+  if (diffHours < 24 && daysSince(dateStr) === 0) return `${diffHours}h ago`
+  const days = daysSince(dateStr)
+  if (days === 1) return 'Yesterday'
+  if (days < 7) return `${days}d ago`
+  return formatDay(dateStr)
 }
 
 export function getInitials(name: string): string {

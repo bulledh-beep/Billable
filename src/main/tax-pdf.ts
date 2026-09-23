@@ -4,13 +4,13 @@ import fs from 'fs'
 import { getTaxOverview, getTaxSettings, getSettings } from './database'
 
 const CATEGORY_LABELS: Record<string, string> = {
-  equipment: 'Equipment / Hardware',
-  software: 'Software / Subscriptions',
-  home_office: 'Home Office',
-  phone_internet: 'Phone & Internet',
+  equipment: 'Equipment and hardware',
+  software: 'Software and subscriptions',
+  home_office: 'Home office',
+  phone_internet: 'Phone and internet',
   travel: 'Travel',
-  meals: 'Meals & Entertainment',
-  professional_development: 'Professional Development',
+  meals: 'Meals and entertainment',
+  professional_development: 'Professional development',
   other: 'Other',
 }
 
@@ -38,6 +38,13 @@ export async function generateTaxSummaryPDF(taxYear: number): Promise<string | n
       margins: { top: 0, bottom: 0, left: 0, right: 0 },
     })
 
+    // Dev/test hook: write straight to a folder instead of asking
+    if (process.env.BILLABLE_EXPORT_DIR) {
+      const out = path.join(process.env.BILLABLE_EXPORT_DIR, `tax-summary-${taxYear}.pdf`)
+      fs.writeFileSync(out, Buffer.from(pdfData))
+      return out
+    }
+
     const defaultPath = path.join(app.getPath('downloads'), `tax-summary-${taxYear}.pdf`)
     const { filePath: savePath } = await dialog.showSaveDialog({
       title: 'Save Tax Summary PDF',
@@ -60,7 +67,6 @@ function generateTaxSummaryHTML(
   appSettings: any,
   taxYear: number,
 ): string {
-  const accent = '#F5A623'
   const currency = taxSettings?.currency || appSettings?.default_currency || 'CAD'
   const businessName = taxSettings?.business_name || appSettings?.business_name || 'Your Business'
   const businessAddress = taxSettings?.business_address || appSettings?.business_address || ''
@@ -79,122 +85,86 @@ function generateTaxSummaryHTML(
   const expenseRows = overview.expenses_by_category.length
     ? overview.expenses_by_category.map(e => `
       <tr>
-        <td style="padding: 10px 14px; border-bottom: 1px solid #e5e7eb; font-size: 13px;">
-          ${escape(CATEGORY_LABELS[e.category] || e.category)}
-          <span style="color: #9ca3af; font-size: 11px; margin-left: 6px;">(${e.count})</span>
-        </td>
-        <td style="padding: 10px 14px; border-bottom: 1px solid #e5e7eb; font-size: 13px; font-family: 'SF Mono', monospace; text-align: right;">${fmt(e.total)}</td>
-      </tr>
-    `).join('')
-    : `<tr><td colspan="2" style="padding: 14px; text-align: center; color: #9ca3af; font-size: 13px;">No expenses logged for ${taxYear}.</td></tr>`
+        <td>${escape(CATEGORY_LABELS[e.category] || e.category)} <span class="faint">${e.count} item${e.count === 1 ? '' : 's'}</span></td>
+        <td class="num">${fmt(e.total)}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="2" class="faint">No expenses logged for ${taxYear}.</td></tr>`
+
+  const now = new Date()
+  const generated = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <style>
+    @page { size: A4; margin: 0; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, Arial, sans-serif;
-      color: #1a1a1a;
-      background: white;
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
-    }
-    .row { display: flex; justify-content: space-between; padding: 8px 0; font-size: 14px; }
-    .row .label { color: #4b5563; }
-    .row .num { font-family: 'SF Mono', monospace; }
-    h1 { font-size: 28px; font-weight: 700; color: ${accent}; letter-spacing: 1px; }
-    h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; color: #6b7280; margin-bottom: 12px; }
-    .panel { padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 20px; background: #fafafa; }
-    .total-row { border-top: 2px solid #1a1a1a; padding-top: 12px; margin-top: 8px; font-size: 16px; font-weight: 700; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif; color: #18181b; background: #fff; font-size: 12.5px; line-height: 1.5; font-variant-numeric: tabular-nums; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .page { padding: 52px 56px 48px; }
+    .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 32px; margin-bottom: 36px; }
+    .title { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; }
+    .muted { color: #52525b; }
+    .faint { color: #a1a1aa; }
+    .section { margin-bottom: 26px; }
+    .label { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #71717a; padding-bottom: 8px; border-bottom: 1.5px solid #18181b; margin-bottom: 2px; }
+    .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #f0f0f2; }
+    .row span:first-child { color: #52525b; }
+    .row.total { border-bottom: none; border-top: 1.5px solid #18181b; margin-top: 4px; padding-top: 10px; font-size: 15px; font-weight: 600; }
+    .row.total span:first-child { color: #18181b; }
+    table { width: 100%; border-collapse: collapse; }
+    td { padding: 8px 0; border-bottom: 1px solid #f0f0f2; }
+    td.num { text-align: right; }
+    tfoot td { border-bottom: none; border-top: 1.5px solid #18181b; padding-top: 10px; font-weight: 600; font-size: 14px; }
+    .setaside { background: #fff8eb; border: 1px solid #f5d9a8; border-radius: 8px; padding: 16px 18px; }
+    .setaside .row { border-bottom-color: #f5e6c8; }
+    .note { margin-top: 30px; font-size: 11px; color: #71717a; line-height: 1.6; }
   </style>
 </head>
 <body>
-  <div style="padding: 0;">
-    <div style="height: 4px; background: ${accent};"></div>
-    <div style="padding: 48px;">
-      <!-- Header -->
-      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px;">
-        <div>
-          <h1>TAX SUMMARY</h1>
-          <p style="font-size: 14px; color: #6b7280; margin-top: 6px;">For tax year ${taxYear}</p>
-        </div>
-        <div style="text-align: right;">
-          <p style="font-size: 16px; font-weight: 600;">${escape(businessName)}</p>
-          ${businessAddress ? `<p style="font-size: 12px; color: #6b7280; white-space: pre-line; margin-top: 4px;">${escape(businessAddress)}</p>` : ''}
-          ${province ? `<p style="font-size: 12px; color: #6b7280;">Province: ${escape(province)}</p>` : ''}
-          ${gstNumber ? `<p style="font-size: 12px; color: #6b7280; font-family: 'SF Mono', monospace;">GST/HST: ${escape(gstNumber)}</p>` : ''}
-          <p style="font-size: 11px; color: #9ca3af; margin-top: 6px;">Generated ${new Date().toLocaleDateString('en-CA')}</p>
-        </div>
+  <div class="page">
+    <div class="top">
+      <div>
+        <div class="title">Tax summary</div>
+        <div class="muted" style="margin-top: 6px;">For the ${taxYear} tax year</div>
       </div>
-
-      <!-- Income -->
-      <div class="panel">
-        <h2>Income</h2>
-        <div class="row">
-          <span class="label">Total invoiced (${overview.invoice_count} invoice${overview.invoice_count === 1 ? '' : 's'})</span>
-          <span class="num">${fmt(overview.total_invoiced)}</span>
-        </div>
-        <div class="row">
-          <span class="label">Paid (${overview.paid_count})</span>
-          <span class="num">${fmt(overview.total_paid)}</span>
-        </div>
-        <div class="row">
-          <span class="label">Outstanding</span>
-          <span class="num" style="color: #b45309;">${fmt(overview.total_outstanding)}</span>
-        </div>
-        <div class="row">
-          <span class="label">GST/HST collected (paid invoices)</span>
-          <span class="num">${fmt(overview.gst_collected_paid)}</span>
-        </div>
-        <div class="row total-row">
-          <span>Net business income (paid − GST − expenses)</span>
-          <span class="num" style="color: ${accent};">${fmt(netIncome)}</span>
-        </div>
-      </div>
-
-      <!-- Expenses -->
-      <div class="panel" style="padding: 0; overflow: hidden;">
-        <div style="padding: 20px 20px 0;">
-          <h2>Expenses by Category</h2>
-        </div>
-        <table style="width: 100%; border-collapse: collapse; margin-top: 4px;">
-          <tbody>${expenseRows}</tbody>
-          <tfoot>
-            <tr>
-              <td style="padding: 14px; font-size: 14px; font-weight: 600;">Total deductible</td>
-              <td style="padding: 14px; font-size: 14px; font-weight: 700; font-family: 'SF Mono', monospace; text-align: right;">${fmt(overview.total_expenses)}</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-
-      <!-- Estimates -->
-      <div class="panel" style="background: #fff8eb; border-color: ${accent};">
-        <h2>Set-Aside Estimates</h2>
-        <div class="row">
-          <span class="label">GST/HST collected to remit</span>
-          <span class="num">${fmt(overview.gst_collected_paid)}</span>
-        </div>
-        <div class="row">
-          <span class="label">Estimated income tax @ ${incomeTaxBracket}%</span>
-          <span class="num">${fmt(incomeTaxEstimate)}</span>
-        </div>
-        <div class="row total-row">
-          <span>Total to set aside (estimate)</span>
-          <span class="num" style="color: ${accent};">${fmt(overview.gst_collected_paid + incomeTaxEstimate)}</span>
-        </div>
-      </div>
-
-      <!-- Disclaimer -->
-      <div style="margin-top: 32px; padding: 16px; background: #f3f4f6; border-radius: 8px;">
-        <p style="font-size: 11px; color: #6b7280; line-height: 1.6;">
-          <strong style="color: #4b5563;">Disclaimer.</strong>
-          This summary is generated from the records you keep in Billable and is intended to help with bookkeeping. It is an estimate only and does not constitute tax, legal, or financial advice. Please consult a CPA or qualified tax professional before filing or remitting.
-        </p>
+      <div style="text-align: right;">
+        <div style="font-size: 14px; font-weight: 600;">${escape(businessName)}</div>
+        ${businessAddress ? `<div class="muted" style="white-space: pre-line;">${escape(businessAddress)}</div>` : ''}
+        ${province ? `<div class="muted">Province: ${escape(province)}</div>` : ''}
+        ${gstNumber ? `<div class="muted">GST/HST ${escape(gstNumber)}</div>` : ''}
+        <div class="faint" style="margin-top: 6px; font-size: 11px;">Prepared ${generated}</div>
       </div>
     </div>
+
+    <div class="section">
+      <div class="label">Income</div>
+      <div class="row"><span>Invoiced, ${overview.invoice_count} invoice${overview.invoice_count === 1 ? '' : 's'}</span><span>${fmt(overview.total_invoiced)}</span></div>
+      <div class="row"><span>Paid, ${overview.paid_count} invoice${overview.paid_count === 1 ? '' : 's'}</span><span>${fmt(overview.total_paid)}</span></div>
+      <div class="row"><span>Outstanding</span><span>${fmt(overview.total_outstanding)}</span></div>
+      <div class="row"><span>GST/HST collected on paid invoices</span><span>${fmt(overview.gst_collected_paid)}</span></div>
+      <div class="row total"><span>Net business income</span><span>${fmt(netIncome)}</span></div>
+      <div class="faint" style="font-size: 11px; margin-top: 4px;">Paid invoices, less GST/HST collected, less deductible expenses.</div>
+    </div>
+
+    <div class="section">
+      <div class="label">Expenses by category</div>
+      <table>
+        <tbody>${expenseRows}</tbody>
+        <tfoot><tr><td>Total deductible</td><td class="num">${fmt(overview.total_expenses)}</td></tr></tfoot>
+      </table>
+    </div>
+
+    <div class="setaside">
+      <div style="font-weight: 600; margin-bottom: 4px;">Suggested set-aside</div>
+      <div class="row"><span>GST/HST to remit</span><span>${fmt(overview.gst_collected_paid)}</span></div>
+      <div class="row"><span>Income tax at ${incomeTaxBracket}%</span><span>${fmt(incomeTaxEstimate)}</span></div>
+      <div class="row total" style="border-top-color: #18181b;"><span>Total to set aside</span><span>${fmt(overview.gst_collected_paid + incomeTaxEstimate)}</span></div>
+    </div>
+
+    <p class="note">
+      Prepared from the records kept in Billable to help with bookkeeping. These are estimates, not tax, legal, or financial advice. Check with an accountant before filing or remitting.
+    </p>
   </div>
 </body>
 </html>`

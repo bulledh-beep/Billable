@@ -21,15 +21,17 @@ interface CategoryOption {
 }
 
 const CATEGORIES: CategoryOption[] = [
-  { value: 'equipment', label: 'Equipment / Hardware' },
-  { value: 'software', label: 'Software / Subscriptions' },
-  { value: 'home_office', label: 'Home Office', hint: 'Use the % of your home used for work' },
-  { value: 'phone_internet', label: 'Phone & Internet' },
+  { value: 'equipment', label: 'Equipment and hardware' },
+  { value: 'software', label: 'Software and subscriptions' },
+  { value: 'home_office', label: 'Home office', hint: 'Enter only the share of your home used for work.' },
+  { value: 'phone_internet', label: 'Phone and internet' },
   { value: 'travel', label: 'Travel' },
-  { value: 'meals', label: 'Meals & Entertainment', hint: '50% deductible — only the deductible half should be entered' },
-  { value: 'professional_development', label: 'Professional Development' },
+  { value: 'meals', label: 'Meals and entertainment', hint: 'Only half is deductible, so enter the deductible half.' },
+  { value: 'professional_development', label: 'Professional development' },
   { value: 'other', label: 'Other' },
 ]
+
+const yearOf = (date: string) => parseInt(String(date).slice(0, 4)) || new Date().getFullYear()
 
 interface FormState {
   date: string
@@ -81,11 +83,11 @@ export default function ExpensePanel({
 
   const handleSave = async () => {
     if (!form.description.trim()) {
-      toast.error('Description is required')
+      toast.error('Add a description')
       return
     }
     if (!form.amount || form.amount <= 0) {
-      toast.error('Amount must be greater than 0')
+      toast.error('Enter an amount above zero')
       return
     }
     setSaving(true)
@@ -93,13 +95,13 @@ export default function ExpensePanel({
       if (isEdit && expense) {
         await window.api.expenses.update(expense.id, {
           ...form,
-          tax_year: new Date(form.date).getFullYear(),
+          tax_year: yearOf(form.date),
         })
         toast.success('Expense updated')
       } else {
         await window.api.expenses.create({
           ...form,
-          tax_year: new Date(form.date).getFullYear(),
+          tax_year: yearOf(form.date),
         })
         toast.success('Expense added')
       }
@@ -113,7 +115,7 @@ export default function ExpensePanel({
 
   const handleDelete = async () => {
     if (!expense) return
-    if (!confirm('Delete this expense? This cannot be undone.')) return
+    if (!confirm('Delete this expense? This can\'t be undone.')) return
     try {
       await window.api.expenses.delete(expense.id)
       toast.success('Expense deleted')
@@ -143,30 +145,27 @@ export default function ExpensePanel({
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 320, opacity: 0 }}
             transition={{ type: 'spring', damping: 28, stiffness: 280 }}
-            className="fixed top-0 right-0 bottom-0 w-[400px] bg-surface-100 border-l border-rim/[0.06] z-50 flex flex-col shadow-2xl"
+            className="fixed top-0 right-0 bottom-0 w-[400px] bg-panel border-l border-line z-50 flex flex-col shadow-pop"
           >
-            <div className="flex items-center justify-between p-5 border-b border-rim/[0.04]">
+            <div className="flex items-center justify-between px-5 h-[52px] border-b border-line">
               <div>
-                <h2 className="text-base font-semibold text-text-primary">
-                  {isEdit ? 'Edit Expense' : 'New Expense'}
+                <h2 className="text-base font-semibold text-fg">
+                  {isEdit ? 'Edit expense' : 'New expense'}
                 </h2>
-                <p className="text-xs text-text-tertiary mt-0.5">
-                  Logged for tax year {new Date(form.date).getFullYear()}
+                <p className="text-xs text-fg-3">
+                  Counts toward {yearOf(form.date)}
                 </p>
               </div>
-              <button
-                onClick={onClose}
-                className="p-1.5 hover:bg-surface-200 rounded-lg transition-colors"
-              >
-                <X className="w-4 h-4 text-text-tertiary" />
+              <button onClick={onClose} className="btn-icon-sm" aria-label="Close">
+                <X />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-4">
               <div>
-                <label className="text-xs font-medium text-text-secondary mb-1.5 block">Date</label>
+                <label className="label">Date</label>
                 <input
-                  className="input-field"
+                  className="input"
                   type="date"
                   value={form.date}
                   onChange={e => update('date', e.target.value)}
@@ -174,9 +173,9 @@ export default function ExpensePanel({
               </div>
 
               <div>
-                <label className="text-xs font-medium text-text-secondary mb-1.5 block">Category</label>
+                <label className="label">Category</label>
                 <select
-                  className="input-field"
+                  className="input"
                   value={form.category}
                   onChange={e => update('category', e.target.value as ExpenseCategory)}
                 >
@@ -185,27 +184,27 @@ export default function ExpensePanel({
                   ))}
                 </select>
                 {categoryHint && (
-                  <p className="text-[10px] text-accent/80 mt-1">{categoryHint}</p>
+                  <p className="hint">{categoryHint}</p>
                 )}
               </div>
 
               <div>
-                <label className="text-xs font-medium text-text-secondary mb-1.5 block">Description</label>
+                <label className="label">Description</label>
                 <input
-                  className="input-field"
+                  className="input"
                   value={form.description}
                   onChange={e => update('description', e.target.value)}
-                  placeholder="e.g. Adobe Creative Cloud, March"
+                  placeholder="Adobe Creative Cloud, March"
                   autoFocus
                 />
               </div>
 
               <div>
-                <label className="text-xs font-medium text-text-secondary mb-1.5 block">Amount</label>
+                <label className="label">Amount</label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-text-tertiary font-mono">$</span>
+                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-fg-3">$</span>
                   <input
-                    className="input-field pl-7 font-mono"
+                    className="input pl-6 num"
                     type="number"
                     step="0.01"
                     value={form.amount || ''}
@@ -216,36 +215,27 @@ export default function ExpensePanel({
               </div>
 
               <div>
-                <label className="text-xs font-medium text-text-secondary mb-1.5 block">Receipt Note</label>
+                <label className="label">Receipt location</label>
                 <input
-                  className="input-field"
+                  className="input"
                   value={form.receipt_note}
                   onChange={e => update('receipt_note', e.target.value)}
-                  placeholder="e.g. Receipt in Dropbox/2025/Mar/"
+                  placeholder="Dropbox/Receipts/2026/March"
                 />
-                <p className="text-[10px] text-text-tertiary mt-1">
-                  A pointer to where the receipt is stored. (Receipt attachments come in Phase 4.)
-                </p>
+                <p className="hint">Where you keep the receipt, so you can find it at tax time.</p>
               </div>
             </div>
 
-            <div className="p-5 border-t border-rim/[0.04] flex items-center justify-between gap-3">
+            <div className="px-5 py-3 border-t border-line flex items-center justify-between gap-3">
               {isEdit ? (
-                <button
-                  onClick={handleDelete}
-                  className="btn-ghost flex items-center gap-2 text-status-overdue hover:bg-red-500/10"
-                >
-                  <Trash2 className="w-4 h-4" /> Delete
+                <button onClick={handleDelete} className="btn-ghost hover:!text-red">
+                  <Trash2 /> Delete
                 </button>
               ) : <div />}
               <div className="flex gap-2">
                 <button onClick={onClose} className="btn-secondary">Cancel</button>
-                <button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className={`btn-primary ${saving ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Expense'}
+                <button onClick={handleSave} disabled={saving} className="btn-primary">
+                  {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Add expense'}
                 </button>
               </div>
             </div>

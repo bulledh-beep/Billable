@@ -1,260 +1,238 @@
-import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
-import { useNavigate } from 'react-router-dom'
-import { Plus, Users, Search, ChevronRight, Trash2, Pencil } from 'lucide-react'
-import Modal from '../components/Modal'
+import { useState, useEffect, useMemo } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Users, Pencil, Trash2, Merge, Copy } from 'lucide-react'
+import PageHeader from '../components/PageHeader'
 import ConfirmDialog from '../components/ConfirmDialog'
 import EmptyState from '../components/EmptyState'
-import { getInitials, getAvatarColor, formatMoney } from '../utils/format'
-import type { Client } from '@shared/types'
+import SearchInput from '../components/SearchInput'
+import Menu from '../components/Menu'
+import ClientForm, { type ClientFormValues } from '../components/ClientForm'
+import MergeClientsModal from '../components/MergeClientsModal'
+import { getInitials, formatMoney, relativeDays } from '../utils/format'
+import { notifyBillingChanged } from '../utils/events'
+import type { AttentionItem, Client } from '@shared/types'
 import toast from 'react-hot-toast'
 
-const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.04 } } }
-const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }
+/** Gray monogram, the way Contacts shows people without a photo. */
+export function ClientAvatar({ name, size = 32 }: { name: string; size?: number }) {
+  return (
+    <div
+      className="rounded-full flex items-center justify-center font-semibold text-white shrink-0"
+      style={{
+        width: size,
+        height: size,
+        fontSize: Math.round(size * 0.4),
+        backgroundImage: 'linear-gradient(180deg, #A9A9AE, #85858B)',
+      }}
+    >
+      {getInitials(name)}
+    </div>
+  )
+}
 
 export default function Clients() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [clients, setClients] = useState<Client[]>([])
+  const [duplicates, setDuplicates] = useState<AttentionItem[]>([])
   const [search, setSearch] = useState('')
-  const [showForm, setShowForm] = useState(false)
+  const [formOpen, setFormOpen] = useState(false)
   const [editClient, setEditClient] = useState<Client | null>(null)
-  const [deleteId, setDeleteId] = useState<number | null>(null)
-  const [form, setForm] = useState({
-    name: '', company: '', email: '', address: '', default_rate: 100, currency: 'USD',
-  })
+  const [deleteClient, setDeleteClient] = useState<Client | null>(null)
+  const [merge, setMerge] = useState<{ source: number; target?: number } | null>(null)
 
   useEffect(() => { loadClients() }, [])
 
-  const loadClients = async () => {
-    const data = await window.api.clients.list()
-    setClients(data)
-  }
-
-  const openNew = () => {
-    setEditClient(null)
-    setForm({ name: '', company: '', email: '', address: '', default_rate: 100, currency: 'USD' })
-    setShowForm(true)
-  }
-
-  const openEdit = (client: Client, e: React.MouseEvent) => {
-    e.stopPropagation()
-    setEditClient(client)
-    setForm({
-      name: client.name,
-      company: client.company,
-      email: client.email,
-      address: client.address,
-      default_rate: client.default_rate,
-      currency: client.currency,
-    })
-    setShowForm(true)
-  }
-
-  const handleSave = async () => {
-    if (!form.name.trim()) return toast.error('Name is required')
-    if (editClient) {
-      const result: any = await window.api.clients.update(editClient.id, form)
-      const cascaded = result?.cascaded_projects || 0
-      if (cascaded > 0) {
-        toast.success(`Client updated · ${cascaded} project${cascaded === 1 ? '' : 's'} repriced`)
-      } else {
-        toast.success('Client updated')
-      }
-    } else {
-      await window.api.clients.create(form)
-      toast.success('Client created')
+  // ⌘N from the menu
+  useEffect(() => {
+    if (searchParams.get('action') === 'new') {
+      setEditClient(null)
+      setFormOpen(true)
+      setSearchParams({}, { replace: true })
     }
-    setShowForm(false)
+  }, [searchParams, setSearchParams])
+
+  const loadClients = async () => {
+    const [data, overview] = await Promise.all([window.api.clients.list(), window.api.billing.overview()])
+    setClients(data)
+    setDuplicates(overview.attention.filter((a: AttentionItem) => a.kind === 'duplicate_clients'))
+  }
+
+  const handleSave = async (values: ClientFormValues) => {
+    if (editClient) {
+      const result: any = await window.api.clients.update(editClient.id, values)
+      const cascaded = result?.cascaded_projects || 0
+      toast.success(cascaded > 0 ? `Client updated · ${cascaded} project${cascaded === 1 ? '' : 's'} moved to the new rate` : 'Client updated')
+    } else {
+      const created = await window.api.clients.create(values)
+      toast.success('Client created')
+      setFormOpen(false)
+      navigate(`/clients/${created.id}`)
+      return
+    }
+    setFormOpen(false)
+    notifyBillingChanged()
     loadClients()
   }
 
   const handleDelete = async () => {
-    if (deleteId) {
-      await window.api.clients.delete(deleteId)
-      toast.success('Client deleted')
-      setDeleteId(null)
-      loadClients()
-    }
+    if (!deleteClient) return
+    await window.api.clients.delete(deleteClient.id)
+    toast.success('Client deleted')
+    setDeleteClient(null)
+    notifyBillingChanged()
+    loadClients()
   }
 
-  const filtered = clients.filter(c =>
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    c.company.toLowerCase().includes(search.toLowerCase())
-  )
+  // Keep the record with more history; fold the other one into it
+  const suggestMerge = ([a, b]: number[]) => {
+    const weight = (id: number) => {
+      const c = clients.find(x => x.id === id)
+      return (c?.invoice_count || 0) * 10 + (c?.project_count || 0)
+    }
+    return weight(a) >= weight(b) ? { source: b, target: a } : { source: a, target: b }
+  }
+
+  const dismissDuplicate = async (key: string) => {
+    await window.api.billing.dismiss(key)
+    setDuplicates(d => d.filter(x => x.key !== key))
+  }
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return clients.filter(c =>
+      !q || c.name.toLowerCase().includes(q) || (c.company || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q))
+  }, [clients, search])
+
+  const totals = useMemo(() => ({
+    unbilled: clients.reduce((s, c) => s + (c.unbilled_amount || 0), 0),
+    outstanding: clients.reduce((s, c) => s + (c.outstanding_amount || 0), 0),
+    paid: clients.reduce((s, c) => s + (c.paid_amount || 0), 0),
+  }), [clients])
 
   return (
-    <motion.div variants={container} initial="hidden" animate="show" className="p-8">
-      <motion.div variants={item} className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-text-primary">Clients</h1>
-          <p className="text-sm text-text-secondary mt-1">{clients.length} total clients</p>
+    <div className="page">
+      <PageHeader
+        title="Clients"
+        actions={<button onClick={() => { setEditClient(null); setFormOpen(true) }} className="btn-secondary">New client</button>}
+      />
+
+      {duplicates.map(d => (
+        <div key={d.key} className="card mb-4 px-4 py-3 flex items-center gap-3">
+          <Copy className="w-4 h-4 text-fg-3 shrink-0" />
+          <p className="text-sm text-fg-2 flex-1">
+            <b className="text-fg">{d.client_names?.[0]}</b> and <b className="text-fg">{d.client_names?.[1]}</b> look like the same client.
+          </p>
+          <button onClick={() => dismissDuplicate(d.key)} className="btn-ghost btn-sm">They're different</button>
+          <button onClick={() => setMerge(suggestMerge(d.client_ids!))} className="btn-secondary btn-sm">
+            Merge
+          </button>
         </div>
-        <button onClick={openNew} className="btn-primary flex items-center gap-2">
-          <Plus className="w-4 h-4" /> Add Client
-        </button>
-      </motion.div>
+      ))}
 
-      {clients.length > 0 && (
-        <motion.div variants={item} className="mb-6">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary" />
-            <input
-              type="text"
-              placeholder="Search clients..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="input-field pl-10"
-            />
-          </div>
-        </motion.div>
-      )}
-
-      {filtered.length === 0 && clients.length === 0 ? (
-        <EmptyState
-          icon={Users}
-          title="No clients yet"
-          description="Add your first client to start tracking time and billing."
-          action={{ label: 'Add Client', onClick: openNew }}
-        />
-      ) : filtered.length === 0 ? (
-        <p className="text-sm text-text-tertiary text-center py-8">No clients match your search</p>
+      {clients.length === 0 ? (
+        <div className="card">
+          <EmptyState
+            icon={Users}
+            title="Add your first client"
+            description="Clients hold your rate, billing address, and projects."
+            action={{ label: 'New client', onClick: () => { setEditClient(null); setFormOpen(true) } }}
+          />
+        </div>
       ) : (
-        <motion.div variants={item} className="space-y-2">
-          {filtered.map(client => (
-            <div
-              key={client.id}
-              onClick={() => navigate(`/clients/${client.id}`)}
-              className="glass-panel-hover p-4 flex items-center gap-4 cursor-pointer group"
-            >
-              <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-semibold text-white flex-shrink-0"
-                style={{ backgroundColor: getAvatarColor(client.name) }}
-              >
-                {getInitials(client.name)}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-text-primary">{client.name}</div>
-                <div className="text-xs text-text-tertiary">{client.company || client.email}</div>
-              </div>
-              <div className="text-right mr-2">
-                <div className="font-mono text-sm text-text-secondary">
-                  {formatMoney(client.default_rate)}/hr
-                </div>
-                <div className="text-xs text-text-tertiary">{client.currency}</div>
-              </div>
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  onClick={(e) => openEdit(client, e)}
-                  className="p-1.5 hover:bg-surface-300 rounded-lg transition-colors"
-                >
-                  <Pencil className="w-3.5 h-3.5 text-text-tertiary" />
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); setDeleteId(client.id) }}
-                  className="p-1.5 hover:bg-red-500/10 rounded-lg transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5 text-red-400" />
-                </button>
-              </div>
-              <ChevronRight className="w-4 h-4 text-text-tertiary" />
+        <>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="text-sm text-fg-3">
+              {clients.length} client{clients.length === 1 ? '' : 's'}
+              {totals.unbilled > 0 && <> · <span className="num text-amber font-medium">{formatMoney(totals.unbilled)}</span> unbilled</>}
+              {totals.outstanding > 0 && <> · <span className="num text-blue font-medium">{formatMoney(totals.outstanding)}</span> outstanding</>}
             </div>
-          ))}
-        </motion.div>
+            <SearchInput value={search} onChange={setSearch} placeholder="Search clients" className="ml-auto w-72" />
+          </div>
+
+          <div className="card">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Client</th>
+                  <th className="text-right">Projects</th>
+                  <th className="text-right">Unbilled</th>
+                  <th className="text-right">Outstanding</th>
+                  <th className="text-right">Paid</th>
+                  <th className="text-right">Rate</th>
+                  <th>Last tracked</th>
+                  <th className="w-10"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(client => (
+                  <tr key={client.id} onClick={() => navigate(`/clients/${client.id}`)} className="row-hover group">
+                    <td>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <ClientAvatar name={client.name} />
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-fg truncate">{client.name}</div>
+                          <div className="text-xs text-fg-3 truncate max-w-[260px]">{client.company || client.email || '—'}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="text-right num text-fg-2">
+                      {client.project_count || 0}
+                      {(client.active_project_count || 0) > 0 && <span className="text-fg-4"> · {client.active_project_count} active</span>}
+                    </td>
+                    <td className="text-right num">
+                      {(client.unbilled_amount || 0) > 0 ? <span className="font-medium text-amber">{formatMoney(client.unbilled_amount || 0)}</span> : <span className="text-fg-4">—</span>}
+                    </td>
+                    <td className="text-right num">
+                      {(client.outstanding_amount || 0) > 0
+                        ? <span className={`font-medium ${(client.overdue_amount || 0) > 0 ? 'text-red' : 'text-blue'}`}>{formatMoney(client.outstanding_amount || 0)}</span>
+                        : <span className="text-fg-4">—</span>}
+                    </td>
+                    <td className="text-right num text-fg-2">
+                      {(client.paid_amount || 0) > 0 ? formatMoney(client.paid_amount || 0) : <span className="text-fg-4">—</span>}
+                    </td>
+                    <td className="text-right num text-fg-2">{formatMoney(client.default_rate)}</td>
+                    <td className="text-fg-3 whitespace-nowrap">{client.last_activity ? relativeDays(client.last_activity) : '—'}</td>
+                    <td onClick={e => e.stopPropagation()}>
+                      <Menu
+                        items={[
+                          { label: 'Edit', icon: Pencil, onClick: () => { setEditClient(client); setFormOpen(true) } },
+                          clients.length > 1 && { label: 'Merge into another client…', icon: Merge, onClick: () => setMerge({ source: client.id }) },
+                          'separator',
+                          { label: 'Delete', icon: Trash2, danger: true, onClick: () => setDeleteClient(client) },
+                        ]}
+                      />
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr><td colSpan={8} className="text-center text-fg-3 !h-20">No clients match</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
-      {/* Client Form Modal */}
-      <Modal
-        isOpen={showForm}
-        onClose={() => setShowForm(false)}
-        title={editClient ? 'Edit Client' : 'New Client'}
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Name *</label>
-            <input
-              className="input-field"
-              value={form.name}
-              onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-              placeholder="Client name"
-              autoFocus
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Company</label>
-            <input
-              className="input-field"
-              value={form.company}
-              onChange={e => setForm(f => ({ ...f, company: e.target.value }))}
-              placeholder="Company name"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Email</label>
-            <input
-              className="input-field"
-              type="email"
-              value={form.email}
-              onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-              placeholder="email@example.com"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Address</label>
-            <textarea
-              className="input-field"
-              rows={2}
-              value={form.address}
-              onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
-              placeholder="Street address, city, state"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-medium text-text-secondary mb-1.5 block">Hourly Rate</label>
-              <input
-                className="input-field"
-                type="number"
-                value={form.default_rate || ''}
-                onChange={e => setForm(f => ({ ...f, default_rate: parseFloat(e.target.value) || 0 }))}
-              />
-              {editClient && form.default_rate !== editClient.default_rate && (
-                <p className="text-xs text-accent/80 mt-1">
-                  Projects still using {formatMoney(editClient.default_rate)}/hr will be updated. Already-invoiced time keeps its original rate.
-                </p>
-              )}
-            </div>
-            <div>
-              <label className="text-xs font-medium text-text-secondary mb-1.5 block">Currency</label>
-              <select
-                className="input-field"
-                value={form.currency}
-                onChange={e => setForm(f => ({ ...f, currency: e.target.value }))}
-              >
-                <option value="USD">USD</option>
-                <option value="EUR">EUR</option>
-                <option value="GBP">GBP</option>
-                <option value="CAD">CAD</option>
-                <option value="AUD">AUD</option>
-                <option value="JPY">JPY</option>
-              </select>
-            </div>
-          </div>
-          <div className="flex justify-end gap-3 pt-2">
-            <button onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button>
-            <button onClick={handleSave} className="btn-primary">
-              {editClient ? 'Update' : 'Create'} Client
-            </button>
-          </div>
-        </div>
-      </Modal>
+      <ClientForm open={formOpen} client={editClient} onClose={() => setFormOpen(false)} onSubmit={handleSave} />
+
+      <MergeClientsModal
+        open={!!merge}
+        clients={clients}
+        sourceId={merge?.source ?? null}
+        targetId={merge?.target ?? null}
+        onClose={() => setMerge(null)}
+        onMerged={() => { setMerge(null); loadClients() }}
+      />
 
       <ConfirmDialog
-        isOpen={deleteId !== null}
-        onClose={() => setDeleteId(null)}
+        isOpen={deleteClient !== null}
+        onClose={() => setDeleteClient(null)}
         onConfirm={handleDelete}
-        title="Delete Client"
-        message="This will permanently delete this client and all associated projects and time entries. This cannot be undone."
+        title={`Delete ${deleteClient?.name}?`}
+        message="This permanently deletes the client with all of their projects, time entries, and invoices. If they were added twice, merge them instead."
+        confirmText="Delete client"
       />
-    </motion.div>
+    </div>
   )
 }

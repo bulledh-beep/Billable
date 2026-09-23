@@ -1,30 +1,30 @@
 import { useState, useEffect, useMemo } from 'react'
-import { motion } from 'framer-motion'
-import {
-  Plus, Download, Pencil, Trash2, Search, Sun, Home, ChevronDown,
-  AlertTriangle, HandCoins, FileText, Check, CheckCircle2, X, Eye,
-} from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Download, Pencil, Trash2, Sun, Home, ChevronDown, AlertTriangle, HandCoins, FileText, CheckCircle2, X, Eye } from 'lucide-react'
 import Modal from '../components/Modal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import EmptyState from '../components/EmptyState'
-import { formatMoney, formatDate, todayISO } from '../utils/format'
+import PageHeader from '../components/PageHeader'
+import Metric, { MetricStrip } from '../components/Metric'
+import Money from '../components/Money'
+import Segmented from '../components/Segmented'
+import SearchInput from '../components/SearchInput'
+import Menu from '../components/Menu'
+import { formatMoney, formatDay, todayISO } from '../utils/format'
 import type {
   Commission, CommissionJobType, CommissionStatus, CommissionPaymentStatus,
   CommissionInvoice, CommissionInvoiceStatus,
 } from '@shared/types'
 import toast from 'react-hot-toast'
 
-const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.04 } } }
-const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }
-
 const STATUS_OPTIONS: { value: CommissionStatus; label: string }[] = [
-  { value: 'appointment_set', label: 'Appointment Set' },
+  { value: 'appointment_set', label: 'Appointment set' },
   { value: 'appointment_attended', label: 'Attended' },
-  { value: 'closed_waiting', label: 'Closed, Unpaid' },
+  { value: 'closed_waiting', label: 'Closed, unpaid' },
   { value: 'paid', label: 'Paid' },
   { value: 'lost', label: 'Lost' },
   { value: 'cancelled', label: 'Cancelled' },
-  { value: 'needs_review', label: 'Needs Review' },
+  { value: 'needs_review', label: 'Needs review' },
 ]
 const PAYMENT_OPTIONS: { value: CommissionPaymentStatus; label: string }[] = [
   { value: 'unpaid', label: 'Unpaid' },
@@ -32,19 +32,19 @@ const PAYMENT_OPTIONS: { value: CommissionPaymentStatus; label: string }[] = [
   { value: 'paid', label: 'Paid' },
 ]
 const STATUS_STYLE: Record<CommissionStatus, string> = {
-  appointment_set: 'bg-status-sent/10 text-status-sent',
-  appointment_attended: 'bg-status-complete/10 text-status-complete',
-  closed_waiting: 'bg-status-paused/15 text-status-paused',
-  paid: 'bg-status-paid/10 text-status-paid',
-  lost: 'bg-status-overdue/10 text-status-overdue',
-  cancelled: 'bg-text-tertiary/10 text-text-tertiary',
-  needs_review: 'bg-accent/15 text-accent',
+  appointment_set: 'bg-blue/12 text-blue',
+  appointment_attended: 'bg-violet/12 text-violet',
+  closed_waiting: 'bg-amber/12 text-amber',
+  paid: 'bg-green/12 text-green',
+  lost: 'bg-red/12 text-red',
+  cancelled: 'bg-fg/[0.07] text-fg-3',
+  needs_review: 'bg-accent/12 text-accent-text',
 }
 const INVOICE_STATUS_STYLE: Record<CommissionInvoiceStatus, string> = {
-  draft: 'bg-text-tertiary/10 text-text-secondary',
-  sent: 'bg-status-sent/10 text-status-sent',
-  paid: 'bg-status-paid/10 text-status-paid',
-  cancelled: 'bg-status-overdue/10 text-status-overdue',
+  draft: 'bg-fg/[0.07] text-fg-2',
+  sent: 'bg-blue/12 text-blue',
+  paid: 'bg-green/12 text-green',
+  cancelled: 'bg-red/12 text-red',
 }
 
 const statusLabel = (s: CommissionStatus) => STATUS_OPTIONS.find(o => o.value === s)?.label || s
@@ -81,7 +81,7 @@ const inStage = (c: Commission, stage: Stage) =>
 
 type PayoutTone = 'potential' | 'owed' | 'invoiced' | 'paid' | 'review'
 function payoutInfo(c: Commission): { label: string; value: number | null; tone: PayoutTone } {
-  if (c.needs_review && c.manual_override == null) return { label: 'Needs Review', value: null, tone: 'review' }
+  if (c.needs_review && c.manual_override == null) return { label: 'Needs review', value: null, tone: 'review' }
   const v = effectiveOrZero(c)
   if (isPaid(c)) return { label: 'Paid', value: v, tone: 'paid' }
   if (isInvoiced(c)) return { label: 'Invoiced', value: v, tone: 'invoiced' }
@@ -89,8 +89,8 @@ function payoutInfo(c: Commission): { label: string; value: number | null; tone:
   return { label: 'Potential', value: v, tone: 'potential' }
 }
 const TONE_TEXT: Record<PayoutTone, string> = {
-  potential: 'text-text-secondary', owed: 'text-accent', invoiced: 'text-status-sent',
-  paid: 'text-status-paid', review: 'text-accent',
+  potential: 'text-fg-2', owed: 'text-amber', invoiced: 'text-blue',
+  paid: 'text-green', review: 'text-amber',
 }
 
 function previewCommission(jobType: CommissionJobType, kw: string, contract: string, override: string): { value: number | null; review: boolean } {
@@ -304,17 +304,17 @@ export default function Commissions() {
   const preview = previewCommission(form.job_type, form.system_size_kw, form.contract_amount, form.manual_override)
   const isClosedStatus = form.status === 'closed_waiting' || form.status === 'paid'
   const validationError = useMemo((): string | null => {
-    if (!form.client_name.trim()) return 'Client name is required'
-    if (!form.appointment_date) return 'Appointment date is required'
-    if (form.manual_override !== '' && Number(form.manual_override) < 0) return 'Override cannot be negative'
-    if (form.system_size_kw !== '' && Number(form.system_size_kw) < 0) return 'kW cannot be negative'
-    if (form.contract_amount !== '' && Number(form.contract_amount) < 0) return 'Contract amount cannot be negative'
+    if (!form.client_name.trim()) return 'Add the client name'
+    if (!form.appointment_date) return 'Add the appointment date'
+    if (form.manual_override !== '' && Number(form.manual_override) < 0) return "The override can't be negative"
+    if (form.system_size_kw !== '' && Number(form.system_size_kw) < 0) return "kW can't be negative"
+    if (form.contract_amount !== '' && Number(form.contract_amount) < 0) return "The contract amount can't be negative"
     if (isClosedStatus && form.job_type === 'solar' && (!form.system_size_kw || Number(form.system_size_kw) <= 0)) return 'Closed solar jobs need a system size'
     if (isClosedStatus && form.job_type === 'roofing' && (!form.contract_amount || Number(form.contract_amount) <= 0)) return 'Closed roofing jobs need a contract amount'
     return null
   }, [form, isClosedStatus])
   const previewBucket = useMemo(() => {
-    if (preview.review) return { label: 'Needs Review', value: null as number | null, tone: 'review' as PayoutTone, hint: 'Roofing jobs between $20,001 and $29,999 need a manual payout.' }
+    if (preview.review) return { label: 'Needs review', value: null as number | null, tone: 'review' as PayoutTone, hint: 'Roofing jobs between $20,001 and $29,999 need a manual payout.' }
     const v = preview.value
     if (form.payment_status === 'paid') return { label: 'Paid payout', value: v, tone: 'paid' as PayoutTone, hint: 'This job has been paid.' }
     if (isClosedStatus) return { label: 'Owed payout', value: v, tone: 'owed' as PayoutTone, hint: 'This job is closed but not paid yet.' }
@@ -360,363 +360,384 @@ export default function Commissions() {
   }
 
   return (
-    <motion.div variants={container} initial="hidden" animate="show" className="p-5 sm:p-8 max-w-6xl mx-auto pb-24">
-      {/* Header */}
-      <motion.div variants={item} className="flex flex-wrap items-start justify-between gap-3 mb-5">
-        <div>
-          <h1 className="text-2xl font-bold text-text-primary">Commissions</h1>
-          <p className="text-sm text-text-secondary mt-1">Track solar and roofing appointment payouts.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {view === 'jobs' && <button onClick={handleExportCSV} className="btn-secondary flex items-center gap-2 text-sm"><Download className="w-4 h-4" /> <span className="hidden sm:inline">CSV</span></button>}
-          <button onClick={() => openGenerate()} className="btn-secondary flex items-center gap-2 text-sm"><FileText className="w-4 h-4" /> Generate Invoice</button>
-          <button onClick={openNew} className="btn-primary flex items-center gap-2 text-sm"><Plus className="w-4 h-4" /> Add Job</button>
-        </div>
-      </motion.div>
+    <div className="page">
+      <PageHeader
+        title="Commissions"
+        actions={
+          <>
+            {view === 'jobs' && <button onClick={handleExportCSV} className="btn-secondary">CSV</button>}
+            <button onClick={() => openGenerate()} className="btn-secondary">New invoice</button>
+            <button onClick={openNew} className="btn-secondary">Add job</button>
+          </>
+        }
+      />
 
-      {/* View switch */}
-      <motion.div variants={item} className="inline-flex gap-0.5 bg-surface-100 rounded-lg p-0.5 border border-rim/[0.05] mb-5">
-        {(['jobs', 'invoices'] as const).map(v => (
-          <button key={v} onClick={() => setView(v)}
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors capitalize ${view === v ? 'bg-surface-300 text-text-primary' : 'text-text-tertiary hover:text-text-secondary'}`}>
-            {v === 'jobs' ? 'Jobs' : `Invoices${invoices.length ? ` (${invoices.length})` : ''}`}
-          </button>
-        ))}
-      </motion.div>
+      <div className="flex items-center gap-3 mb-5">
+        <Segmented
+          value={view}
+          onChange={setView}
+          options={[
+            { value: 'jobs', label: 'Jobs', count: commissions.length },
+            { value: 'invoices', label: 'Invoices', count: invoices.length },
+          ]}
+        />
+        <span className="text-sm text-fg-3">Solar and roofing appointment payouts</span>
+      </div>
 
       {view === 'jobs' ? (
         <>
-          {/* Dashboard cards */}
-          <motion.div variants={item} className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-            <div className="glass-panel p-4 ring-1 ring-accent/30 bg-accent/[0.05] col-span-2 lg:col-span-1">
-              <div className="text-[10px] uppercase tracking-wider text-accent/80 font-semibold">Owed</div>
-              <div className="font-mono text-2xl sm:text-3xl font-bold text-accent mt-1">{formatMoney(stats.owed)}</div>
-              <div className="text-[11px] text-text-tertiary mt-0.5">Closed, not invoiced or paid</div>
-            </div>
-            <HeroCard label="Invoiced" value={formatMoney(stats.invoiced)} sub="On an invoice, unpaid" tone="invoiced" />
-            <HeroCard label="Paid" value={formatMoney(stats.paid)} sub="Paid out" tone="paid" />
-            <HeroCard label="Expected" value={formatMoney(stats.expected)} sub="Potential from active jobs" />
-          </motion.div>
-          <motion.div variants={item} className="glass-panel px-4 py-2.5 mb-5 grid grid-cols-2 sm:grid-cols-4 divide-x divide-rim/[0.05]">
-            <MiniStat label="Closed deals" value={String(stats.closedDeals)} />
-            <MiniStat label="Lost deals" value={String(stats.lostDeals)} />
-            <MiniStat label="Close rate" value={`${stats.closeRate.toFixed(0)}%`} />
-            <MiniStat label="Avg / closed" value={formatMoney(stats.avgPerClosed)} />
-          </motion.div>
+          <MetricStrip className="mb-3">
+            <Metric label="Owed" value={<Money amount={stats.owed} />} sub="Closed, not invoiced or paid" onClick={() => setStage('owed')} active={stage === 'owed'} />
+            <Metric label="Invoiced" value={<Money amount={stats.invoiced} />} sub="On an invoice, unpaid" onClick={() => setStage('invoiced')} active={stage === 'invoiced'} />
+            <Metric label="Paid" value={<Money amount={stats.paid} />} sub="Paid out" onClick={() => setStage('paid')} active={stage === 'paid'} />
+            <Metric label="Expected" value={<Money amount={stats.expected} />} sub="If active jobs close" onClick={() => setStage('active')} active={stage === 'active'} />
+          </MetricStrip>
+          <div className="flex items-center gap-5 px-1 mb-5 text-xs text-fg-3">
+            <span>Closed deals <b className="num font-semibold text-fg-2">{stats.closedDeals}</b></span>
+            <span>Lost <b className="num font-semibold text-fg-2">{stats.lostDeals}</b></span>
+            <span>Close rate <b className="num font-semibold text-fg-2">{stats.closeRate.toFixed(0)}%</b></span>
+            <span>Average per closed deal <b className="num font-semibold text-fg-2">{formatMoney(stats.avgPerClosed)}</b></span>
+          </div>
 
-          {/* Stage tabs */}
-          <motion.div variants={item} className="flex flex-wrap items-center gap-1 mb-3">
-            {STAGE_TABS.map(t => (
-              <button key={t.value} onClick={() => { setStage(t.value); setSelected(new Set()) }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${stage === t.value ? 'bg-accent/15 text-accent' : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-200'}`}>
-                {t.label}<span className="ml-1.5 opacity-60">{stageCounts[t.value]}</span>
-              </button>
-            ))}
-          </motion.div>
-
-          {/* Filters */}
-          <motion.div variants={item} className="flex flex-wrap items-center gap-2 mb-4">
-            <div className="relative flex-1 min-w-[180px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary" />
-              <input className="input-field pl-10" placeholder="Search client or closer…" value={search} onChange={e => setSearch(e.target.value)} />
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <Segmented
+              value={stage}
+              onChange={v => { setStage(v); setSelected(new Set()) }}
+              options={STAGE_TABS.map(t => ({ value: t.value, label: t.label, count: stageCounts[t.value] }))}
+            />
+            <div className="ml-auto flex items-center gap-2">
+              <select className="input w-32" value={jobFilter} onChange={e => setJobFilter(e.target.value as any)} aria-label="Job type">
+                <option value="all">All types</option><option value="solar">Solar</option><option value="roofing">Roofing</option>
+              </select>
+              <input type="date" className="input w-[140px]" value={dateFrom} onChange={e => setDateFrom(e.target.value)} aria-label="From date" />
+              <span className="text-fg-4">–</span>
+              <input type="date" className="input w-[140px]" value={dateTo} onChange={e => setDateTo(e.target.value)} aria-label="To date" />
+              <SearchInput value={search} onChange={setSearch} placeholder="Client or closer" className="w-52" />
             </div>
-            <select className="input-field w-auto" value={jobFilter} onChange={e => setJobFilter(e.target.value as any)}>
-              <option value="all">All types</option><option value="solar">Solar</option><option value="roofing">Roofing</option>
-            </select>
-            <div className="flex items-center gap-1.5 bg-surface-200 border border-rim/[0.06] rounded-lg px-2.5 h-[38px]">
-              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="bg-transparent text-sm text-text-primary outline-none w-[118px] [color-scheme:dark]" />
-              <span className="text-text-tertiary text-xs">→</span>
-              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="bg-transparent text-sm text-text-primary outline-none w-[118px] [color-scheme:dark]" />
-            </div>
-          </motion.div>
+          </div>
 
-          {/* Jobs table */}
-          {loading ? <div className="text-sm text-text-tertiary text-center py-16">Loading…</div>
+          {loading ? <div className="text-sm text-fg-3 text-center py-16">Loading…</div>
             : visible.length === 0 ? (
-              <EmptyState icon={HandCoins}
-                title={commissions.length === 0 ? 'No commission jobs yet' : `Nothing in ${STAGE_TABS.find(t => t.value === stage)?.label}`}
-                description={commissions.length === 0 ? 'Add your first solar or roofing appointment to start tracking payouts.' : 'Try another tab or clear the filters.'}
-                action={commissions.length === 0 ? { label: 'Add Commission Job', onClick: openNew } : undefined} />
+              <div className="card">
+                <EmptyState icon={HandCoins}
+                  title={commissions.length === 0 ? 'Add your first job' : `Nothing in ${STAGE_TABS.find(t => t.value === stage)?.label}`}
+                  description={commissions.length === 0 ? 'Log a solar or roofing appointment to start tracking payouts.' : 'Try another tab or clear the filters.'}
+                  action={commissions.length === 0 ? { label: 'Add job', onClick: openNew } : undefined} />
+              </div>
             ) : (
-              <>
-                <motion.div variants={item} className="glass-panel overflow-hidden hidden md:block">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-rim/[0.05] text-[11px] uppercase tracking-wider text-text-tertiary">
-                        <th className="w-10 px-3 py-3"><input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAll} className="rounded border-rim/20 bg-surface-300 text-accent" /></th>
-                        <th className="text-left px-2 py-3 font-medium">Client</th>
-                        <th className="text-left px-3 py-3 font-medium">Type</th>
-                        <th className="text-left px-3 py-3 font-medium">Appt</th>
-                        <th className="text-left px-3 py-3 font-medium">Status</th>
-                        <th className="text-right px-3 py-3 font-medium">Payout</th>
-                        <th className="text-right px-3 py-3 font-medium">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visible.map(c => {
-                        const p = payoutInfo(c)
-                        const closedUnpaid = isOwed(c) || isInvoiced(c)
-                        return (
-                          <tr key={c.id} className={`border-b border-rim/[0.03] last:border-0 hover:bg-surface-200/40 transition-colors group ${selected.has(c.id) ? 'bg-accent/[0.04]' : ''}`}>
-                            <td className="px-3 py-3"><input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} className="rounded border-rim/20 bg-surface-300 text-accent" /></td>
-                            <td className="px-2 py-3"><div className="text-sm text-text-primary font-medium">{c.client_name}</div><div className="text-[11px] text-text-tertiary">{c.closer_name || 'No closer'}</div></td>
-                            <td className="px-3 py-3"><JobTypeTag type={c.job_type} /></td>
-                            <td className="px-3 py-3 text-sm text-text-secondary whitespace-nowrap">{c.appointment_date ? formatDate(c.appointment_date) : '—'}</td>
-                            <td className="px-3 py-3"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${STATUS_STYLE[c.status]}`}>{statusLabel(c.status)}</span></td>
-                            <td className="px-3 py-3 text-right whitespace-nowrap">
-                              {p.value == null ? <span className="inline-flex items-center gap-1 text-accent text-sm font-medium"><AlertTriangle className="w-3.5 h-3.5" />Review</span>
-                                : <div><span className={`font-mono text-sm font-semibold ${TONE_TEXT[p.tone]}`}>{formatMoney(p.value)}</span><div className="text-[10px] uppercase tracking-wide text-text-tertiary">{p.label}</div></div>}
-                            </td>
-                            <td className="px-3 py-3">
-                              <div className="flex items-center gap-1 justify-end">
-                                {closedUnpaid && <button onClick={() => markPaid(c)} className="px-2 py-1 rounded-md bg-status-paid/10 text-status-paid text-[11px] font-medium hover:bg-status-paid/20 transition-colors flex items-center gap-1"><Check className="w-3 h-3" />Paid</button>}
-                                {isActive(c) && c.status !== 'needs_review' && <button onClick={() => markClosed(c)} className="px-2 py-1 rounded-md bg-status-paused/10 text-status-paused text-[11px] font-medium hover:bg-status-paused/20 transition-colors opacity-0 group-hover:opacity-100">Close</button>}
-                                <button onClick={() => openEdit(c)} className="p-1.5 hover:bg-surface-300 rounded transition-colors opacity-0 group-hover:opacity-100" title="Edit"><Pencil className="w-3.5 h-3.5 text-text-tertiary" /></button>
-                                <button onClick={() => setDeleteId(c.id)} className="p-1.5 hover:bg-red-500/10 rounded transition-colors opacity-0 group-hover:opacity-100" title="Delete"><Trash2 className="w-3.5 h-3.5 text-text-tertiary hover:text-red-400" /></button>
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </motion.div>
-
-                {/* Mobile cards */}
-                <motion.div variants={item} className="md:hidden space-y-2">
-                  {visible.map(c => {
-                    const p = payoutInfo(c)
-                    const closedUnpaid = isOwed(c) || isInvoiced(c)
-                    return (
-                      <div key={c.id} className={`glass-panel p-3.5 ${selected.has(c.id) ? 'ring-1 ring-accent/40' : ''}`}>
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-start gap-2.5 min-w-0">
-                            <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} className="mt-1 rounded border-rim/20 bg-surface-300 text-accent" />
-                            <div className="min-w-0">
-                              <div className="text-sm font-medium text-text-primary truncate">{c.client_name}</div>
-                              <div className="flex items-center gap-2 mt-1"><JobTypeTag type={c.job_type} /><span className="text-[11px] text-text-tertiary">{c.appointment_date ? formatDate(c.appointment_date) : '—'}</span></div>
+              <div className="card">
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th className="w-8"><input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAll} aria-label="Select all" /></th>
+                      <th>Client</th>
+                      <th>Type</th>
+                      <th>Appointment</th>
+                      <th>Status</th>
+                      <th className="text-right">Payout</th>
+                      <th className="w-40"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visible.map(c => {
+                      const p = payoutInfo(c)
+                      const closedUnpaid = isOwed(c) || isInvoiced(c)
+                      return (
+                        <tr key={c.id} onDoubleClick={() => openEdit(c)} className={`group ${selected.has(c.id) ? 'bg-accent/[0.05]' : 'hover:bg-fg/[0.02]'}`}>
+                          <td><input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} aria-label={`Select ${c.client_name}`} /></td>
+                          <td>
+                            <div className="text-sm font-medium text-fg">{c.client_name}</div>
+                            <div className="text-xs text-fg-3">{c.closer_name || 'No closer'}</div>
+                          </td>
+                          <td><JobTypeTag type={c.job_type} /></td>
+                          <td className="text-fg-2 whitespace-nowrap">{c.appointment_date ? formatDay(c.appointment_date) : '—'}</td>
+                          <td><span className={`badge ${STATUS_STYLE[c.status]}`}>{statusLabel(c.status)}</span></td>
+                          <td className="text-right whitespace-nowrap">
+                            {p.value == null
+                              ? <span className="inline-flex items-center gap-1 text-amber text-sm font-medium"><AlertTriangle className="w-3.5 h-3.5" />Review</span>
+                              : <div><div className={`num text-sm font-semibold ${TONE_TEXT[p.tone]}`}>{formatMoney(p.value)}</div><div className="text-2xs text-fg-3">{p.label}</div></div>}
+                          </td>
+                          <td>
+                            <div className="flex items-center gap-1 justify-end">
+                              {closedUnpaid && <button onClick={() => markPaid(c)} className="btn-secondary btn-sm">Paid</button>}
+                              {isActive(c) && c.status !== 'needs_review' && <button onClick={() => markClosed(c)} className="btn-ghost btn-sm opacity-0 group-hover:opacity-100">Mark closed</button>}
+                              <Menu items={[
+                                { label: 'Edit', icon: Pencil, onClick: () => openEdit(c) },
+                                'separator',
+                                { label: 'Delete', icon: Trash2, danger: true, onClick: () => setDeleteId(c.id) },
+                              ]} />
                             </div>
-                          </div>
-                          <div className="text-right flex-shrink-0">
-                            {p.value == null ? <span className="text-accent text-sm font-medium">Review</span>
-                              : <><div className={`font-mono text-sm font-semibold ${TONE_TEXT[p.tone]}`}>{formatMoney(p.value)}</div><div className="text-[10px] uppercase tracking-wide text-text-tertiary">{p.label}</div></>}
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between mt-2.5 pt-2.5 border-t border-rim/[0.04]">
-                          <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium ${STATUS_STYLE[c.status]}`}>{statusLabel(c.status)}</span>
-                          <div className="flex items-center gap-1.5">
-                            {closedUnpaid && <button onClick={() => markPaid(c)} className="px-2 py-1 rounded-md bg-status-paid/10 text-status-paid text-[11px] font-medium flex items-center gap-1"><Check className="w-3 h-3" />Paid</button>}
-                            <button onClick={() => openEdit(c)} className="p-1.5 hover:bg-surface-300 rounded"><Pencil className="w-3.5 h-3.5 text-text-tertiary" /></button>
-                            <button onClick={() => setDeleteId(c.id)} className="p-1.5 hover:bg-red-500/10 rounded"><Trash2 className="w-3.5 h-3.5 text-text-tertiary" /></button>
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </motion.div>
-              </>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
         </>
       ) : (
-        /* ===== Invoices view ===== */
-        loading ? <div className="text-sm text-text-tertiary text-center py-16">Loading…</div>
+        loading ? <div className="text-sm text-fg-3 text-center py-16">Loading…</div>
           : invoices.length === 0 ? (
-            <EmptyState icon={FileText} title="No commission invoices yet"
-              description="Generate an invoice from your closed solar or roofing jobs to bundle payouts together."
-              action={{ label: 'Generate Invoice', onClick: () => openGenerate() }} />
+            <div className="card">
+              <EmptyState icon={FileText} title="No commission invoices yet"
+                description="Bundle closed solar or roofing jobs into one payout invoice."
+                action={{ label: 'New invoice', onClick: () => openGenerate() }} />
+            </div>
           ) : (
-            <motion.div variants={item} className="space-y-2">
-              {invoices.map(inv => (
-                <div key={inv.id} className="glass-panel p-4 flex flex-wrap items-center gap-3">
-                  <div className="flex-1 min-w-[160px]">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-text-primary">{inv.invoice_number}</span>
-                      <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium capitalize ${INVOICE_STATUS_STYLE[inv.status]}`}>{inv.status}</span>
-                    </div>
-                    <div className="text-[11px] text-text-tertiary mt-0.5">
-                      {inv.category === 'mixed' ? 'Solar & Roofing' : inv.category[0].toUpperCase() + inv.category.slice(1)} · {inv.job_count} job{inv.job_count === 1 ? '' : 's'} · {formatDate(inv.created_at)}
-                    </div>
-                  </div>
-                  <div className="font-mono text-lg font-bold text-accent">{formatMoney(inv.total)}</div>
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => openInvoiceDetail(inv)} className="p-2 hover:bg-surface-300 rounded-lg transition-colors" title="View"><Eye className="w-4 h-4 text-text-tertiary" /></button>
-                    <button onClick={() => downloadInvoice(inv)} className="p-2 hover:bg-surface-300 rounded-lg transition-colors" title="Download PDF"><Download className="w-4 h-4 text-text-tertiary" /></button>
-                    {inv.status !== 'paid' && inv.status !== 'cancelled' && <button onClick={() => markInvoicePaid(inv)} className="px-2.5 py-1.5 rounded-lg bg-status-paid/10 text-status-paid text-xs font-medium hover:bg-status-paid/20 transition-colors flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />Mark Paid</button>}
-                    <button onClick={() => setDeleteInvoiceId(inv.id)} className="p-2 hover:bg-red-500/10 rounded-lg transition-colors" title="Delete"><Trash2 className="w-4 h-4 text-text-tertiary hover:text-red-400" /></button>
-                  </div>
-                </div>
-              ))}
-            </motion.div>
+            <div className="card">
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Invoice</th>
+                    <th>Jobs</th>
+                    <th>Created</th>
+                    <th>Status</th>
+                    <th className="text-right">Total</th>
+                    <th className="w-44"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoices.map(inv => (
+                    <tr key={inv.id} onClick={() => openInvoiceDetail(inv)} className="row-hover">
+                      <td>
+                        <div className="text-sm font-medium text-fg">{inv.invoice_number}</div>
+                        <div className="text-xs text-fg-3">{inv.category === 'mixed' ? 'Solar and roofing' : inv.category === 'solar' ? 'Solar' : 'Roofing'}</div>
+                      </td>
+                      <td className="text-fg-2 num">{inv.job_count}</td>
+                      <td className="text-fg-2 whitespace-nowrap">{formatDay(inv.created_at)}</td>
+                      <td><span className={`badge ${INVOICE_STATUS_STYLE[inv.status]}`}>{inv.status[0].toUpperCase() + inv.status.slice(1)}</span></td>
+                      <td className="text-right num font-semibold text-fg">{formatMoney(inv.total)}</td>
+                      <td onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1">
+                          {inv.status !== 'paid' && inv.status !== 'cancelled' && <button onClick={() => markInvoicePaid(inv)} className="btn-secondary btn-sm"><CheckCircle2 /> Mark paid</button>}
+                          <Menu items={[
+                            { label: 'View jobs', icon: Eye, onClick: () => openInvoiceDetail(inv) },
+                            { label: 'Download PDF', icon: Download, onClick: () => downloadInvoice(inv) },
+                            'separator',
+                            { label: 'Delete', icon: Trash2, danger: true, onClick: () => setDeleteInvoiceId(inv.id) },
+                          ]} />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )
       )}
 
       {/* Bulk action bar */}
-      {view === 'jobs' && selected.size > 0 && (
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-          className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 glass-panel border border-accent/20 shadow-2xl px-4 py-2.5 flex items-center gap-3 rounded-xl">
-          <span className="text-sm font-medium text-accent">{selected.size} selected</span>
-          <div className="w-px h-5 bg-rim/[0.1]" />
-          <button onClick={() => bulkPatch({ payment_status: 'paid', status: 'paid', paid_at: today }, 'marked paid')} className="text-xs font-medium text-status-paid hover:underline">Mark Paid</button>
-          <button onClick={() => bulkPatch({ status: 'closed_waiting' }, 'marked closed')} className="text-xs font-medium text-status-paused hover:underline">Mark Closed</button>
-          <button onClick={() => openGenerate(Array.from(selected))} className="text-xs font-medium text-text-secondary hover:text-text-primary">Generate Invoice</button>
-          <button onClick={() => setSelected(new Set())} className="p-1 hover:bg-surface-300 rounded"><X className="w-4 h-4 text-text-tertiary" /></button>
-        </motion.div>
-      )}
+      <AnimatePresence>
+        {view === 'jobs' && selected.size > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 12 }}
+            transition={{ duration: 0.15 }}
+            className="fixed bottom-5 left-[calc(50%+110px)] -translate-x-1/2 z-40 flex items-center gap-2 pl-4 pr-2 h-12 rounded-[10px] bg-panel shadow-pop"
+          >
+            <span className="text-sm font-medium text-fg mr-1">{selected.size} selected</span>
+            <button onClick={() => bulkPatch({ status: 'closed_waiting' }, 'marked closed')} className="btn-ghost btn-sm">Mark closed</button>
+            <button onClick={() => openGenerate(Array.from(selected))} className="btn-secondary btn-sm">Invoice them</button>
+            <button onClick={() => bulkPatch({ payment_status: 'paid', status: 'paid', paid_at: today }, 'marked paid')} className="btn-primary btn-sm">Mark paid</button>
+            <button onClick={() => setSelected(new Set())} className="btn-icon-sm" aria-label="Clear selection"><X /></button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* ===== Add / Edit job modal ===== */}
-      <Modal isOpen={showForm} onClose={() => setShowForm(false)} title={editing ? 'Edit Commission Job' : 'Add Commission Job'} size="lg">
+      {/* ===== Add / Edit job ===== */}
+      <Modal
+        isOpen={showForm}
+        onClose={() => setShowForm(false)}
+        title={editing ? 'Edit job' : 'Add job'}
+        size="lg"
+        footer={
+          <>
+            <span className="text-xs text-fg-3 truncate mr-auto">{validationError || ''}</span>
+            <button onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button>
+            <button onClick={handleSave} disabled={saving || !!validationError} className="btn-primary">{saving ? 'Saving…' : 'Save job'}</button>
+          </>
+        }
+      >
         <div className="space-y-5">
-          <p className="text-xs text-text-tertiary -mt-2">Track a solar or roofing appointment payout.</p>
           <div className="grid grid-cols-2 gap-3">
             {(['solar', 'roofing'] as CommissionJobType[]).map(t => (
               <button key={t} type="button" onClick={() => update('job_type', t)}
-                className={`text-left p-3.5 rounded-xl border transition-all ${form.job_type === t ? 'border-accent/50 bg-accent/[0.07] ring-1 ring-accent/20' : 'border-rim/[0.08] hover:border-rim/[0.15] hover:bg-surface-200/50'}`}>
-                <div className="flex items-center gap-2">{t === 'solar' ? <Sun className={`w-5 h-5 ${form.job_type === t ? 'text-accent' : 'text-text-tertiary'}`} /> : <Home className={`w-5 h-5 ${form.job_type === t ? 'text-accent' : 'text-text-tertiary'}`} />}<span className={`text-sm font-semibold ${form.job_type === t ? 'text-text-primary' : 'text-text-secondary'}`}>{t === 'solar' ? 'Solar' : 'Roofing'}</span></div>
-                <div className="text-[11px] text-text-tertiary mt-1.5">{t === 'solar' ? '$50 per kW' : '$250–$500 per closed job'}</div>
+                className={`text-left p-3.5 rounded-lg border transition-colors ${form.job_type === t ? 'border-accent/60 bg-accent/[0.07]' : 'border-line hover:border-line-strong hover:bg-fg/[0.02]'}`}>
+                <div className="flex items-center gap-2">
+                  {t === 'solar' ? <Sun className={`w-4 h-4 ${form.job_type === t ? 'text-accent-text' : 'text-fg-3'}`} /> : <Home className={`w-4 h-4 ${form.job_type === t ? 'text-accent-text' : 'text-fg-3'}`} />}
+                  <span className="text-sm font-semibold text-fg">{t === 'solar' ? 'Solar' : 'Roofing'}</span>
+                </div>
+                <div className="text-xs text-fg-3 mt-1">{t === 'solar' ? '$50 per kW' : '$250 to $500 per closed job'}</div>
               </button>
             ))}
           </div>
-          <div className="space-y-3">
-            <FieldLabel>Client &amp; appointment</FieldLabel>
-            <input className="input-field" value={form.client_name} onChange={e => update('client_name', e.target.value)} placeholder="Client name *" autoFocus />
-            <div className="grid grid-cols-2 gap-3">
-              <input type="date" className="input-field [color-scheme:dark]" value={form.appointment_date} onChange={e => update('appointment_date', e.target.value)} />
-              <input className="input-field" value={form.closer_name} onChange={e => update('closer_name', e.target.value)} placeholder="Closer name" />
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="label">Client</label>
+              <input className="input" value={form.client_name} onChange={e => update('client_name', e.target.value)} placeholder="Client name" autoFocus />
+            </div>
+            <div>
+              <label className="label">Appointment date</label>
+              <input type="date" className="input" value={form.appointment_date} onChange={e => update('appointment_date', e.target.value)} />
+            </div>
+            <div>
+              <label className="label">Closer</label>
+              <input className="input" value={form.closer_name} onChange={e => update('closer_name', e.target.value)} placeholder="Optional" />
             </div>
           </div>
-          <div className="space-y-2">
-            <FieldLabel>{form.job_type === 'solar' ? 'System size' : 'Contract'}</FieldLabel>
+          <div>
+            <label className="label">{form.job_type === 'solar' ? 'System size (kW)' : 'Contract amount'}</label>
             {form.job_type === 'solar'
-              ? <input type="number" step="0.01" min="0" className="input-field font-mono" value={form.system_size_kw} onChange={e => update('system_size_kw', e.target.value)} placeholder="System size in kW (e.g. 6.16)" />
-              : <div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-text-tertiary font-mono">$</span><input type="number" step="0.01" min="0" className="input-field pl-7 font-mono" value={form.contract_amount} onChange={e => update('contract_amount', e.target.value)} placeholder="Contract amount (e.g. 25000)" /></div>}
-            <div className="text-[11px] text-text-tertiary">{form.job_type === 'solar' ? (form.system_size_kw ? `${form.system_size_kw} kW × $50 = ${formatMoney((Number(form.system_size_kw) || 0) * 50)}` : 'Commission = kW × $50') : '≤ $20k → $250 · ≥ $30k → $500 · in between → Needs Review'}</div>
+              ? <input type="number" step="0.01" min="0" className="input num" value={form.system_size_kw} onChange={e => update('system_size_kw', e.target.value)} placeholder="6.16" />
+              : <div className="relative"><span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-fg-3">$</span><input type="number" step="0.01" min="0" className="input pl-6 num" value={form.contract_amount} onChange={e => update('contract_amount', e.target.value)} placeholder="25000" /></div>}
+            <div className="hint">{form.job_type === 'solar' ? (form.system_size_kw ? `${form.system_size_kw} kW × $50 = ${formatMoney((Number(form.system_size_kw) || 0) * 50)}` : 'Payout is kW × $50') : '$20,000 or less pays $250. $30,000 or more pays $500. In between needs a manual payout.'}</div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><FieldLabel>Deal status</FieldLabel><select className="input-field mt-2" value={form.status} onChange={e => update('status', e.target.value as CommissionStatus)}>{STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>
-            <div><FieldLabel>Payment</FieldLabel><select className="input-field mt-2" value={form.payment_status} onChange={e => update('payment_status', e.target.value as CommissionPaymentStatus)}>{PAYMENT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>
+            <div>
+              <label className="label">Deal status</label>
+              <select className="input" value={form.status} onChange={e => update('status', e.target.value as CommissionStatus)}>{STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+            </div>
+            <div>
+              <label className="label">Payment</label>
+              <select className="input" value={form.payment_status} onChange={e => update('payment_status', e.target.value as CommissionPaymentStatus)}>{PAYMENT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+            </div>
           </div>
-          <div className={`rounded-xl p-3.5 border ${previewBucket.tone === 'review' ? 'border-accent/30 bg-accent/[0.06]' : 'border-rim/[0.06] bg-surface-200/50'}`}>
-            <div className="flex items-center justify-between"><span className="text-xs text-text-secondary">{previewBucket.label}</span><span className={`font-mono text-lg font-bold ${TONE_TEXT[previewBucket.tone]}`}>{previewBucket.value == null ? 'Needs Review' : formatMoney(previewBucket.value)}</span></div>
-            <div className="text-[11px] text-text-tertiary mt-1">{previewBucket.hint}</div>
+          <div className={`rounded-lg p-3.5 border ${previewBucket.tone === 'review' ? 'border-amber/40 bg-amber/[0.06]' : 'border-line bg-fg/[0.02]'}`}>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-fg-2">{previewBucket.label}</span>
+              <span className={`num text-lg font-semibold ${TONE_TEXT[previewBucket.tone]}`}>{previewBucket.value == null ? 'Needs review' : formatMoney(previewBucket.value)}</span>
+            </div>
+            <div className="text-xs text-fg-3 mt-1">{previewBucket.hint}</div>
           </div>
-          <div className="border-t border-rim/[0.05] pt-3">
-            <button type="button" onClick={() => setShowMore(v => !v)} className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"><ChevronDown className={`w-3.5 h-3.5 transition-transform ${showMore ? 'rotate-180' : ''}`} /> More details</button>
+          <div className="border-t border-line pt-3">
+            <button type="button" onClick={() => setShowMore(v => !v)} className="btn-ghost btn-sm -ml-2">
+              <ChevronDown className={`transition-transform ${showMore ? 'rotate-180' : ''}`} /> Override and notes
+            </button>
             {showMore && (
               <div className="space-y-3 mt-3">
-                <div><FieldLabel>Manual payout override</FieldLabel><div className="relative mt-2"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-text-tertiary font-mono">$</span><input type="number" step="0.01" min="0" className="input-field pl-7 font-mono" value={form.manual_override} onChange={e => update('manual_override', e.target.value)} placeholder="Overrides the calculated payout" /></div></div>
-                <div><FieldLabel>Notes</FieldLabel><textarea className="input-field mt-2" rows={2} value={form.notes} onChange={e => update('notes', e.target.value)} placeholder="Anything worth remembering" /></div>
+                <div>
+                  <label className="label">Manual payout</label>
+                  <div className="relative"><span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-fg-3">$</span><input type="number" step="0.01" min="0" className="input pl-6 num" value={form.manual_override} onChange={e => update('manual_override', e.target.value)} placeholder="Replaces the calculated payout" /></div>
+                </div>
+                <div>
+                  <label className="label">Notes</label>
+                  <textarea className="input" rows={2} value={form.notes} onChange={e => update('notes', e.target.value)} placeholder="Anything worth remembering" />
+                </div>
               </div>
             )}
           </div>
         </div>
-        <div className="sticky bottom-0 -mx-6 -mb-5 mt-5 px-6 py-3.5 bg-surface-100/95 backdrop-blur border-t border-rim/[0.06] flex items-center justify-between gap-3">
-          <span className="text-[11px] text-text-tertiary truncate">{validationError || ''}</span>
-          <div className="flex gap-2 flex-shrink-0">
-            <button onClick={() => setShowForm(false)} className="btn-secondary text-sm">Cancel</button>
-            <button onClick={handleSave} disabled={saving || !!validationError} className={`btn-primary text-sm ${saving || validationError ? 'opacity-50 cursor-not-allowed' : ''}`}>{saving ? 'Saving…' : 'Save Job'}</button>
-          </div>
-        </div>
       </Modal>
 
-      {/* ===== Generate Invoice modal ===== */}
-      <Modal isOpen={showGen} onClose={() => setShowGen(false)} title="Generate Commission Invoice" size="lg">
-        <div className="space-y-4">
-          <p className="text-xs text-text-tertiary -mt-2">Bundle eligible closed jobs into one payout invoice.</p>
-          <div className="grid grid-cols-3 gap-2">
-            {(['solar', 'roofing', 'both'] as const).map(cat => (
-              <button key={cat} type="button" onClick={() => setGenCategory(cat)}
-                className={`py-2 rounded-lg text-sm font-medium border transition-colors capitalize ${genCategory === cat ? 'border-accent/50 bg-accent/[0.07] text-accent' : 'border-rim/[0.08] text-text-secondary hover:bg-surface-200'}`}>
-                {cat}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 bg-surface-200 border border-rim/[0.06] rounded-lg px-2.5 h-[38px] flex-1">
-              <input type="date" value={genFrom} onChange={e => setGenFrom(e.target.value)} className="bg-transparent text-sm text-text-primary outline-none flex-1 [color-scheme:dark]" />
-              <span className="text-text-tertiary text-xs">→</span>
-              <input type="date" value={genTo} onChange={e => setGenTo(e.target.value)} className="bg-transparent text-sm text-text-primary outline-none flex-1 [color-scheme:dark]" />
+      {/* ===== New commission invoice ===== */}
+      <Modal
+        isOpen={showGen}
+        onClose={() => setShowGen(false)}
+        title="New commission invoice"
+        description="Bundle closed jobs into one payout invoice."
+        size="lg"
+        footer={
+          <>
+            <div className="mr-auto">
+              <span className="text-xs text-fg-3">Total </span>
+              <span className="num text-base font-semibold text-fg">{formatMoney(genTotal)}</span>
             </div>
-            <label className="flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer whitespace-nowrap">
-              <input type="checkbox" checked={genIncludeInvoiced} onChange={e => setGenIncludeInvoiced(e.target.checked)} className="rounded border-rim/20 bg-surface-300 text-accent" /> Include already-invoiced
+            <button onClick={() => setShowGen(false)} className="btn-secondary">Cancel</button>
+            <button onClick={handleGenerate} disabled={generating || genSelected.length === 0} className="btn-primary">
+              {generating ? 'Creating…' : `Create invoice for ${genSelected.length} job${genSelected.length === 1 ? '' : 's'}`}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <Segmented
+              value={genCategory}
+              onChange={v => setGenCategory(v)}
+              options={[
+                { value: 'both', label: 'Solar and roofing' },
+                { value: 'solar', label: 'Solar' },
+                { value: 'roofing', label: 'Roofing' },
+              ]}
+            />
+            <div className="flex items-center gap-2">
+              <input type="date" className="input w-[140px]" value={genFrom} onChange={e => setGenFrom(e.target.value)} aria-label="From date" />
+              <span className="text-fg-4">–</span>
+              <input type="date" className="input w-[140px]" value={genTo} onChange={e => setGenTo(e.target.value)} aria-label="To date" />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-fg-2 cursor-pointer select-none">
+              <input type="checkbox" checked={genIncludeInvoiced} onChange={e => setGenIncludeInvoiced(e.target.checked)} /> Include already invoiced
             </label>
           </div>
 
-          <div className="border border-rim/[0.06] rounded-xl overflow-hidden">
-            <div className="px-3 py-2 bg-surface-200/50 text-[11px] uppercase tracking-wider text-text-tertiary flex items-center justify-between">
-              <span>{genSelected.length} of {genEligible.length} eligible jobs</span><span>Uncheck to exclude</span>
+          <div className="rounded-lg border border-line overflow-hidden">
+            <div className="px-3 h-8 bg-fg/[0.03] border-b border-line text-xs text-fg-3 flex items-center justify-between">
+              <span>{genSelected.length} of {genEligible.length} eligible jobs</span><span>Untick to leave one out</span>
             </div>
-            <div className="max-h-[280px] overflow-y-auto divide-y divide-rim/[0.04]">
-              {genEligible.length === 0 ? <div className="px-3 py-8 text-center text-sm text-text-tertiary">No eligible jobs for this selection.</div>
+            <div className="max-h-[300px] overflow-y-auto">
+              {genEligible.length === 0 ? <div className="px-3 py-8 text-center text-sm text-fg-3">No closed jobs match these filters.</div>
                 : genEligible.map(c => {
                   const excluded = genExcluded.has(c.id)
                   return (
-                    <div key={c.id} className={`flex items-center gap-3 px-3 py-2.5 ${excluded ? 'opacity-40' : ''}`}>
-                      <input type="checkbox" checked={!excluded} onChange={() => setGenExcluded(prev => { const n = new Set(prev); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n })} className="rounded border-rim/20 bg-surface-300 text-accent" />
+                    <label key={c.id} className={`flex items-center gap-3 px-3 h-12 border-b border-line last:border-b-0 cursor-pointer ${excluded ? 'opacity-45' : ''}`}>
+                      <input type="checkbox" checked={!excluded} onChange={() => setGenExcluded(prev => { const n = new Set(prev); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n })} />
                       <JobTypeTag type={c.job_type} />
-                      <div className="flex-1 min-w-0"><div className="text-sm text-text-primary truncate">{c.client_name}</div><div className="text-[11px] text-text-tertiary">{c.appointment_date ? formatDate(c.appointment_date) : '—'} · {c.job_type === 'solar' ? `${c.system_size_kw ?? 0} kW` : formatMoney(c.contract_amount ?? 0)}{c.invoice_status === 'invoiced' ? ' · already invoiced' : ''}</div></div>
-                      <span className="font-mono text-sm font-semibold text-text-primary">{formatMoney(effectiveOrZero(c))}</span>
-                    </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-fg truncate">{c.client_name}</div>
+                        <div className="text-xs text-fg-3">{c.appointment_date ? formatDay(c.appointment_date) : '—'} · {c.job_type === 'solar' ? `${c.system_size_kw ?? 0} kW` : formatMoney(c.contract_amount ?? 0)}{c.invoice_status === 'invoiced' ? ' · already invoiced' : ''}</div>
+                      </div>
+                      <span className="num text-sm font-semibold text-fg">{formatMoney(effectiveOrZero(c))}</span>
+                    </label>
                   )
                 })}
             </div>
           </div>
         </div>
-        <div className="sticky bottom-0 -mx-6 -mb-5 mt-5 px-6 py-3.5 bg-surface-100/95 backdrop-blur border-t border-rim/[0.06] flex items-center justify-between gap-3">
-          <div><span className="text-[11px] text-text-tertiary uppercase tracking-wider">Total</span><div className="font-mono text-lg font-bold text-accent">{formatMoney(genTotal)}</div></div>
-          <div className="flex gap-2">
-            <button onClick={() => setShowGen(false)} className="btn-secondary text-sm">Cancel</button>
-            <button onClick={handleGenerate} disabled={generating || genSelected.length === 0} className={`btn-primary text-sm ${generating || genSelected.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}>{generating ? 'Creating…' : `Create Invoice (${genSelected.length})`}</button>
-          </div>
-        </div>
       </Modal>
 
-      {/* Invoice detail modal */}
-      <Modal isOpen={!!viewInvoice} onClose={() => setViewInvoice(null)} title={viewInvoice?.invoice_number || 'Invoice'} size="lg">
+      {/* Commission invoice detail */}
+      <Modal
+        isOpen={!!viewInvoice}
+        onClose={() => setViewInvoice(null)}
+        title={viewInvoice?.invoice_number || 'Invoice'}
+        description={viewInvoice ? `${viewInvoice.category === 'mixed' ? 'Solar and roofing' : viewInvoice.category === 'solar' ? 'Solar' : 'Roofing'} · ${viewInvoice.job_count} job${viewInvoice.job_count === 1 ? '' : 's'} · ${formatMoney(viewInvoice.total)}` : undefined}
+        size="lg"
+        footer={viewInvoice && (
+          <>
+            <button onClick={() => downloadInvoice(viewInvoice)} className="btn-secondary">Download PDF</button>
+            {viewInvoice.status !== 'paid' && viewInvoice.status !== 'cancelled' && <button onClick={() => { markInvoicePaid(viewInvoice); setViewInvoice(null) }} className="btn-primary"><CheckCircle2 /> Mark paid</button>}
+          </>
+        )}
+      >
         {viewInvoice && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-text-secondary">{viewInvoice.category === 'mixed' ? 'Solar & Roofing' : viewInvoice.category} · {viewInvoice.job_count} jobs</span>
-              <span className="font-mono text-lg font-bold text-accent">{formatMoney(viewInvoice.total)}</span>
-            </div>
-            <div className="border border-rim/[0.06] rounded-xl divide-y divide-rim/[0.04] max-h-[360px] overflow-y-auto">
-              {(viewInvoice.jobs || []).map(j => (
-                <div key={j.id} className="flex items-center gap-3 px-3 py-2.5">
-                  <JobTypeTag type={j.job_type} />
-                  <div className="flex-1 min-w-0"><div className="text-sm text-text-primary truncate">{j.client_name}</div><div className="text-[11px] text-text-tertiary">{j.appointment_date ? formatDate(j.appointment_date) : '—'} · {j.job_type === 'solar' ? `${j.system_size_kw ?? 0} kW` : formatMoney(j.contract_amount ?? 0)}</div></div>
-                  <span className="font-mono text-sm font-semibold text-text-primary">{formatMoney(effectiveOrZero(j))}</span>
+          <div className="rounded-lg border border-line max-h-[360px] overflow-y-auto">
+            {(viewInvoice.jobs || []).map(j => (
+              <div key={j.id} className="flex items-center gap-3 px-3 h-12 border-b border-line last:border-b-0">
+                <JobTypeTag type={j.job_type} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-fg truncate">{j.client_name}</div>
+                  <div className="text-xs text-fg-3">{j.appointment_date ? formatDay(j.appointment_date) : '—'} · {j.job_type === 'solar' ? `${j.system_size_kw ?? 0} kW` : formatMoney(j.contract_amount ?? 0)}</div>
                 </div>
-              ))}
-            </div>
-            <div className="flex justify-end gap-2 pt-1">
-              <button onClick={() => downloadInvoice(viewInvoice)} className="btn-secondary text-sm flex items-center gap-2"><Download className="w-4 h-4" />Download PDF</button>
-              {viewInvoice.status !== 'paid' && viewInvoice.status !== 'cancelled' && <button onClick={() => { markInvoicePaid(viewInvoice); setViewInvoice(null) }} className="btn-primary text-sm">Mark Paid</button>}
-            </div>
+                <span className="num text-sm font-semibold text-fg">{formatMoney(effectiveOrZero(j))}</span>
+              </div>
+            ))}
           </div>
         )}
       </Modal>
 
-      <ConfirmDialog isOpen={deleteId !== null} onClose={() => setDeleteId(null)} onConfirm={handleDelete} title="Delete Commission Job" message="Are you sure you want to delete this commission job? This cannot be undone." />
-      <ConfirmDialog isOpen={deleteInvoiceId !== null} onClose={() => setDeleteInvoiceId(null)} onConfirm={handleDeleteInvoice} title="Delete Commission Invoice" message="This removes the invoice and releases its unpaid jobs back to Owed. Continue?" />
-    </motion.div>
-  )
-}
-
-function HeroCard({ label, value, sub, tone }: { label: string; value: string; sub: string; tone?: 'paid' | 'invoiced' }) {
-  const color = tone === 'paid' ? 'text-status-paid' : tone === 'invoiced' ? 'text-status-sent' : 'text-text-primary'
-  return (
-    <div className="glass-panel p-4">
-      <div className="text-[10px] uppercase tracking-wider text-text-tertiary font-semibold">{label}</div>
-      <div className={`font-mono text-2xl sm:text-3xl font-bold mt-1 ${color}`}>{value}</div>
-      <div className="text-[11px] text-text-tertiary mt-0.5">{sub}</div>
+      <ConfirmDialog isOpen={deleteId !== null} onClose={() => setDeleteId(null)} onConfirm={handleDelete} title="Delete this job?" message="This removes the commission job for good." />
+      <ConfirmDialog isOpen={deleteInvoiceId !== null} onClose={() => setDeleteInvoiceId(null)} onConfirm={handleDeleteInvoice} title="Delete this invoice?" message="Its unpaid jobs go back to Owed so you can invoice them again." />
     </div>
   )
 }
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return <div className="px-3 first:pl-0 text-center sm:text-left"><div className="text-[10px] uppercase tracking-wider text-text-tertiary">{label}</div><div className="font-mono text-sm font-semibold text-text-primary mt-0.5">{value}</div></div>
-}
+
 function JobTypeTag({ type }: { type: CommissionJobType }) {
-  return <span className="inline-flex items-center gap-1 text-xs text-text-secondary flex-shrink-0">{type === 'solar' ? <Sun className="w-3.5 h-3.5 text-accent" /> : <Home className="w-3.5 h-3.5 text-status-complete" />}{type === 'solar' ? 'Solar' : 'Roofing'}</span>
-}
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <div className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">{children}</div>
+  return (
+    <span className="inline-flex items-center gap-1.5 text-sm text-fg-2 shrink-0">
+      {type === 'solar' ? <Sun className="w-3.5 h-3.5 text-amber" /> : <Home className="w-3.5 h-3.5 text-blue" />}
+      {type === 'solar' ? 'Solar' : 'Roofing'}
+    </span>
+  )
 }

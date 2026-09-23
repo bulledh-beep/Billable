@@ -7,6 +7,12 @@ import { createMenu } from './menu'
 import { TimerManager } from './timer-manager'
 import { migrateLegacyIfNeeded, getActiveProfileId } from './profiles'
 
+// Dev/test hook: run against an isolated data folder instead of the real
+// ~/Library/Application Support/Billable. Unset in normal use.
+if (process.env.BILLABLE_USER_DATA) {
+  app.setPath('userData', process.env.BILLABLE_USER_DATA)
+}
+
 let mainWindow: BrowserWindow | null = null
 let timerManager: TimerManager
 
@@ -18,7 +24,11 @@ function createWindow() {
     minHeight: 600,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 18 },
-    backgroundColor: '#0F0F11',
+    // The sidebar shows the Mac's translucent sidebar material through a
+    // transparent page background. The content column paints its own color.
+    vibrancy: 'sidebar',
+    visualEffectState: 'followWindow',
+    backgroundColor: '#00000000',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),

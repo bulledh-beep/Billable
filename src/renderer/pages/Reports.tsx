@@ -1,239 +1,244 @@
-import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
-import { BarChart3, Download } from 'lucide-react'
+import { useState, useEffect, useMemo } from 'react'
+import { BarChart3 } from 'lucide-react'
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
-import { formatMoney, formatHours } from '../utils/format'
+import PageHeader from '../components/PageHeader'
+import Segmented from '../components/Segmented'
+import Metric, { MetricStrip } from '../components/Metric'
+import Money from '../components/Money'
+import EmptyState from '../components/EmptyState'
+import { formatMoney, formatMoneyCompact, formatHoursShort, todayISO, addDays, toLocalISODate, parseLocalDate } from '../utils/format'
 import toast from 'react-hot-toast'
 
-const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.06 } } }
-const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }
+type Preset = 'week' | 'month' | 'last-month' | 'quarter' | 'year' | 'custom'
+type Tab = 'projects' | 'clients' | 'income'
 
-const CHART_COLORS = ['#F5A623', '#3498DB', '#2ECC71', '#E74C3C', '#9B59B6', '#1ABC9C', '#E67E22', '#EC407A']
+const FALLBACK_COLORS = ['#F5A623', '#3E8BF7', '#30A46C', '#E5484D', '#8E4EC6', '#12A594', '#F76B15', '#D6409F']
+const SERIES_COLOR: Record<string, string> = { invoiced: '#3E8BF7', paid: '#30A46C' }
 
-interface ReportsProps {
+function rangeFor(preset: Preset): { start: string; end: string } {
+  const today = todayISO()
+  const d = parseLocalDate(today)
+  const y = d.getFullYear()
+  const m = d.getMonth()
+  switch (preset) {
+    case 'week': {
+      const start = addDays(today, -((d.getDay() + 6) % 7))
+      return { start, end: addDays(start, 6) }
+    }
+    case 'month':
+      return { start: toLocalISODate(new Date(y, m, 1)), end: toLocalISODate(new Date(y, m + 1, 0)) }
+    case 'last-month':
+      return { start: toLocalISODate(new Date(y, m - 1, 1)), end: toLocalISODate(new Date(y, m, 0)) }
+    case 'quarter': {
+      const q = Math.floor(m / 3) * 3
+      return { start: toLocalISODate(new Date(y, q, 1)), end: toLocalISODate(new Date(y, q + 3, 0)) }
+    }
+    default:
+      return { start: `${y}-01-01`, end: `${y}-12-31` }
+  }
+}
+
+interface Props {
   isTimerRunning: boolean
   isTimerPaused: boolean
 }
 
-export default function Reports({ isTimerRunning, isTimerPaused }: ReportsProps) {
-  const [dateRange, setDateRange] = useState({
-    start: new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0],
-    end: new Date().toISOString().split('T')[0],
-  })
-  const [hoursByProject, setHoursByProject] = useState<any[]>([])
-  const [hoursByClient, setHoursByClient] = useState<any[]>([])
-  const [earningsByMonth, setEarningsByMonth] = useState<any[]>([])
-  const [activeTab, setActiveTab] = useState<'projects' | 'clients' | 'earnings'>('projects')
+export default function Reports({ isTimerRunning, isTimerPaused }: Props) {
+  const [preset, setPreset] = useState<Preset>('year')
+  const [range, setRange] = useState(rangeFor('year'))
+  const [tab, setTab] = useState<Tab>('projects')
+  const [byProject, setByProject] = useState<any[]>([])
+  const [byClient, setByClient] = useState<any[]>([])
+  const [byMonth, setByMonth] = useState<any[]>([])
 
-  useEffect(() => { loadReports() }, [dateRange])
-
-  // Refresh whenever the timer starts/stops so new entries & projects appear in totals
-  useEffect(() => { loadReports() }, [isTimerRunning, isTimerPaused])
-
-  // Refresh on window focus so navigating back from another app / page picks up changes
+  useEffect(() => { load() }, [range, isTimerRunning, isTimerPaused])
   useEffect(() => {
-    const onFocus = () => loadReports()
+    const onFocus = () => load()
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
-  }, [dateRange])
+  }, [range])
 
-  const loadReports = async () => {
-    const [byProject, byClient, byMonth] = await Promise.all([
-      window.api.reports.hoursByProject(dateRange.start, dateRange.end),
-      window.api.reports.hoursByClient(dateRange.start, dateRange.end),
-      window.api.reports.earningsByMonth(dateRange.start, dateRange.end),
+  const load = async () => {
+    if (!range.start || !range.end || range.start > range.end) return
+    const [p, c, m] = await Promise.all([
+      window.api.reports.hoursByProject(range.start, range.end),
+      window.api.reports.hoursByClient(range.start, range.end),
+      window.api.reports.earningsByMonth(range.start, range.end),
     ])
-    setHoursByProject(byProject)
-    setHoursByClient(byClient)
-    setEarningsByMonth(byMonth)
+    setByProject(p)
+    setByClient(c)
+    setByMonth(m)
   }
 
-  const handleExport = async () => {
-    let data: any[]
-    let filename: string
-    if (activeTab === 'projects') {
-      data = hoursByProject
-      filename = 'hours-by-project.csv'
-    } else if (activeTab === 'clients') {
-      data = hoursByClient
-      filename = 'hours-by-client.csv'
-    } else {
-      data = earningsByMonth
-      filename = 'earnings-by-month.csv'
-    }
+  const choosePreset = (p: Preset) => {
+    setPreset(p)
+    if (p !== 'custom') setRange(rangeFor(p))
+  }
 
-    if (data.length === 0) return toast.error('No data to export')
-    const result = await window.api.reports.exportCSV(data, filename)
+  const totals = useMemo(() => ({
+    hours: byProject.reduce((s, r) => s + r.hours, 0),
+    value: byProject.reduce((s, r) => s + (r.value || 0), 0),
+    invoiced: byMonth.reduce((s, r) => s + (r.invoiced || 0), 0),
+    paid: byMonth.reduce((s, r) => s + (r.paid || 0), 0),
+  }), [byProject, byMonth])
+
+  const monthSeries = useMemo(() => byMonth.map(r => ({
+    ...r,
+    label: parseLocalDate(`${r.month}-01`).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+  })), [byMonth])
+
+  const handleExport = async () => {
+    const data = tab === 'projects'
+      ? byProject.map(r => ({ project: r.name, client: r.client_name, hours: r.hours.toFixed(2), billable_value: (r.value || 0).toFixed(2) }))
+      : tab === 'clients'
+        ? byClient.map(r => ({ client: r.name, hours: r.hours.toFixed(2), billable_value: (r.value || 0).toFixed(2) }))
+        : byMonth.map(r => ({ month: r.month, invoiced: (r.invoiced || 0).toFixed(2), paid: (r.paid || 0).toFixed(2) }))
+    if (data.length === 0) return toast.error('Nothing to export for this range')
+    const file = `${tab === 'income' ? 'income-by-month' : `hours-by-${tab === 'projects' ? 'project' : 'client'}`}-${range.start}-to-${range.end}.csv`
+    const result = await window.api.reports.exportCSV(data, file)
     if (result) toast.success('CSV exported')
   }
 
-  const totalHours = hoursByProject.reduce((sum, p) => sum + p.hours, 0)
-
-  const customTooltip = ({ active, payload, label }: any) => {
+  const axis = { stroke: 'rgb(var(--fg-4))', fontSize: 11, tickLine: false, axisLine: false }
+  const tooltip = (fmt: (v: number) => string) => ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null
     return (
-      <div className="bg-surface-200 border border-rim/[0.06] rounded-lg px-3 py-2 shadow-lg">
-        <p className="text-xs text-text-secondary mb-1">{label || payload[0]?.payload?.name}</p>
-        <p className="text-sm font-mono text-text-primary font-medium">
-          {activeTab === 'earnings' ? formatMoney(payload[0].value) : `${formatHours(payload[0].value)} hours`}
-        </p>
+      <div className="rounded-[8px] bg-panel shadow-pop px-3 py-2 text-xs">
+        <div className="text-fg-3 mb-1">{label || payload[0]?.payload?.name}</div>
+        {payload.map((p: any) => (
+          <div key={p.dataKey} className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: SERIES_COLOR[p.dataKey] || p.payload?.color || FALLBACK_COLORS[0] }} />
+            <span className="text-fg-2">{p.name}</span>
+            <span className="num font-medium text-fg ml-auto pl-3">{fmt(p.value)}</span>
+          </div>
+        ))}
       </div>
     )
   }
 
+  const rows = tab === 'projects' ? byProject : byClient
+
   return (
-    <motion.div variants={container} initial="hidden" animate="show" className="p-8">
-      <motion.div variants={item} className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-text-primary">Reports</h1>
-          <p className="text-sm text-text-secondary mt-1">
-            {formatHours(totalHours)} total hours tracked
-          </p>
-        </div>
-        <button onClick={handleExport} className="btn-secondary flex items-center gap-2">
-          <Download className="w-4 h-4" /> Export CSV
-        </button>
-      </motion.div>
+    <div className="page">
+      <PageHeader
+        title="Reports"
+        actions={<button onClick={handleExport} className="btn-secondary">Export CSV</button>}
+      />
 
-      {/* Date Range */}
-      <motion.div variants={item} className="flex gap-4 items-center mb-6">
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-text-tertiary">From</label>
+      <div className="flex items-center gap-3 mb-5 flex-wrap">
+        <Segmented
+          value={preset}
+          onChange={choosePreset}
+          options={[
+            { value: 'week', label: 'This week' },
+            { value: 'month', label: 'This month' },
+            { value: 'last-month', label: 'Last month' },
+            { value: 'quarter', label: 'This quarter' },
+            { value: 'year', label: 'This year' },
+            { value: 'custom', label: 'Custom' },
+          ]}
+        />
+        <div className="flex items-center gap-2 ml-auto">
           <input
             type="date"
-            value={dateRange.start}
-            onChange={e => setDateRange(d => ({ ...d, start: e.target.value }))}
-            className="input-field w-40"
+            className="input w-[150px]"
+            value={range.start}
+            onChange={e => { setPreset('custom'); setRange(r => ({ ...r, start: e.target.value })) }}
           />
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-text-tertiary">To</label>
+          <span className="text-fg-4">–</span>
           <input
             type="date"
-            value={dateRange.end}
-            onChange={e => setDateRange(d => ({ ...d, end: e.target.value }))}
-            className="input-field w-40"
+            className="input w-[150px]"
+            value={range.end}
+            onChange={e => { setPreset('custom'); setRange(r => ({ ...r, end: e.target.value })) }}
           />
         </div>
-      </motion.div>
+      </div>
 
-      {/* Tabs */}
-      <motion.div variants={item} className="flex gap-1 bg-surface-100 rounded-lg p-0.5 border border-rim/[0.04] w-fit mb-6">
-        {[
-          { key: 'projects', label: 'Hours by Project' },
-          { key: 'clients', label: 'Hours by Client' },
-          { key: 'earnings', label: 'Earnings by Month' },
-        ].map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key as any)}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              activeTab === tab.key ? 'bg-surface-300 text-text-primary' : 'text-text-tertiary hover:text-text-secondary'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </motion.div>
+      <MetricStrip className="mb-5">
+        <Metric label="Hours tracked" value={formatHoursShort(totals.hours)} sub={`${byProject.length} project${byProject.length === 1 ? '' : 's'}`} />
+        <Metric label="Billable value" value={<Money amount={totals.value} />} sub="Tracked time at project rates" />
+        <Metric label="Invoiced" value={<Money amount={totals.invoiced} />} sub="Issued in this range" />
+        <Metric label="Paid" value={<Money amount={totals.paid} />} sub="Received in this range" />
+      </MetricStrip>
 
-      {/* Chart */}
-      <motion.div variants={item} className="glass-panel p-6">
-        {activeTab === 'projects' && (
-          hoursByProject.length === 0 ? (
-            <div className="text-center py-16">
-              <BarChart3 className="w-10 h-10 text-text-tertiary mx-auto mb-2" />
-              <p className="text-sm text-text-secondary">No data for this period</p>
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={400}>
-              <BarChart data={hoursByProject} layout="vertical" margin={{ left: 120 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--rim) / 0.08)" />
-                <XAxis type="number" stroke="#6B6A67" fontSize={12} tickFormatter={v => `${v}h`} />
-                <YAxis type="category" dataKey="name" stroke="#6B6A67" fontSize={12} width={110} />
-                <Tooltip content={customTooltip} />
-                <Bar dataKey="hours" radius={[0, 4, 4, 0]}>
-                  {hoursByProject.map((entry, i) => (
-                    <Cell key={i} fill={entry.color || CHART_COLORS[i % CHART_COLORS.length]} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          )
-        )}
+      <div className="flex items-center mb-3">
+        <Segmented
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'projects', label: 'Time by project' },
+            { value: 'clients', label: 'Time by client' },
+            { value: 'income', label: 'Income by month' },
+          ]}
+        />
+      </div>
 
-        {activeTab === 'clients' && (
-          hoursByClient.length === 0 ? (
-            <div className="text-center py-16">
-              <BarChart3 className="w-10 h-10 text-text-tertiary mx-auto mb-2" />
-              <p className="text-sm text-text-secondary">No data for this period</p>
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={400}>
-              <BarChart data={hoursByClient} layout="vertical" margin={{ left: 120 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--rim) / 0.08)" />
-                <XAxis type="number" stroke="#6B6A67" fontSize={12} tickFormatter={v => `${v}h`} />
-                <YAxis type="category" dataKey="name" stroke="#6B6A67" fontSize={12} width={110} />
-                <Tooltip content={customTooltip} />
-                <Bar dataKey="hours" radius={[0, 4, 4, 0]}>
-                  {hoursByClient.map((_, i) => (
-                    <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          )
-        )}
-
-        {activeTab === 'earnings' && (
-          earningsByMonth.length === 0 ? (
-            <div className="text-center py-16">
-              <BarChart3 className="w-10 h-10 text-text-tertiary mx-auto mb-2" />
-              <p className="text-sm text-text-secondary">No data for this period</p>
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={400}>
-              <BarChart data={earningsByMonth}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--rim) / 0.08)" />
-                <XAxis dataKey="month" stroke="#6B6A67" fontSize={12} />
-                <YAxis stroke="#6B6A67" fontSize={12} tickFormatter={v => `$${v}`} />
-                <Tooltip content={customTooltip} />
-                <Bar dataKey="earnings" fill="#F5A623" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )
-        )}
-      </motion.div>
-
-      {/* Summary Table */}
-      {activeTab === 'projects' && hoursByProject.length > 0 && (
-        <motion.div variants={item} className="glass-panel overflow-hidden mt-6">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-rim/[0.04]">
-                <th className="text-left px-4 py-3 text-xs font-medium text-text-tertiary">Project</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-text-tertiary">Hours</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-text-tertiary">% of Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {hoursByProject.map((p, i) => (
-                <tr key={i} className="border-b border-rim/[0.02]">
-                  <td className="px-4 py-3 text-sm text-text-primary flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color || CHART_COLORS[i % CHART_COLORS.length] }} />
-                    {p.name}
-                  </td>
-                  <td className="px-4 py-3 text-sm font-mono text-text-primary text-right">{formatHours(p.hours)}</td>
-                  <td className="px-4 py-3 text-sm font-mono text-text-secondary text-right">
-                    {totalHours > 0 ? ((p.hours / totalHours) * 100).toFixed(1) : 0}%
-                  </td>
+      {tab !== 'income' ? (
+        rows.length === 0 ? (
+          <div className="card"><EmptyState icon={BarChart3} title="No time in this range" description="Pick a different range or track some time." /></div>
+        ) : (
+          <div className="card overflow-hidden">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>{tab === 'projects' ? 'Project' : 'Client'}</th>
+                  <th className="text-right w-24">Hours</th>
+                  <th className="w-[220px]">Share of time</th>
+                  <th className="text-right w-28">Value</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </motion.div>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => {
+                  const share = totals.hours > 0 ? r.hours / totals.hours : 0
+                  const topHours = rows[0]?.hours || 1
+                  return (
+                    <tr key={r.id ?? i}>
+                      <td>
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: r.color || FALLBACK_COLORS[i % FALLBACK_COLORS.length] }} />
+                          <div className="min-w-0">
+                            <div className="text-[13px] text-fg truncate max-w-[360px]">{r.name}</div>
+                            {r.client_name && <div className="text-xs text-fg-3 truncate">{r.client_name}</div>}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="text-right num text-fg">{formatHoursShort(r.hours)}</td>
+                      <td>
+                        <div className="flex items-center gap-2.5">
+                          <div className="flex-1 h-[6px] rounded-full bg-fg/[0.07] overflow-hidden">
+                            <div className="h-full rounded-full bg-accent" style={{ width: `${Math.max(2, (r.hours / topHours) * 100)}%` }} />
+                          </div>
+                          <span className="w-9 text-right text-xs num text-fg-3">{`${Math.round(share * 100)}%`}</span>
+                        </div>
+                      </td>
+                      <td className="text-right num text-fg-2">{formatMoney(r.value || 0)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : byMonth.length === 0 ? (
+        <div className="card"><EmptyState icon={BarChart3} title="No invoices in this range" description="Income shows up here once invoices are sent or paid." /></div>
+      ) : (
+        <div className="card p-4">
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={monthSeries} margin={{ left: 0, right: 8, top: 8, bottom: 0 }} barGap={4}>
+              <CartesianGrid vertical={false} stroke="rgb(var(--line))" />
+              <XAxis dataKey="label" {...axis} />
+              <YAxis {...axis} width={56} tickFormatter={v => formatMoneyCompact(v)} />
+              <Tooltip cursor={{ fill: 'rgb(var(--fg) / 0.04)' }} content={tooltip(v => formatMoney(v))} />
+              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12, color: 'rgb(var(--fg-2))' }} />
+              <Bar dataKey="invoiced" name="Invoiced" fill="rgb(var(--blue))" radius={[3, 3, 0, 0]} maxBarSize={22} />
+              <Bar dataKey="paid" name="Paid" fill="rgb(var(--green))" radius={[3, 3, 0, 0]} maxBarSize={22} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
       )}
-    </motion.div>
+    </div>
   )
 }

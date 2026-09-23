@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 const api = {
+  appearance: {
+    set: (preference: 'light' | 'dark' | 'auto') => ipcRenderer.invoke('appearance:set', preference),
+  },
   // Clients
   clients: {
     list: () => ipcRenderer.invoke('clients:list'),
@@ -8,6 +11,7 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('clients:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('clients:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('clients:delete', id),
+    merge: (sourceId: number, targetId: number) => ipcRenderer.invoke('clients:merge', sourceId, targetId),
   },
   // Projects
   projects: {
@@ -33,6 +37,8 @@ const api = {
     unbilled: (projectId: number) => ipcRenderer.invoke('time:unbilled', projectId),
     unbilledMulti: (projectIds: number[]) => ipcRenderer.invoke('time:unbilled-multi', projectIds),
     unbilledByClient: (clientId: number) => ipcRenderer.invoke('time:unbilled-by-client', clientId),
+    invoiceable: (clientId: number, invoiceId?: number | null) => ipcRenderer.invoke('time:invoiceable', clientId, invoiceId ?? null),
+    setBillable: (ids: number[], billable: boolean) => ipcRenderer.invoke('time:set-billable', ids, billable),
   },
   // Invoices
   invoices: {
@@ -42,6 +48,14 @@ const api = {
     update: (id: number, data: any) => ipcRenderer.invoke('invoices:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('invoices:delete', id),
     exportPDF: (id: number) => ipcRenderer.invoke('invoices:export-pdf', id),
+    markSent: (ids: number[]) => ipcRenderer.invoke('invoices:mark-sent', ids),
+    markPaid: (ids: number[], date?: string, method?: string | null) => ipcRenderer.invoke('invoices:mark-paid', ids, date, method),
+    markUnpaid: (id: number) => ipcRenderer.invoke('invoices:mark-unpaid', id),
+  },
+  // Billing pipeline
+  billing: {
+    overview: () => ipcRenderer.invoke('billing:overview'),
+    dismiss: (key: string) => ipcRenderer.invoke('billing:dismiss', key),
   },
   // Dashboard
   dashboard: {

@@ -51,33 +51,39 @@ The uninstaller removes the app bundle and asks (with a confirmation prompt) bef
 
 ## Features
 
-### Time tracking
-- One-click start/stop timer with live HH:MM:SS in the menu bar
-- Pause and resume the active project timer from the top Timer menu or active-timer controls
-- Persistent timer survives app restarts
-- Quick-start any active project from Dashboard, Projects list, or Project detail
-- Manual entries with date/time pickers
-- `+15m / +30m / +1h` quick-add buttons on every entry
-- Configurable time rounding (none / 6 / 15 / 30 minutes)
-- Global shortcut `Cmd+Shift+Space` to stop the active timer
-
-### Clients & projects
-- Full CRUD with rate, currency, default billing terms
-- Per-project hourly rate override (defaults from client)
-- Editing a client's default rate cascades to projects still using the old rate — already-invoiced time is unaffected
-- Project status: Active / Paused / Complete / Archived
-- Multi-project invoice generation
+### Billing you can trust
+- **Every time entry knows its invoice.** Each entry shows where its money is: Unbilled, Draft, Sent, Overdue, or Paid, with the invoice number
+- **Billing page** with the whole pipeline at a glance: ready to bill, drafts, awaiting payment, overdue, and paid this year
+- **Needs attention** list that catches forgotten money: unbilled work older than 30 days, leftover time on completed projects, overdue invoices, stale drafts, accidental timers, and duplicate clients
+- Invoices turn overdue on their own once the due date passes
+- Record several payments at once with the real date the money arrived, and undo a payment recorded by mistake
+- Deleting an invoice puts its time back to unbilled instead of losing it
+- Menu bar shows how much is ready to bill
 
 ### Invoicing
-- Auto-populate line items from unbilled time entries
-- Per-invoice GST/HST toggle with provincial rate suggestions (5% GST / 13–15% HST)
-- Separate "other tax" field for PST or non-Canadian sales tax
-- Payment tracking: mark invoices paid with date + method
-- "PAID" watermark stamp on paid invoice PDFs
-- Quick "Mark Sent" / "Mark Paid" actions on the invoice list (no detail-page roundtrip)
-- Editable line items and re-edit after creation
-- PDF export (`Cmd+P`-style native print pipeline, no Puppeteer)
+- Build an invoice from exactly the time you tick, across all of a client's projects
+- "Bill through" date to invoice up to a cut-off
+- Line styles: one line per entry, per project, or per day, with editable descriptions and rates
+- Marking a project complete with unbilled time asks whether to invoice it, keep it, or not bill it
+- Per-invoice GST/HST toggle with provincial rate suggestions (5% GST / 13–15% HST), plus an "other tax" field
+- Clean PDF export that matches the in-app preview, with a Paid tag on paid invoices
 - CSV export of any filtered list
+
+### Time tracking
+- Start a timer for any project from the toolbar on every page, or from the menu bar
+- Pause and resume, with the timer surviving app restarts
+- Week view with daily totals, entries grouped by day, and a filter for unbilled or invoiced time
+- One editor for adding and editing time, where start, end, and duration stay in sync
+- Editing time that is already on a sent or paid invoice asks first
+- Timers that run under a minute are discarded instead of rounded up into billable time
+- Configurable rounding (none, or round up to 6 / 15 / 30 minutes)
+
+### Clients & projects
+- Money at a glance on every client and project: unbilled, outstanding, invoiced, and paid
+- Per-project hourly rate override (defaults from client)
+- Editing a client's default rate moves projects still on the old rate, while invoiced time keeps its rate
+- Merge duplicate clients, with their projects and invoices moving over
+- Project status: Active / Paused / Complete / Archived
 
 ### Tax tracking — Canadian-aware
 - **Tax Settings**: business identity, province selector, GST/HST registration, fiscal year, estimated income tax bracket
@@ -87,8 +93,9 @@ The uninstaller removes the app bundle and asks (with a confirmation prompt) bef
 - Year-end **Invoice CSV** and **Expense CSV** exports
 
 ### Reports
-- Hours by project, hours by client, earnings by month
-- Date range filter
+- Time by project and by client, with billable value
+- Income by month, split into invoiced and paid
+- Presets for this week, month, quarter, and year, or a custom range
 - CSV export
 
 ### Multiple profiles
@@ -98,8 +105,7 @@ The uninstaller removes the app bundle and asks (with a confirmation prompt) bef
 - Theme preference and window size stay global
 
 ### Theming
-- Dark / Light / Auto (follows your macOS appearance setting)
-- Quick toggle in the sidebar footer; full picker in Settings → Appearance
+- Dark / Light / Auto (follows your macOS appearance setting), set in Settings → Appearance
 
 ### Self-updating
 - Checks GitHub Releases on launch (and on demand from Settings)
@@ -163,7 +169,7 @@ The script bumps the version, builds the DMG, pushes the tag, and publishes a Gi
 - Tailwind CSS with CSS-variable-driven theming
 - Framer Motion for transitions
 - Recharts for the bar charts
-- DM Mono for numbers, Outfit for everything else
+- The system font (SF Pro) with tabular figures, so nothing loads from the network
 
 ---
 
@@ -174,7 +180,11 @@ The script bumps the version, builds the DMG, pushes the tag, and publishes a Gi
 | `Cmd+Shift+Space` | Toggle timer (global) |
 | `Cmd+Shift+P` | Pause or resume the active timer |
 | `Cmd+Shift+S` | Stop the active timer |
-| `Cmd+1` … `Cmd+6` | Jump to Dashboard / Clients / Projects / Time / Invoices / Reports |
+| `Cmd+1` … `Cmd+6` | Jump to Dashboard / Clients / Projects / Time / Billing / Reports |
+| `Cmd+N` | New client |
+| `Cmd+Shift+N` | New project |
+| `Cmd+T` | Add time |
+| `Cmd+Shift+I` | New invoice |
 | `Cmd+,` | Settings |
 
 ---

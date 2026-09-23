@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronDown, Plus, Check, Pencil, Trash2, Camera, ImageOff } from 'lucide-react'
+import { Plus, Check, Pencil, Trash2, Camera, ImageOff, ChevronsUpDown } from 'lucide-react'
 import Modal from './Modal'
 import ConfirmDialog from './ConfirmDialog'
 import ProfileAvatar from './ProfileAvatar'
@@ -104,95 +104,98 @@ export default function ProfileSwitcher({ isTimerRunning, onStopTimer }: {
   if (!active) return null
 
   return (
-    <div ref={containerRef} className="relative px-3 mb-2">
+    <div ref={containerRef} className="relative px-2.5 shrink-0">
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-surface-200/60 transition-colors"
+        className={`w-full flex items-center gap-2 h-[30px] px-2 rounded-[6px] transition-colors ${open ? 'bg-fg/[0.08]' : 'hover:bg-fg/[0.05]'}`}
+        title="Switch profile"
       >
-        <ProfileAvatar profile={active} size="sm" />
-        <div className="flex-1 min-w-0 text-left">
-          <div className="text-[10px] uppercase tracking-wider text-text-tertiary leading-none">Profile</div>
-          <div className="text-xs font-medium text-text-primary truncate mt-0.5">{active.name}</div>
-        </div>
-        <ChevronDown className={`w-3.5 h-3.5 text-text-tertiary transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ProfileAvatar profile={active} size="xs" className="!w-[18px] !h-[18px] !text-[9px]" />
+        <span className="flex-1 min-w-0 text-left text-[13px] text-fg/85 truncate">{active.name}</span>
+        <ChevronsUpDown className="w-3.5 h-3.5 text-fg-4" />
       </button>
 
       <AnimatePresence>
         {open && (
           <motion.div
-            initial={{ opacity: 0, y: -4 }}
+            initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
+            exit={{ opacity: 0, y: 4 }}
             transition={{ duration: 0.12 }}
-            className="absolute left-3 right-3 top-full mt-1 z-30 rounded-lg border border-rim/[0.08] bg-surface-100 shadow-xl py-1 overflow-hidden"
+            className="absolute left-2.5 right-2.5 bottom-full mb-1 z-30 rounded-[8px] bg-panel shadow-pop py-1 overflow-hidden"
           >
+            <div className="px-3 pt-1 pb-1 text-2xs font-semibold text-fg-3">Profiles</div>
             {profiles.map(p => (
               <button
                 key={p.id}
                 onClick={() => requestSwitch(p.id)}
-                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-surface-200/60 transition-colors"
+                className="w-full flex items-center gap-2.5 px-3 h-[26px] hover:bg-fg/[0.06] transition-colors"
               >
-                <ProfileAvatar profile={p} size="sm" />
-                <span className="text-xs text-text-primary flex-1 text-left truncate">{p.name}</span>
-                {p.id === active.id && <Check className="w-3.5 h-3.5 text-accent" />}
+                <ProfileAvatar profile={p} size="xs" />
+                <span className="text-sm text-fg flex-1 text-left truncate">{p.name}</span>
+                {p.id === active.id && <Check className="w-3.5 h-3.5 text-accent-text" />}
               </button>
             ))}
-            <div className="border-t border-rim/[0.04] my-1" />
+            <div className="border-t border-line my-1 mx-2" />
             <button
               onClick={openCreate}
-              className="w-full flex items-center gap-2 px-3 py-2 hover:bg-surface-200/60 transition-colors"
+              className="w-full flex items-center gap-2.5 px-3 h-[26px] hover:bg-fg/[0.06] transition-colors"
             >
-              <Plus className="w-3.5 h-3.5 text-accent" />
-              <span className="text-xs text-text-secondary">New Profile…</span>
+              <Plus className="w-3.5 h-3.5 text-fg-3" />
+              <span className="text-sm text-fg">New profile…</span>
             </button>
             <button
               onClick={() => { setOpen(false); setShowManage(true) }}
-              className="w-full flex items-center gap-2 px-3 py-2 hover:bg-surface-200/60 transition-colors"
+              className="w-full flex items-center gap-2.5 px-3 h-[26px] hover:bg-fg/[0.06] transition-colors"
             >
-              <Pencil className="w-3.5 h-3.5 text-text-tertiary" />
-              <span className="text-xs text-text-secondary">Manage Profiles…</span>
+              <Pencil className="w-3.5 h-3.5 text-fg-3" />
+              <span className="text-sm text-fg">Manage profiles…</span>
             </button>
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* Create modal */}
-      <Modal isOpen={showCreate} onClose={() => setShowCreate(false)} title="New Profile" size="sm">
+      <Modal
+        isOpen={showCreate}
+        onClose={() => setShowCreate(false)}
+        title="New profile"
+        description="Each profile has its own clients, projects, time, invoices, expenses, and tax settings."
+        size="sm"
+        footer={
+          <>
+            <button onClick={() => setShowCreate(false)} className="btn-secondary">Cancel</button>
+            <button onClick={handleCreate} className="btn-primary">Create and switch</button>
+          </>
+        }
+      >
         <div className="space-y-4">
           <div>
-            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Name</label>
+            <label className="label">Name</label>
             <input
-              className="input-field"
+              className="input"
               value={newName}
               onChange={e => setNewName(e.target.value)}
-              placeholder="e.g. Side Business"
+              placeholder="Side business"
               autoFocus
               onKeyDown={e => { if (e.key === 'Enter') handleCreate() }}
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-text-secondary mb-1.5 block">Color</label>
+            <label className="label">Color</label>
             <div className="flex gap-2">
               {PROFILE_COLORS.map(c => (
                 <button
                   key={c}
                   type="button"
                   onClick={() => setNewColor(c)}
-                  className={`w-8 h-8 rounded-lg transition-all ${newColor === c ? 'ring-2 ring-white/40 scale-110' : 'hover:scale-105'}`}
+                  className={`w-7 h-7 rounded-full transition-transform ${newColor === c ? 'ring-2 ring-offset-2 ring-offset-panel ring-fg/40 scale-105' : 'hover:scale-105'}`}
                   style={{ backgroundColor: c }}
+                  aria-label={`Color ${c}`}
                 />
               ))}
             </div>
           </div>
-          <div className="flex justify-end gap-3 pt-2">
-            <button onClick={() => setShowCreate(false)} className="btn-secondary">Cancel</button>
-            <button onClick={handleCreate} className="btn-primary">
-              Create & Switch
-            </button>
-          </div>
-          <p className="text-[10px] text-text-tertiary leading-relaxed">
-            Each profile is a fully isolated database — its own clients, projects, time entries, invoices, expenses, and tax settings. You can switch between them anytime.
-          </p>
         </div>
       </Modal>
 
@@ -300,12 +303,18 @@ function ManageProfilesModal({
 
   return (
     <>
-      <Modal isOpen={open} onClose={onClose} title="Manage Profiles">
+      <Modal
+        isOpen={open}
+        onClose={onClose}
+        title="Manage profiles"
+        description="Deleting a profile permanently removes its data. The active profile can't be deleted."
+        footer={<button onClick={onClose} className="btn-primary">Done</button>}
+      >
         <div className="space-y-2">
           {localProfiles.map(p => (
             <div
               key={p.id}
-              className="flex items-center gap-3 p-3 rounded-lg bg-surface-200/40 border border-rim/[0.04]"
+              className="flex items-center gap-3 p-3 rounded-lg border border-line bg-panel-2/60"
             >
               {/* Avatar with hover overlay for change/remove */}
               <div className="relative group flex-shrink-0">
@@ -320,17 +329,17 @@ function ManageProfilesModal({
                 {p.avatar && (
                   <button
                     onClick={() => handleClearAvatar(p)}
-                    className="absolute -top-1 -right-1 p-0.5 rounded-full bg-surface-100 border border-rim/[0.1] opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20"
+                    className="absolute -top-1 -right-1 p-0.5 rounded-full bg-panel border border-line opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red/15"
                     title="Remove photo"
                   >
-                    <ImageOff className="w-2.5 h-2.5 text-text-tertiary" />
+                    <ImageOff className="w-2.5 h-2.5 text-fg-3" />
                   </button>
                 )}
               </div>
               {editingId === p.id ? (
                 <>
                   <input
-                    className="input-field flex-1"
+                    className="input flex-1"
                     value={editName}
                     autoFocus
                     onChange={e => setEditName(e.target.value)}
@@ -339,18 +348,16 @@ function ManageProfilesModal({
                       if (e.key === 'Escape') setEditingId(null)
                     }}
                   />
-                  <button onClick={saveEdit} className="btn-primary text-xs py-1.5">Save</button>
-                  <button onClick={() => setEditingId(null)} className="btn-secondary text-xs py-1.5">Cancel</button>
+                  <button onClick={saveEdit} className="btn-primary btn-sm">Save</button>
+                  <button onClick={() => setEditingId(null)} className="btn-secondary btn-sm">Cancel</button>
                 </>
               ) : (
                 <>
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm text-text-primary truncate flex items-center gap-2">
+                    <div className="text-sm font-medium text-fg truncate flex items-center gap-2">
                       {p.name}
                       {p.id === active.id && (
-                        <span className="text-[10px] uppercase tracking-wider text-accent px-1.5 py-0.5 rounded bg-accent/10">
-                          active
-                        </span>
+                        <span className="badge bg-accent/12 text-accent-text">Active</span>
                       )}
                     </div>
                     <div className="flex gap-1 mt-1.5">
@@ -359,40 +366,29 @@ function ManageProfilesModal({
                           key={c}
                           type="button"
                           onClick={() => handleColor(p, c)}
-                          className={`w-3.5 h-3.5 rounded-full transition-all ${p.color === c ? 'ring-1 ring-white/60 scale-110' : 'opacity-60 hover:opacity-100'}`}
+                          className={`w-3.5 h-3.5 rounded-full transition-all ${p.color === c ? 'ring-2 ring-offset-1 ring-offset-panel ring-fg/40' : 'opacity-60 hover:opacity-100'}`}
                           style={{ backgroundColor: c }}
                           title={c}
                         />
                       ))}
                     </div>
                   </div>
-                  <button
-                    onClick={() => startEdit(p)}
-                    className="p-1.5 hover:bg-surface-300 rounded-lg transition-colors"
-                    title="Rename"
-                  >
-                    <Pencil className="w-3.5 h-3.5 text-text-tertiary" />
+                  <button onClick={() => startEdit(p)} className="btn-icon-sm" title="Rename">
+                    <Pencil />
                   </button>
                   <button
                     onClick={() => setDeleteId(p.id)}
                     disabled={p.id === active.id || localProfiles.length <= 1}
-                    className="p-1.5 hover:bg-red-500/10 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="btn-icon-sm hover:text-red"
                     title={p.id === active.id ? 'Switch away from this profile to delete it' : 'Delete profile'}
                   >
-                    <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                    <Trash2 />
                   </button>
                 </>
               )}
             </div>
           ))}
 
-          <div className="flex justify-end gap-3 pt-3">
-            <button onClick={onClose} className="btn-secondary">Done</button>
-          </div>
-
-          <p className="text-[10px] text-text-tertiary leading-relaxed pt-1">
-            Deleting a profile permanently removes its database — all clients, projects, time entries, invoices, and expenses. This cannot be undone.
-          </p>
         </div>
       </Modal>
 
