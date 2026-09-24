@@ -31,6 +31,8 @@ export default function Stamp({ label, detail, tone, className = '' }: {
         boxShadow: `inset 0 0 0 2px #fff, inset 0 0 0 3px ${ink}`,
         transform: 'rotate(-8deg)',
         opacity: 0.9,
+        // Pressed down onto the paper a beat after the page appears
+        animation: 'stamp-thunk 560ms cubic-bezier(0.3, 1.1, 0.5, 1) 280ms both',
         mixBlendMode: 'multiply',
         WebkitMaskImage: WEAR,
         maskImage: WEAR,

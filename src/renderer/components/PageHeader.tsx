@@ -58,8 +58,8 @@ export default function PageHeader({ title, crumbs, meta, subtitle, actions }: P
             </Link>
           )}
           <div className="min-w-0">
-            <h1 className="text-[15px] leading-[18px] font-semibold text-fg truncate">{title}</h1>
-            {(subtitle || back) && <div className="text-2xs text-fg-3 truncate">{subtitle || back?.label}</div>}
+            <h1 className="text-[20px] leading-[24px] font-bold tracking-[-0.015em] text-fg truncate">{title}</h1>
+            {(subtitle || back) && <div className="text-[12px] font-semibold text-fg-3 truncate">{subtitle || back?.label}</div>}
           </div>
           {meta && <div className="no-drag flex items-center gap-2 ml-2 shrink-0">{meta}</div>}
         </div>,

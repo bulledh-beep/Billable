@@ -16,7 +16,8 @@ import MergeClientsModal from '../components/MergeClientsModal'
 import { ClientAvatar } from './Clients'
 import { formatMoney, formatDay, formatHoursShort, daysSince } from '../utils/format'
 import { notifyBillingChanged, onBillingChanged } from '../utils/events'
-import { ATTENTION_ICON, attentionColor } from '../utils/attention'
+import { ATTENTION_ICON } from '../utils/attention'
+import { IconHourglass, IconReceipt, IconSend, IconAlert, IconTrophy } from '../components/Illustrations'
 import type { AttentionItem, BillingOverview, Client, Invoice, TimeEntry } from '@shared/types'
 import toast from 'react-hot-toast'
 
@@ -240,34 +241,44 @@ export default function Billing() {
       <MetricStrip className="mb-6">
         <Metric
           label="Ready to bill"
-          value={<Money amount={pipeline.unbilled_amount} />}
+          icon={<IconHourglass />}
+          tint="orange"
+          value={<Money animate amount={pipeline.unbilled_amount} />}
           sub={pipeline.unbilled_hours > 0 ? `${formatHoursShort(pipeline.unbilled_hours)} across ${pipeline.unbilled_projects} project${pipeline.unbilled_projects === 1 ? '' : 's'}` : 'All caught up'}
           onClick={() => readyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
         />
         <Metric
           label="Drafts"
-          value={<Money amount={pipeline.draft_amount} />}
+          icon={<IconReceipt />}
+          tint="purple"
+          value={<Money animate amount={pipeline.draft_amount} />}
           sub={`${pipeline.draft_count} not sent yet`}
           onClick={() => showInvoices('draft')}
           active={filter === 'draft'}
         />
         <Metric
           label="Awaiting payment"
-          value={<Money amount={pipeline.awaiting_amount} />}
+          icon={<IconSend />}
+          tint="blue"
+          value={<Money animate amount={pipeline.awaiting_amount} />}
           sub={`${pipeline.awaiting_count} invoice${pipeline.awaiting_count === 1 ? '' : 's'} sent`}
           onClick={() => showInvoices('sent')}
           active={filter === 'sent'}
         />
         <Metric
           label="Overdue"
-          value={<Money amount={pipeline.overdue_amount} className={pipeline.overdue_amount > 0 ? 'text-red' : ''} />}
+          icon={<IconAlert />}
+          tint="red"
+          value={<Money animate amount={pipeline.overdue_amount} className={pipeline.overdue_amount > 0 ? 'text-red' : ''} />}
           sub={pipeline.overdue_count ? `${pipeline.overdue_count} past due` : 'Nothing late'}
           onClick={() => showInvoices('overdue')}
           active={filter === 'overdue'}
         />
         <Metric
           label={`Paid in ${year0}`}
-          value={<Money amount={pipeline.paid_ytd_amount} />}
+          icon={<IconTrophy />}
+          tint="green"
+          value={<Money animate amount={pipeline.paid_ytd_amount} />}
           sub={`${pipeline.paid_ytd_count} invoice${pipeline.paid_ytd_count === 1 ? '' : 's'}`}
           onClick={() => showInvoices('paid')}
           active={filter === 'paid'}
@@ -279,15 +290,16 @@ export default function Billing() {
         <section className="mb-6">
           <div className="group-head">
             <h2 className="section-title">
-              Needs attention <span className="ml-1 font-normal text-fg-3 num">{attention.length}</span>
+              Needs attention
+              <span className="ml-2 align-middle inline-flex items-center justify-center min-w-[20px] h-[20px] px-1.5 rounded-full bg-red text-white text-[11.5px] font-bold">{attention.length}</span>
             </h2>
           </div>
           <div className="card overflow-hidden">
             {attention.map(item => {
               const Icon = ATTENTION_ICON[item.kind]
               return (
-                <div key={item.key} className="list-row [--inset:44px] flex items-center gap-3 px-4 h-[48px]">
-                  <Icon className={`w-4 h-4 shrink-0 ${attentionColor(item.tone)}`} strokeWidth={1.75} />
+                <div key={item.key} className="list-row [--inset:60px] flex items-center gap-3.5 px-4 h-[60px]">
+                  <Icon className="w-8 h-8 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="text-[13px] font-medium text-fg truncate">{item.title}</div>
                     <div className="text-xs text-fg-3 truncate">{item.detail}</div>
@@ -328,7 +340,7 @@ export default function Billing() {
                     </div>
                   </div>
                   <div className="text-[13px] num font-semibold text-fg w-24 text-right">{formatMoney(group.amount)}</div>
-                  <div className="w-[84px] flex justify-end shrink-0">
+                  <div className="w-[118px] flex justify-end shrink-0">
                     <button onClick={() => navigate(`/invoices/new?client_id=${group.client_id}`)} className="btn-secondary btn-sm">
                       Invoice all
                     </button>
@@ -348,7 +360,7 @@ export default function Billing() {
                         <span className={`text-xs ${stale ? 'text-amber' : 'text-fg-3'}`}>since {formatDay(p.oldest_day)}</span>
                         <span className="text-xs text-fg-3 num w-14 text-right">{formatHoursShort(p.hours)}</span>
                         <span className="text-[13px] num text-fg-2 w-24 text-right">{formatMoney(p.amount)}</span>
-                        <div className="w-[84px] flex justify-end shrink-0">
+                        <div className="w-[118px] flex justify-end shrink-0">
                           <button
                             onClick={() => navigate(`/invoices/new?project_id=${p.project_id}`)}
                             className="btn-ghost btn-sm opacity-0 group-hover:opacity-100 focus-visible:opacity-100"

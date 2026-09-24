@@ -1,22 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import {
-  LayoutDashboard,
-  Users,
-  FolderKanban,
-  Clock,
-  Wallet,
-  BarChart3,
-  Settings,
-  Calculator,
-  Receipt,
-  HandCoins,
-} from 'lucide-react'
 import toast from 'react-hot-toast'
 import ProfileSwitcher from './ProfileSwitcher'
 import UpdateBanner from './UpdateBanner'
-import { LiveClockMark } from './Dial'
+import {
+  IconHome, IconClients, IconProjects, IconTime, IconBilling, IconReports,
+  IconCommissions, IconTax, IconReceipt, IconSettings,
+} from './Illustrations'
 import { onBillingChanged } from '../utils/events'
 
 // 🥚 Tap the logo 7 times in 3 seconds to discover this.
@@ -41,18 +32,18 @@ interface SidebarProps {
 }
 
 const navItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/clients', icon: Users, label: 'Clients' },
-  { to: '/projects', icon: FolderKanban, label: 'Projects' },
-  { to: '/time', icon: Clock, label: 'Time' },
-  { to: '/billing', icon: Wallet, label: 'Billing', badge: true },
-  { to: '/reports', icon: BarChart3, label: 'Reports' },
+  { to: '/', icon: IconHome, label: 'Dashboard' },
+  { to: '/clients', icon: IconClients, label: 'Clients' },
+  { to: '/projects', icon: IconProjects, label: 'Projects' },
+  { to: '/time', icon: IconTime, label: 'Time' },
+  { to: '/billing', icon: IconBilling, label: 'Billing', badge: true },
+  { to: '/reports', icon: IconReports, label: 'Reports' },
 ]
 
 const businessItems = [
-  { to: '/commissions', icon: HandCoins, label: 'Commissions' },
-  { to: '/tax-overview', icon: Calculator, label: 'Tax overview' },
-  { to: '/tax-settings', icon: Receipt, label: 'Tax settings' },
+  { to: '/commissions', icon: IconCommissions, label: 'Commissions' },
+  { to: '/tax-overview', icon: IconTax, label: 'Tax overview' },
+  { to: '/tax-settings', icon: IconReceipt, label: 'Tax settings' },
 ]
 
 /** How many billing items need a look. Refreshes on navigation, focus, and billing changes. */
@@ -98,70 +89,75 @@ export default function Sidebar({ isRunning, onStopTimer }: SidebarProps) {
   const isBillingActive = location.pathname.startsWith('/billing') || location.pathname.startsWith('/invoices')
 
   return (
-    <aside className="w-[220px] shrink-0 flex flex-col h-full">
+    <aside className="w-[228px] shrink-0 flex flex-col h-full bg-sidebar border-r border-line">
       {/* Traffic-light row doubles as the window drag handle */}
-      <div className="drag-region h-[44px] shrink-0" />
+      <div className="drag-region h-[40px] shrink-0" />
 
-      {/* Brand, goes to the Dashboard (and hides an easter egg) */}
-      <div className="px-2.5 shrink-0">
-        <NavLink
-          to="/"
-          end
-          onClick={handleLogoClick}
-          className="flex items-center gap-2 h-[30px] px-2 rounded-[6px] hover:bg-fg/[0.05] transition-colors"
-          title="Go to Dashboard"
-        >
-          <div className="relative w-[18px] h-[18px] shrink-0">
-            <AnimatePresence>
-              {showRing && (
-                <motion.div
-                  key="egg-ring"
-                  initial={{ scale: 0.85, opacity: 0.7 }}
-                  animate={{ scale: 2.6, opacity: 0 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.9, ease: 'easeOut' }}
-                  className="absolute inset-0 rounded-[5px] border-2 border-accent pointer-events-none"
-                />
-              )}
-            </AnimatePresence>
-            <motion.div animate={{ rotate: spinCount * 360 }} transition={{ duration: 0.7, ease: [0.4, 0, 0.2, 1] }}>
-              <LiveClockMark size={18} />
-            </motion.div>
-          </div>
-          {/* Set like the maker's name on a watch dial */}
-          <span className="font-stamp text-[15px] leading-none pt-[3px] tracking-[0.16em] text-fg">BILLABLE</span>
+      {/* Wordmark, goes to the Dashboard (and hides an easter egg) */}
+      <div className="px-5 pb-3 shrink-0">
+        <NavLink to="/" end onClick={handleLogoClick} className="relative inline-flex items-center" title="Go to Dashboard">
+          <AnimatePresence>
+            {showRing && (
+              <motion.div
+                key="egg-ring"
+                initial={{ scale: 0.85, opacity: 0.7 }}
+                animate={{ scale: 1.6, opacity: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.9, ease: 'easeOut' }}
+                className="absolute -inset-2 rounded-[14px] border-2 border-accent pointer-events-none"
+              />
+            )}
+          </AnimatePresence>
+          <motion.span
+            animate={{ rotate: spinCount * 360 }}
+            transition={{ duration: 0.7, ease: [0.4, 0, 0.2, 1] }}
+            className="text-[24px] leading-none font-bold tracking-[-0.03em] text-accent"
+          >
+            billable
+          </motion.span>
         </NavLink>
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-2.5 pt-3 pb-2">
-        <div className="space-y-px">
+      <nav className="flex-1 overflow-y-auto px-3 pb-2">
+        <div className="space-y-0.5">
           {navItems.map(({ to, icon: Icon, label, badge }) => (
             <NavLink
               key={to}
               to={to}
               end={to === '/'}
-              className={({ isActive }) => `sidebar-link ${isActive || (badge && isBillingActive) ? 'active' : ''}`}
+              className={({ isActive }) => `sidebar-link wiggle-on-hover ${isActive || (badge && isBillingActive) ? 'active' : ''}`}
             >
-              <Icon strokeWidth={2} />
-              <span className="flex-1">{label}</span>
+              {({ isActive }) => (
+                <>
+              {(isActive || (badge && isBillingActive)) && <motion.span layoutId="nav-pill" className="nav-pill" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
+              <Icon className="wiggle-target" />
+              <span className="flex-1 truncate">{label}</span>
               {badge && attention > 0 && (
                 <span
-                  className="num min-w-[18px] h-[16px] px-1.5 rounded-full bg-fg/[0.09] text-fg-2 text-2xs font-semibold flex items-center justify-center"
+                  key={attention}
+                  className="pop num min-w-[20px] h-[20px] px-1.5 rounded-full bg-red text-white text-[11.5px] font-bold flex items-center justify-center"
                   title={`${attention} billing item${attention === 1 ? '' : 's'} need attention`}
                 >
                   {attention}
                 </span>
+              )}
+                </>
               )}
             </NavLink>
           ))}
         </div>
 
         <div className="sidebar-heading">Business</div>
-        <div className="space-y-px">
+        <div className="space-y-0.5">
           {businessItems.map(({ to, icon: Icon, label }) => (
-            <NavLink key={to} to={to} className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
-              <Icon strokeWidth={2} />
-              <span>{label}</span>
+            <NavLink key={to} to={to} className={({ isActive }) => `sidebar-link wiggle-on-hover ${isActive ? 'active' : ''}`}>
+              {({ isActive }) => (
+                <>
+                  {isActive && <motion.span layoutId="nav-pill" className="nav-pill" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
+                  <Icon className="wiggle-target" />
+                  <span className="truncate">{label}</span>
+                </>
+              )}
             </NavLink>
           ))}
         </div>
@@ -169,14 +165,19 @@ export default function Sidebar({ isRunning, onStopTimer }: SidebarProps) {
 
       <UpdateBanner />
 
-      <div className="px-2.5 pt-1 shrink-0">
-        <NavLink to="/settings" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
-          <Settings strokeWidth={2} />
-          <span className="flex-1">Settings</span>
-          <span className="text-2xs text-fg-4">⌘,</span>
+      <div className="px-3 pt-1 shrink-0">
+        <NavLink to="/settings" className={({ isActive }) => `sidebar-link wiggle-on-hover ${isActive ? 'active' : ''}`}>
+          {({ isActive }) => (
+            <>
+              {isActive && <motion.span layoutId="nav-pill" className="nav-pill" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
+              <IconSettings className="wiggle-target" />
+              <span className="flex-1">Settings</span>
+              <span className="kbd">⌘,</span>
+            </>
+          )}
         </NavLink>
       </div>
-      <div className="pt-1 pb-2.5 shrink-0">
+      <div className="pt-1 pb-3 shrink-0">
         <ProfileSwitcher isTimerRunning={isRunning} onStopTimer={onStopTimer} />
       </div>
     </aside>

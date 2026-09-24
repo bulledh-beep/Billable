@@ -83,33 +83,35 @@ export default function TodayRuler({ entries, activeEntry }: { entries: TimeEntr
     <section>
       <div className="group-head">
         <h2 className="section-title">Today</h2>
-        <span className="text-xs text-fg-3">
+        <span className="text-[13px] font-bold text-fg-3">
           {minutes > 0 ? (
             <>
-              <span className="font-figures text-[14px] text-fg-2">{formatDurationShort(minutes)}</span>
-              {earned > 0 && <> · <span className="font-figures text-[14px] text-fg-2">{formatMoney(earned)}</span> earned</>}
+              <span className="font-figures text-[15px] text-fg">{formatDurationShort(minutes)}</span>
+              {earned > 0 && <> · <span className="font-figures text-[15px] text-green">+{formatMoney(earned)}</span> earned</>}
             </>
           ) : 'Nothing on the clock yet'}
         </span>
       </div>
       <div className="card px-4 pt-3.5 pb-2">
-        <div className="relative h-[22px] rounded-[4px] bg-fg/[0.045]">
-          {blocks.map(b => (
+        <div className="relative h-[30px] rounded-[11px] bg-line/70">
+          {blocks.map((b, i) => (
             <div
               key={b.key}
               title={b.label}
-              className="absolute top-0 bottom-0 rounded-[4px]"
+              className="grow-x absolute top-[4px] bottom-[4px] rounded-[8px]"
               style={{
                 left: pct(b.start),
                 width: `max(3px, ${((b.end - b.start) / span) * 100}%)`,
                 backgroundColor: b.color,
                 opacity: b.running ? 0.85 : 1,
+                animationDelay: `${200 + i * 90}ms`,
               }}
             />
           ))}
           {/* Now */}
-          <div className="absolute -top-[5px] -bottom-[5px] w-[1.5px] -ml-[0.75px] bg-accent" style={{ left: pct(nowH) }} title={`Now, ${formatTime(now.toISOString())}`}>
-            <span className="absolute -top-[3px] left-1/2 -translate-x-1/2 w-[7px] h-[7px] rounded-full bg-accent" />
+          <div className="absolute -top-[6px] -bottom-[6px] w-[3px] -ml-[1.5px] rounded-full bg-accent" style={{ left: pct(nowH) }} title={`Now, ${formatTime(now.toISOString())}`}>
+            <span className="absolute -top-[5px] left-1/2 w-[11px] h-[11px] rounded-full bg-accent" style={{ animation: 'pulse-ring 2.2s ease-out infinite' }} />
+            <span className="absolute -top-[5px] left-1/2 -translate-x-1/2 w-[11px] h-[11px] rounded-full bg-accent border-2 border-panel" />
           </div>
         </div>
         {/* Ruler */}
@@ -127,7 +129,7 @@ export default function TodayRuler({ entries, activeEntry }: { entries: TimeEntr
           {hours.filter(h => h % 3 === 0).map(h => (
             <span
               key={`label${h}`}
-              className={`absolute top-[8px] text-[10px] leading-3 text-fg-4 whitespace-nowrap ${h === first ? '' : h === last ? '-translate-x-full' : '-translate-x-1/2'}`}
+              className={`absolute top-[8px] text-[11px] leading-3 font-bold text-fg-4 whitespace-nowrap ${h === first ? '' : h === last ? '-translate-x-full' : '-translate-x-1/2'}`}
               style={{ left: pct(h) }}
             >
               {hourLabel(h)}

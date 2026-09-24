@@ -4,6 +4,7 @@ import { Pause, Play, Square, Search } from 'lucide-react'
 import { Popover } from './Menu'
 import { useTimerClock } from '../hooks/useTimer'
 import { StopwatchDial } from './Dial'
+import { Mascot } from './Illustrations'
 import { formatMoney, formatDurationShort } from '../utils/format'
 import type { Project, TimeEntry } from '@shared/types'
 import toast from 'react-hot-toast'
@@ -31,25 +32,25 @@ export default function TimerControl({ entry, isRunning, isPaused, onPause, onRe
     else if (result) {
       const mins = Number(result.duration_minutes) || 0
       const earnedNow = result.is_billable && result.rate ? (mins / 60) * result.rate : 0
-      toast.success(`Logged ${formatDurationShort(mins)}${earnedNow > 0 ? ` · ${formatMoney(earnedNow)}` : ''} on ${result.project_name || 'the project'}`)
+      toast(`Logged ${formatDurationShort(mins)}${earnedNow > 0 ? ` · ${formatMoney(earnedNow)}` : ''} on ${result.project_name || 'the project'}`, { icon: <Mascot size={26} mood="happy" /> })
     }
   }
 
   if (entry) {
     return (
-      <div className="no-drag flex items-center h-[28px] pl-1.5 pr-0.5 gap-2 rounded-[7px] border border-line-strong bg-panel dark:bg-fg/[0.07] dark:border-transparent">
-        <StopwatchDial seconds={seconds} size={18} paused={isPaused} />
+      <div className={`pop no-drag flex items-center h-[34px] pl-1.5 pr-1 gap-2.5 rounded-full ${isPaused ? 'bg-fg/[0.06]' : 'bg-accent/[0.13]'}`}>
+        <StopwatchDial seconds={seconds} size={22} paused={isPaused} />
         <button
           onClick={() => navigate('/time')}
-          className="text-[13px] text-fg-2 hover:text-fg max-w-[170px] truncate"
+          className="text-[13px] font-semibold text-fg-2 hover:text-fg max-w-[170px] truncate"
           title="Open Time"
         >
           {entry.project_name || 'Timer'}
         </button>
-        <span className={`font-figures text-[15px] leading-none pt-[2px] ${isPaused ? 'text-fg-3' : 'text-fg'}`}>{elapsed}</span>
+        <span className={`font-figures text-[16px] leading-none ${isPaused ? 'text-fg-3' : 'text-fg'}`}>{elapsed}</span>
         {earned > 0 && (
-          <span className="font-figures text-[15px] leading-none pt-[2px] text-fg-3" title={`Earned so far at ${formatMoney(entry.rate || 0)}/hr`}>
-            {formatMoney(earned)}
+          <span className="font-figures text-[15px] leading-none text-green" title={`Earned so far at ${formatMoney(entry.rate || 0)}/hr`}>
+            +{formatMoney(earned)}
           </span>
         )}
         <div className="w-px h-3.5 bg-line-strong mx-0.5" />
@@ -74,10 +75,10 @@ export default function TimerControl({ entry, isRunning, isPaused, onPause, onRe
       <button
         ref={setAnchor}
         onClick={() => setOpen(o => !o)}
-        className={`no-drag btn-secondary ${open ? '!bg-panel-2 dark:!bg-fg/[0.13]' : ''}`}
+        className="no-drag btn-primary"
         title="Start a timer"
       >
-        <Play className="!w-3 !h-3 fill-current text-accent" />
+        <Play className="!w-3.5 !h-3.5 fill-current" />
         Start timer
       </button>
       <Popover open={open} anchor={anchor} onClose={() => setOpen(false)} width={320}>

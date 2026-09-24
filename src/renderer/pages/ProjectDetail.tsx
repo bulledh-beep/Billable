@@ -9,7 +9,6 @@ import Money from '../components/Money'
 import Menu from '../components/Menu'
 import Segmented from '../components/Segmented'
 import EmptyState from '../components/EmptyState'
-import { DialGlyph } from '../components/Dial'
 import EntryEditor from '../components/EntryEditor'
 import ProjectForm, { type ProjectFormValues } from '../components/ProjectForm'
 import CloseOutModal, { type CloseOutChoice } from '../components/CloseOutModal'
@@ -229,7 +228,7 @@ export default function ProjectDetail({ onStartTimer, isTimerRunning, isTimerPau
           {visible.length === 0 ? (
             <EmptyState
               compact
-              icon={DialGlyph}
+              mood="sleepy"
               title={done.length === 0 ? 'No time on this project yet' : 'Nothing here'}
               description={done.length === 0 ? 'Start a timer or add time by hand.' : 'Try another filter.'}
             />

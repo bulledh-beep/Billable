@@ -12,3 +12,4 @@ export function onBillingChanged(cb: () => void): () => void {
   window.addEventListener(EVENT, cb)
   return () => window.removeEventListener(EVENT, cb)
 }
+

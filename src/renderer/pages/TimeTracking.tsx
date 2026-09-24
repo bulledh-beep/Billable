@@ -16,7 +16,7 @@ import {
 } from '../utils/format'
 import { notifyBillingChanged } from '../utils/events'
 import { useTimerClock } from '../hooks/useTimer'
-import { StopwatchDial, DialGlyph } from '../components/Dial'
+import { StopwatchDial } from '../components/Dial'
 import type { TimeEntry, Project } from '@shared/types'
 import toast from 'react-hot-toast'
 
@@ -275,8 +275,8 @@ export default function TimeTracking({
                 <div className="h-10 mt-2 flex items-end">
                   {mins > 0 ? (
                     <div
-                      className="w-full flex flex-col-reverse gap-px rounded-[3px] overflow-hidden"
-                      style={{ height: `${Math.max(16, (mins / maxDayMinutes) * 100)}%` }}
+                      className="grow-up w-full flex flex-col-reverse gap-px rounded-[6px] overflow-hidden"
+                      style={{ height: `${Math.max(16, (mins / maxDayMinutes) * 100)}%`, animationDelay: `${120 + weekDays.indexOf(d) * 50}ms` }}
                     >
                       {segments.map(sg => (
                         <div key={sg.name} style={{ flex: `${sg.minutes} 1 0px`, backgroundColor: sg.color }} />
@@ -316,7 +316,7 @@ export default function TimeTracking({
       {grouped.length === 0 ? (
         <div className="card">
           <EmptyState
-            icon={DialGlyph}
+            mood="sleepy"
             title={completed.length === 0 ? 'Nothing on the clock yet' : filter !== 'all' || search ? 'Nothing matches' : selectedDay ? `Nothing logged ${dayLabel(selectedDay) === 'Today' ? 'today' : `on ${dayLabel(selectedDay)}`}` : 'Nothing logged this week'}
             description={completed.length === 0 ? 'Start a timer from the toolbar or add time by hand.' : 'Try another week or filter, or add time by hand.'}
             action={{ label: 'Add time', onClick: openAdd }}

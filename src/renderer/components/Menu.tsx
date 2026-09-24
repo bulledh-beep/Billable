@@ -63,7 +63,7 @@ export function Popover({ open, anchor, onClose, align = 'end', width, children 
     <div
       ref={panelRef}
       style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, width, visibility: pos ? 'visible' : 'hidden' }}
-      className="fixed z-[60] rounded-[8px] bg-panel shadow-pop animate-fade-in"
+      className="fixed z-[60] rounded-[12px] bg-panel shadow-pop animate-fade-in"
       onClick={e => e.stopPropagation()}
     >
       {children}
@@ -123,7 +123,7 @@ export default function Menu({ items, trigger, align = 'end', label = 'More acti
               key={it.label}
               disabled={it.disabled}
               onClick={e => { e.stopPropagation(); setOpen(false); it.onClick() }}
-              className={`w-full flex items-center gap-2 h-[26px] px-2 rounded-[5px] text-[13px] text-left transition-colors disabled:opacity-40
+              className={`w-full flex items-center gap-2 h-[31px] px-2.5 rounded-[8px] text-[13.5px] font-medium text-left transition-colors disabled:opacity-40
                 ${it.danger ? 'text-red hover:bg-red/10' : 'text-fg hover:bg-fg/[0.07]'}`}
             >
               {it.icon && <it.icon className={`w-[14px] h-[14px] shrink-0 ${it.danger ? '' : 'text-fg-3'}`} />}

@@ -4,6 +4,7 @@ import { Trash2, RotateCcw, Lock, Clock, AlertTriangle } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import Segmented from '../components/Segmented'
 import EmptyState from '../components/EmptyState'
+import { Mascot } from '../components/Illustrations'
 import NumberField from '../components/NumberField'
 import { formatMoney, formatDay, formatDurationShort, formatHoursShort, todayISO, addDays, toLocalISODate } from '../utils/format'
 import { notifyBillingChanged } from '../utils/events'
@@ -366,7 +367,7 @@ export default function InvoiceCreate() {
         navigate(`/invoices/${editId}`)
       } else {
         const inv = await window.api.invoices.create({ ...payload, status: markSent ? 'sent' : 'draft' })
-        toast.success(`${inv.invoice_number} created${markSent ? ' and marked as sent' : ''}`)
+        toast(`${inv.invoice_number} created${markSent ? ' and marked as sent' : ''}`, { icon: <Mascot size={26} mood="happy" motion="hop" /> })
         notifyBillingChanged()
         navigate(`/invoices/${inv.id}`)
       }

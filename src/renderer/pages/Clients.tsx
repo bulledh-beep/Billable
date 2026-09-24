@@ -13,17 +13,17 @@ import { notifyBillingChanged } from '../utils/events'
 import type { AttentionItem, Client } from '@shared/types'
 import toast from 'react-hot-toast'
 
-/** Gray monogram, the way Contacts shows people without a photo. */
+const AVATAR_COLORS = ['#FF9600', '#1CB0F6', '#58CC02', '#CE82FF', '#FF4B4B', '#2B70C9', '#FFC800', '#00CD9C']
+
+/** A bright circle with the client's initials. */
 export function ClientAvatar({ name, size = 32 }: { name: string; size?: number }) {
+  let hash = 0
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  const color = AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length]
   return (
     <div
-      className="rounded-full flex items-center justify-center font-semibold text-white shrink-0"
-      style={{
-        width: size,
-        height: size,
-        fontSize: Math.round(size * 0.4),
-        backgroundImage: 'linear-gradient(180deg, #A9A9AE, #85858B)',
-      }}
+      className="rounded-full flex items-center justify-center font-bold text-white shrink-0"
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.4), backgroundColor: color }}
     >
       {getInitials(name)}
     </div>

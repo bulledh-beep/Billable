@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Modal from './Modal'
 import { formatMoney, todayISO, formatDay } from '../utils/format'
 import { notifyBillingChanged } from '../utils/events'
+import { Mascot } from './Illustrations'
+import { burst } from '../utils/burst'
 import type { Invoice, PaymentMethod } from '@shared/types'
 import toast from 'react-hot-toast'
 
@@ -18,6 +20,7 @@ export default function RecordPaymentModal({ invoices, onClose, onDone }: {
   const [method, setMethod] = useState('')
   const [methods, setMethods] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
+  const payButton = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -38,7 +41,13 @@ export default function RecordPaymentModal({ invoices, onClose, onDone }: {
     setSaving(true)
     try {
       const n = await window.api.invoices.markPaid(invoices.map(i => i.id), date, method || null)
-      toast.success(single ? `${single.invoice_number} marked as paid` : `${n} invoices marked as paid`)
+      // A small, happy moment: bits pop from the button and the mascot cheers
+      const r = payButton.current?.getBoundingClientRect()
+      if (r) burst(r.left + r.width / 2, r.top + r.height / 2)
+      toast.success(
+        single ? `Paid! ${single.invoice_number} · ${formatMoney(total)}` : `Paid! ${n} invoices · ${formatMoney(total)}`,
+        { icon: <Mascot size={30} mood="happy" motion="hop" />, duration: 4000 },
+      )
       notifyBillingChanged()
       onDone()
     } catch (err: any) {
@@ -57,7 +66,7 @@ export default function RecordPaymentModal({ invoices, onClose, onDone }: {
       footer={
         <>
           <button onClick={onClose} className="btn-secondary">Cancel</button>
-          <button onClick={save} disabled={saving || !date} className="btn-primary">{saving ? 'Saving…' : `Mark ${formatMoney(total)} paid`}</button>
+          <button ref={payButton} onClick={save} disabled={saving || !date} className="btn-primary">{saving ? 'Saving…' : `Mark ${formatMoney(total)} paid`}</button>
         </>
       }
     >

@@ -2,15 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Gauge-style figures and stamp lettering. DIN ships with macOS, so nothing
-   is bundled; the file URL is a fallback if the name lookup fails. */
+/* Rounded San Francisco for everything: friendly without being childish.
+   It ships with macOS; Chromium can't find it by name, so load the file. */
 @font-face {
-  font-family: 'Billable Figures';
-  src: local('DIN Alternate Bold'), local('DINAlternate-Bold'),
-       url('file:///System/Library/Fonts/Supplemental/DIN%20Alternate%20Bold.ttf') format('truetype');
+  font-family: 'Billable Rounded';
+  src: url('file:///System/Library/Fonts/SFNSRounded.ttf') format('truetype');
   font-weight: 100 900;
   font-display: block;
 }
+/* Condensed caps for the rubber stamps on invoices */
 @font-face {
   font-family: 'Billable Stamp';
   src: local('DIN Condensed Bold'), local('DINCondensed-Bold'),
@@ -21,74 +21,89 @@
 
 /* ---------- Theme palettes ----------
  * Values are "R G B" triplets so Tailwind can apply opacity (bg-accent/10).
- * Toggle `dark` / `light` on <html> to switch. Neutrals and status colors
- * follow Apple's system palette so the app sits naturally on macOS.
+ * Bright, cheerful colors used as soft tints; one warm orange for actions.
  */
 :root,
 :root.dark {
-  --bg: 30 30 32;
-  --sidebar: 38 38 41;
-  --panel: 40 40 43;
-  --panel-2: 48 48 52;
-  --field: 44 44 47;
-  --line: 60 60 65;
-  --line-strong: 82 82 88;
+  --bg: 24 24 27;
+  --sidebar: 28 28 32;
+  --panel: 33 33 38;
+  --panel-2: 41 41 47;
+  --field: 40 40 46;
+  --line: 52 52 59;
+  --line-strong: 70 70 79;
 
-  --fg: 245 245 247;
-  --fg-2: 200 200 206;
-  --fg-3: 152 152 159;
-  --fg-4: 104 104 110;
+  --fg: 244 244 246;
+  --fg-2: 212 212 218;
+  --fg-3: 150 150 161;
+  --fg-4: 104 104 114;
 
-  --accent: 245 166 35;
-  --accent-hover: 250 182 66;
-  --accent-text: 255 186 76;
-  --accent-fg: 36 26 8;
-  --accent-icon: 245 166 35;
+  --accent: 255 146 23;
+  --accent-hover: 255 164 60;
+  --accent-deep: 214 112 0;
+  --accent-text: 255 170 76;
+  --accent-fg: 255 255 255;
+  --accent-icon: 255 146 23;
 
-  --green: 52 206 98;
-  --blue: 88 166 255;
-  --red: 255 105 97;
-  --amber: 255 180 64;
-  --violet: 191 124 255;
-  --gray: 152 152 159;
+  --green: 76 214 118;
+  --green-deep: 52 170 90;
+  --blue: 90 170 255;
+  --blue-deep: 60 140 230;
+  --red: 255 104 104;
+  --red-deep: 230 70 70;
+  --amber: 255 196 64;
+  --violet: 190 140 255;
+  --gray: 150 150 161;
+
+  --sel-bg: 255 146 23;
+  --sel-border: 255 146 23;
+  --sel-text: 255 170 76;
 
   --rim: 255 255 255;
-  --shadow-card: inset 0 0.5px 0 rgb(255 255 255 / 0.05);
-  --shadow-pop: 0 0 0 0.5px rgb(255 255 255 / 0.1), 0 18px 40px -10px rgb(0 0 0 / 0.65), 0 3px 10px rgb(0 0 0 / 0.35);
+  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-pop: 0 0 0 1px rgb(255 255 255 / 0.08), 0 18px 44px -12px rgb(0 0 0 / 0.7), 0 4px 12px rgb(0 0 0 / 0.3);
 
   color-scheme: dark;
 }
 
 :root.light {
-  --bg: 246 246 247;
-  --sidebar: 234 234 236;
+  --bg: 246 246 248;
+  --sidebar: 255 255 255;
   --panel: 255 255 255;
-  --panel-2: 249 249 250;
-  --field: 255 255 255;
-  --line: 222 222 226;
-  --line-strong: 200 200 206;
+  --panel-2: 248 248 250;
+  --field: 244 244 247;
+  --line: 233 233 237;
+  --line-strong: 214 214 220;
 
-  --fg: 29 29 31;
-  --fg-2: 70 70 76;
-  --fg-3: 128 128 134;
-  --fg-4: 172 172 178;
+  --fg: 32 32 38;
+  --fg-2: 72 72 82;
+  --fg-3: 118 118 130;
+  --fg-4: 168 168 178;
 
-  --accent: 245 166 35;
-  --accent-hover: 238 154 22;
-  --accent-text: 163 92 0;
-  --accent-fg: 36 26 8;
-  --accent-icon: 196 110 0;
+  --accent: 255 140 10;
+  --accent-hover: 255 158 50;
+  --accent-deep: 214 106 0;
+  --accent-text: 214 100 0;
+  --accent-fg: 255 255 255;
+  --accent-icon: 255 140 10;
 
-  --green: 30 136 58;
-  --blue: 0 108 218;
-  --red: 214 40 46;
-  --amber: 170 96 0;
-  --violet: 128 72 204;
-  --gray: 128 128 134;
+  --green: 34 150 72;
+  --green-deep: 24 120 56;
+  --blue: 24 122 230;
+  --blue-deep: 16 100 200;
+  --red: 226 54 62;
+  --red-deep: 196 36 44;
+  --amber: 196 108 0;
+  --violet: 136 80 220;
+  --gray: 118 118 130;
+
+  --sel-bg: 255 140 10;
+  --sel-border: 255 140 10;
+  --sel-text: 214 100 0;
 
   --rim: 0 0 0;
-  --shadow-card: 0 0.5px 1.5px rgb(0 0 0 / 0.05);
-  --shadow-pop: 0 0 0 0.5px rgb(0 0 0 / 0.1), 0 14px 36px -8px rgb(0 0 0 / 0.2), 0 2px 6px rgb(0 0 0 / 0.06);
+  --shadow-card: 0 1px 2px rgb(20 20 40 / 0.04), 0 6px 18px -10px rgb(20 20 40 / 0.12);
+  --shadow-pop: 0 0 0 1px rgb(20 20 40 / 0.06), 0 16px 40px -10px rgb(20 20 40 / 0.22), 0 3px 8px rgb(20 20 40 / 0.06);
 
   color-scheme: light;
 }
@@ -98,7 +113,6 @@
     font-size: 13px;
   }
 
-  /* Transparent so the sidebar can show the Mac's sidebar material */
   html, body, #root {
     background: transparent;
   }
@@ -108,26 +122,25 @@
     user-select: none;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    letter-spacing: -0.003em;
     color: rgb(var(--fg));
+    font-weight: 500;
   }
 
   input, textarea, select, [contenteditable] {
     user-select: text;
   }
 
-  /* Stop macOS from surfacing file:// URLs when links or images get dragged */
   a, img {
     -webkit-user-drag: none;
   }
 
   ::selection {
-    background: rgb(var(--accent) / 0.3);
+    background: rgb(var(--accent) / 0.28);
   }
 
   ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 11px;
+    height: 11px;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
@@ -167,26 +180,28 @@
   input[type='checkbox'] {
     -webkit-appearance: none;
     appearance: none;
-    width: 14px;
-    height: 14px;
-    border-radius: 4px;
-    border: 0.5px solid rgb(var(--line-strong));
-    background: rgb(var(--field));
-    box-shadow: 0 0.5px 1px rgb(0 0 0 / 0.08);
+    width: 17px;
+    height: 17px;
+    border-radius: 6px;
+    border: 1.5px solid rgb(var(--line-strong));
+    background: rgb(var(--panel));
     display: inline-grid;
     place-content: center;
     flex-shrink: 0;
     cursor: pointer;
-    transition: background-color 100ms, border-color 100ms;
+    transition: background-color 100ms, border-color 100ms, transform 120ms;
+  }
+  input[type='checkbox']:active {
+    transform: scale(0.9);
   }
   input[type='checkbox']::before {
     content: '';
-    width: 8px;
-    height: 8px;
+    width: 9px;
+    height: 9px;
     clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
-    background: rgb(var(--accent-fg));
+    background: #fff;
     transform: scale(0);
-    transition: transform 90ms ease-out;
+    transition: transform 120ms cubic-bezier(0.3, 1.6, 0.6, 1);
   }
   input[type='checkbox']:checked,
   input[type='checkbox']:indeterminate {
@@ -198,25 +213,36 @@
   }
   input[type='checkbox']:indeterminate::before {
     clip-path: none;
-    height: 2px;
+    height: 2.5px;
     transform: scale(1);
   }
   input[type='checkbox']:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 3px rgb(var(--accent) / 0.35);
+    box-shadow: 0 0 0 3px rgb(var(--accent) / 0.3);
   }
 }
 
 @layer components {
   /* ---------- Layout ---------- */
   .page {
-    @apply relative w-full max-w-[1160px] mx-auto px-7 pt-5 pb-14 animate-fade-in;
+    @apply relative w-full max-w-[1160px] mx-auto px-7 pt-6 pb-14;
   }
+  /* Each block on a page rises in, one after another */
+  .page > :not(.fixed) {
+    animation: rise-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  .page > *:nth-child(2) { animation-delay: 40ms; }
+  .page > *:nth-child(3) { animation-delay: 80ms; }
+  .page > *:nth-child(4) { animation-delay: 120ms; }
+  .page > *:nth-child(5) { animation-delay: 160ms; }
+  .page > *:nth-child(6) { animation-delay: 200ms; }
+  .page > *:nth-child(n+7) { animation-delay: 240ms; }
 
-  /* Large tabular figures */
-  .font-display {
+  /* Big friendly numbers */
+  .font-display, .font-figures {
+    font-weight: 700;
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.012em;
+    letter-spacing: -0.015em;
   }
 
   .drag-region {
@@ -231,13 +257,13 @@
     @apply bg-panel border border-line rounded-card shadow-card;
   }
   .card-hover {
-    @apply transition-colors duration-100 hover:border-line-strong;
+    @apply transition-[border-color,transform] duration-150 hover:border-line-strong;
   }
   .card-header {
-    @apply flex items-center justify-between gap-3 px-4 h-[38px] border-b border-line;
+    @apply flex items-center justify-between gap-3 px-4 h-[46px] border-b border-line;
   }
   .card-title {
-    @apply text-[13px] font-semibold text-fg;
+    @apply text-[15px] font-bold text-fg;
   }
   .glass-panel {
     @apply card;
@@ -246,139 +272,132 @@
     @apply card transition-colors hover:border-line-strong;
   }
 
-  /* Heading that sits above a grouped box, like macOS Settings */
   .group-head {
-    @apply flex items-center justify-between gap-3 min-h-[24px] mb-1.5 px-0.5;
+    @apply flex items-center justify-between gap-3 min-h-[26px] mb-2.5 px-0.5;
   }
   .section-title {
-    @apply text-[13px] font-semibold text-fg;
+    @apply text-[16px] font-bold text-fg tracking-[-0.01em];
   }
   .section-sub {
     @apply text-xs text-fg-3;
   }
-  /* Small text button used in group headings */
   .head-link {
-    @apply inline-flex items-center gap-1 text-xs font-medium text-fg-3 hover:text-fg transition-colors;
+    @apply inline-flex items-center gap-0.5 text-[13px] font-semibold text-accent-text hover:brightness-110 transition;
   }
   .head-link svg {
-    @apply w-3 h-3;
+    @apply w-3.5 h-3.5;
   }
 
-  /* ---------- Buttons ---------- */
+  /* ---------- Buttons ----------
+   * Friendly pills with a little bounce on press. */
   .btn {
-    @apply inline-flex items-center justify-center gap-1.5 h-[28px] px-3 rounded-[6px] text-[13px] font-medium
-           whitespace-nowrap select-none transition-[background-color,border-color,color,filter] duration-100
-           focus-visible:outline-none focus-visible:shadow-focus
-           disabled:opacity-40 disabled:pointer-events-none;
+    @apply relative inline-flex items-center justify-center gap-1.5 h-[32px] px-4 rounded-full text-[13px] font-semibold
+           whitespace-nowrap select-none transition-[transform,background-color,filter,box-shadow] duration-100
+           active:scale-[0.96]
+           focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-accent/25
+           disabled:pointer-events-none;
   }
   .btn svg, .btn-primary svg, .btn-secondary svg, .btn-ghost svg, .btn-danger svg, .btn-icon svg {
-    @apply w-[14px] h-[14px] shrink-0;
+    @apply w-[15px] h-[15px] shrink-0;
   }
   .btn-primary {
-    @apply btn bg-accent text-accent-fg font-semibold hover:bg-accent-hover active:brightness-95;
-    box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.4), 0 0 0 0.5px rgb(160 90 0 / 0.45), 0 1px 1.5px rgb(0 0 0 / 0.12);
+    @apply btn text-accent-fg bg-accent hover:bg-accent-hover;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.25), 0 1px 2px rgb(200 90 0 / 0.3), 0 4px 12px -4px rgb(255 140 10 / 0.45);
   }
   .btn-primary:disabled {
-    @apply bg-fg/[0.08] text-fg-4 opacity-100;
+    @apply bg-fg/[0.08] text-fg-4;
     box-shadow: none;
   }
   .btn-secondary {
-    @apply btn text-fg bg-panel border border-line-strong hover:bg-panel-2 active:bg-fg/[0.07];
-    box-shadow: 0 0.5px 1px rgb(0 0 0 / 0.06);
+    @apply btn text-fg bg-fg/[0.06] hover:bg-fg/[0.1];
   }
-  :root.dark .btn-secondary {
-    @apply bg-fg/[0.09] border-transparent hover:bg-fg/[0.13] active:bg-fg/[0.17];
-    box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.07), 0 0.5px 1px rgb(0 0 0 / 0.3);
+  .btn-secondary:disabled {
+    @apply text-fg-4;
   }
   .btn-ghost {
-    @apply btn text-fg-2 hover:text-fg hover:bg-fg/[0.06] active:bg-fg/[0.09];
+    @apply btn text-accent-text hover:bg-accent/10;
+  }
+  .btn-ghost:disabled {
+    @apply opacity-40;
   }
   .btn-danger {
-    @apply btn bg-red/10 text-red hover:bg-red/15;
+    @apply btn text-white bg-red hover:brightness-105;
   }
   .btn-sm {
-    @apply h-[24px] px-2 text-xs gap-1 rounded-[5px];
+    @apply h-[27px] px-3 text-[12px];
   }
   .btn-sm svg {
     @apply w-[13px] h-[13px];
   }
   .btn-icon {
-    @apply btn text-fg-3 hover:text-fg hover:bg-fg/[0.06] w-[28px] px-0;
+    @apply btn text-fg-3 hover:text-fg hover:bg-fg/[0.07] w-[32px] px-0;
   }
   .btn-icon-sm {
-    @apply btn-icon w-[24px] h-[24px] rounded-[5px];
+    @apply btn-icon w-[27px] h-[27px];
   }
   .btn-icon-sm svg {
-    @apply w-[14px] h-[14px];
+    @apply w-[15px] h-[15px];
   }
 
   /* ---------- Forms ---------- */
   .input {
-    @apply w-full h-[28px] px-2.5 rounded-[6px] border border-line-strong bg-field text-[13px] text-fg
-           placeholder:text-fg-4 outline-none transition-[border-color,box-shadow] duration-100
-           focus:border-accent focus:shadow-focus
+    @apply w-full h-[34px] px-3 rounded-[10px] border-[1.5px] border-transparent bg-field text-[14px] text-fg
+           placeholder:text-fg-4 outline-none transition-[border-color,background-color,box-shadow] duration-100
+           hover:bg-fg/[0.07]
+           focus:border-accent focus:bg-panel focus:ring-4 focus:ring-accent/15
            disabled:opacity-50;
   }
-  :root.light .input {
-    box-shadow: 0 0.5px 1px rgb(0 0 0 / 0.04);
-  }
-  :root.light .input:focus {
-    box-shadow: 0 0 0 3px rgb(var(--accent) / 0.35);
-  }
   textarea.input {
-    @apply h-auto py-1.5 leading-5 resize-none;
+    @apply h-auto py-2 leading-5 resize-none;
   }
   select.input {
-    @apply pr-7 appearance-none bg-no-repeat;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238a8a93' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
-    background-position: right 7px center;
-    background-size: 13px;
+    @apply pr-8 appearance-none bg-no-repeat;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-position: right 10px center;
+    background-size: 14px;
   }
   .input-field {
     @apply input;
   }
   .label {
-    @apply block text-xs font-medium text-fg-2 mb-1.5;
+    @apply block text-[13px] font-semibold text-fg-2 mb-1.5;
   }
   .hint {
     @apply text-xs text-fg-3 mt-1.5;
   }
 
-  /* ---------- Segmented control (macOS style) ---------- */
+  /* ---------- Segmented control ----------
+   * A soft track with a white pill that slides to the choice. */
   .seg {
-    @apply relative inline-flex items-center p-[2px] rounded-[7px] bg-fg/[0.07];
+    @apply relative inline-flex items-center p-[3px] rounded-full bg-fg/[0.06];
   }
   .seg-item {
-    @apply relative inline-flex items-center gap-1.5 h-[22px] px-2.5 rounded-[5px] text-xs font-medium text-fg-2
+    @apply relative inline-flex items-center gap-1.5 h-[27px] px-3.5 rounded-full text-[13px] font-semibold text-fg-3
            transition-colors hover:text-fg whitespace-nowrap;
   }
   .seg-item.active {
     @apply text-fg;
   }
   .seg-thumb {
-    @apply absolute inset-0 rounded-[5px] bg-panel;
-    box-shadow: 0 0 0 0.5px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.12);
+    @apply absolute inset-0 rounded-full bg-panel;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.1), 0 2px 8px -2px rgb(0 0 0 / 0.1);
   }
   :root.dark .seg-thumb {
-    background: rgb(var(--fg) / 0.16);
-    box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.08), 0 1px 2px rgb(0 0 0 / 0.3);
+    background: rgb(var(--fg) / 0.14);
   }
 
-  /* ---------- Tables ----------
-   * :where() keeps these at element-level specificity so utilities like
-   * text-right or w-24 on a cell still win. */
+  /* ---------- Tables ---------- */
   .tbl {
-    @apply w-full text-[13px] border-collapse;
+    @apply w-full text-[14px] border-collapse;
   }
   :where(.tbl) th {
-    @apply h-[30px] px-3 text-left text-xs font-medium text-fg-3 border-b border-line whitespace-nowrap;
+    @apply h-[36px] px-3 text-left text-[12px] font-semibold text-fg-3 border-b border-line whitespace-nowrap;
   }
-  /* Two standard row heights: 44px for two-line rows, 36px for single-line tables */
   :where(.tbl) td {
-    @apply h-[44px] px-3 border-b border-line align-middle;
+    @apply h-[50px] px-3 border-b border-line align-middle;
   }
   :where(.tbl-compact) td {
-    @apply h-[36px];
+    @apply h-[40px];
   }
   :where(.tbl) tbody tr:last-child td {
     @apply border-b-0;
@@ -394,26 +413,41 @@
   }
 
   /* ---------- Badges ---------- */
-  /* Status labels as small stamps: condensed caps inside a thin inked outline */
   .badge {
-    @apply inline-flex items-center gap-1 h-[17px] px-[5px] pt-[2px] rounded-[4px] font-stamp text-[12.5px] leading-none uppercase tracking-[0.07em] whitespace-nowrap;
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 48%, transparent);
+    @apply inline-flex items-center gap-1 h-[22px] px-2.5 rounded-full text-[12px] font-semibold whitespace-nowrap;
+    background: color-mix(in srgb, currentColor 13%, transparent);
   }
 
   /* ---------- Sidebar ---------- */
   .sidebar-link {
-    @apply flex items-center gap-2 h-[28px] px-2 rounded-[6px] text-[13px] text-fg/85
+    @apply flex items-center gap-2.5 h-[38px] px-2.5 rounded-[11px] text-[14px] font-medium text-fg-2
            hover:bg-fg/[0.05] transition-colors;
   }
   .sidebar-link > svg {
-    @apply w-4 h-4 shrink-0;
-    color: rgb(var(--accent-icon));
+    @apply w-[22px] h-[22px] shrink-0 transition-transform duration-200;
+  }
+  .sidebar-link {
+    @apply relative;
+  }
+  .sidebar-link > :not(.nav-pill) {
+    @apply relative z-[1];
+  }
+  .nav-pill {
+    @apply absolute inset-0 rounded-[11px] bg-accent/[0.12];
   }
   .sidebar-link.active {
-    @apply text-fg bg-fg/[0.09] font-medium;
+    @apply text-fg font-semibold;
   }
   .sidebar-heading {
-    @apply px-2 mt-4 mb-1 text-2xs font-semibold text-fg-3;
+    @apply px-2.5 mt-5 mb-1 text-[12px] font-semibold text-fg-4;
+  }
+
+  /* ---------- Progress bars ---------- */
+  .bar-track {
+    @apply relative h-[10px] rounded-full bg-fg/[0.08] overflow-hidden;
+  }
+  .bar-fill {
+    @apply relative h-full rounded-full transition-[width] duration-500;
   }
 
   /* ---------- Misc ---------- */
@@ -421,20 +455,35 @@
     font-variant-numeric: tabular-nums;
   }
   .kbd {
-    @apply inline-flex items-center h-[17px] px-1 rounded-[4px] border border-line-strong text-2xs text-fg-3 font-sans;
+    @apply inline-flex items-center h-[18px] px-1.5 rounded-[6px] bg-fg/[0.07] text-[11px] font-semibold text-fg-3;
   }
   .link {
-    @apply text-accent-text hover:underline underline-offset-2 cursor-pointer;
+    @apply text-accent-text font-semibold hover:underline underline-offset-2 cursor-pointer;
   }
   .status-badge {
     @apply badge;
   }
 }
 
-/* Running-timer dot: a slow fade instead of a ping ring */
+/* Running-timer dot */
 @keyframes timer-breathe {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
+}
+
+/* Mascot moods */
+@keyframes mascot-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+@keyframes mascot-hop {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  30% { transform: translateY(-10px) scale(0.97, 1.03); }
+  55% { transform: translateY(0) scale(1.04, 0.96); }
+  70% { transform: translateY(-3px) scale(1, 1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
 }
 
 /* Page actions and the global timer are separate groups in the toolbar */
@@ -447,8 +496,7 @@
   overflow: hidden;
 }
 
-/* List rows with inset hairline separators, like macOS lists.
-   Set --inset to where the row's text starts. */
+/* List rows with separators set in from the left */
 .list-row {
   position: relative;
 }
@@ -458,9 +506,85 @@
   left: var(--inset, 16px);
   right: 0;
   bottom: 0;
-  border-bottom: 0.5px solid rgb(var(--line));
+  border-bottom: 1px solid rgb(var(--line));
   pointer-events: none;
 }
 .list-row:last-child::after {
   display: none;
+}
+
+/* ---------- Little moments ---------- */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+/* Bars grow up from the baseline; ruler blocks grow in from the left */
+@keyframes grow-up {
+  from { transform: scaleY(0); }
+  to { transform: none; }
+}
+@keyframes grow-x {
+  from { transform: scaleX(0); }
+  to { transform: none; }
+}
+.grow-up {
+  transform-origin: bottom;
+  animation: grow-up 620ms cubic-bezier(0.25, 1.3, 0.5, 1) both;
+}
+.grow-x {
+  transform-origin: left;
+  animation: grow-x 700ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+/* A soft ring that keeps pulsing out of the "now" needle */
+@keyframes pulse-ring {
+  0% { transform: translate(-50%, 0) scale(1); opacity: 0.6; }
+  100% { transform: translate(-50%, 0) scale(2.6); opacity: 0; }
+}
+/* Mascot blinks every few seconds */
+@keyframes blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.1); }
+}
+/* Sleepy z's drift up */
+@keyframes float-z {
+  0% { transform: translate(0, 4px); opacity: 0; }
+  30% { opacity: 1; }
+  100% { transform: translate(6px, -10px); opacity: 0; }
+}
+/* A stamp pressed down onto paper */
+@keyframes stamp-thunk {
+  0% { transform: scale(1.7) rotate(-18deg); opacity: 0; }
+  55% { transform: scale(0.94) rotate(-7deg); opacity: 0.95; }
+  75% { transform: scale(1.03) rotate(-8.5deg); }
+  100% { transform: scale(1) rotate(-8deg); opacity: 0.9; }
+}
+/* Numbers and badges that just changed */
+@keyframes pop {
+  0% { transform: scale(0.6); }
+  60% { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+.pop { animation: pop 380ms cubic-bezier(0.3, 1.5, 0.6, 1) both; }
+/* Quick wiggle for icons under the pointer */
+@keyframes wiggle {
+  0%, 100% { transform: rotate(0); }
+  25% { transform: rotate(-10deg) scale(1.08); }
+  60% { transform: rotate(7deg) scale(1.08); }
+}
+.wiggle-on-hover:hover .wiggle-target,
+.wiggle-target.wiggle-now {
+  animation: wiggle 480ms ease-in-out;
+}
+
+/* The mascot's bells when it rings */
+@keyframes bell-ring {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-9deg); }
+  75% { transform: rotate(9deg); }
+}
+/* Party balloons drift up and sway */
+@keyframes float-up {
+  0% { transform: translate(0, 0) rotate(0deg) scale(0.6); opacity: 0; }
+  12% { opacity: 1; transform: translate(0, -8vh) rotate(-6deg) scale(1); }
+  100% { transform: translate(var(--drift, 0px), -115vh) rotate(var(--spin, 20deg)) scale(1); opacity: 1; }
 }

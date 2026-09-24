@@ -27,9 +27,12 @@ export default {
         accent: {
           DEFAULT: v('accent'),
           hover: v('accent-hover'),
+          deep: v('accent-deep'),
           text: v('accent-text'),
           fg: v('accent-fg'),
         },
+        // Selection: the light-blue "chosen" state for nav, tabs and checkboxes
+        sel: { bg: v('sel-bg'), border: v('sel-border'), text: v('sel-text') },
 
         // ---- Meaning (text color; use /10 or /12 for tinted backgrounds) ----
         green: v('green'),
@@ -62,12 +65,12 @@ export default {
         },
       },
       fontFamily: {
-        // San Francisco everywhere. -apple-system picks the Text or Display cut by size.
-        sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"', '"Helvetica Neue"', 'Arial', 'sans-serif'],
-        display: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Display"', '"Helvetica Neue"', 'Arial', 'sans-serif'],
+        // Rounded San Francisco everywhere, for a friendly, chunky feel
+        sans: ['"Billable Rounded"', '-apple-system', 'BlinkMacSystemFont', '"Helvetica Neue"', 'Arial', 'sans-serif'],
+        display: ['"Billable Rounded"', '-apple-system', 'BlinkMacSystemFont', '"Helvetica Neue"', 'Arial', 'sans-serif'],
         mono: ['ui-monospace', '"SF Mono"', 'Menlo', 'monospace'],
-        // Meter-style numerals for the figures that matter (money, running time)
-        figures: ['"Billable Figures"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+        // Heavy rounded numerals for the figures that matter
+        figures: ['"Billable Rounded"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
         // Condensed caps for stamps and the wordmark
         stamp: ['"Billable Stamp"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
       },
@@ -81,14 +84,13 @@ export default {
         '2xl': ['22px', { lineHeight: '28px' }],
         '3xl': ['28px', { lineHeight: '34px' }],
       },
-      // Hairlines: one device pixel on Retina, one pixel elsewhere
       borderWidth: {
-        DEFAULT: '0.5px',
+        DEFAULT: '1px',
         hair: '0.5px',
       },
       borderRadius: {
-        card: '10px',
-        tile: '6px',
+        card: '16px',
+        tile: '12px',
       },
       opacity: {
         12: '0.12',

@@ -46,25 +46,25 @@ export default function Modal({ isOpen, onClose, title, description, children, f
             role="dialog"
             aria-modal="true"
             aria-label={title}
-            initial={{ opacity: 0, scale: 0.985, y: 4 }}
-            animate={{ opacity: 1, scale: 1, y: 0, transition: { duration: 0.16, ease: [0.2, 0.8, 0.2, 1] } }}
+            initial={{ opacity: 0, scale: 0.94, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0, transition: { type: 'spring', stiffness: 460, damping: 30, mass: 0.8 } }}
             exit={{ opacity: 0, scale: 0.985, transition: { duration: 0.1, ease: [0.4, 0, 1, 1] } }}
-            className={`relative ${sizes[size]} w-full max-h-[calc(100vh-48px)] flex flex-col bg-panel rounded-[12px] shadow-pop`}
+            className={`relative ${sizes[size]} w-full max-h-[calc(100vh-48px)] flex flex-col bg-panel rounded-[18px] shadow-pop`}
           >
-            <div className="flex items-start justify-between gap-4 px-5 pt-4 pb-3">
+            <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-3">
               <div className="min-w-0">
-                <h2 className="text-[15px] leading-5 font-semibold text-fg">{title}</h2>
+                <h2 className="text-[18px] leading-6 font-bold text-fg">{title}</h2>
                 {description && <p className="text-xs text-fg-3 mt-1 leading-[17px]">{description}</p>}
               </div>
               <button onClick={onClose} className="btn-icon-sm -mr-1.5 -mt-0.5" aria-label="Close">
                 <X />
               </button>
             </div>
-            <div className="px-5 pb-5 overflow-y-auto min-h-0">
+            <div className="px-6 pb-6 overflow-y-auto min-h-0">
               {children}
             </div>
             {footer && (
-              <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-line">
+              <div className="flex items-center justify-end gap-2 px-6 pt-4 pb-5 border-t border-line">
                 {footer}
               </div>
             )}

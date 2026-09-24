@@ -19,8 +19,11 @@ import TaxSettingsPage from './pages/TaxSettings'
 import TaxOverviewPage from './pages/TaxOverview'
 import Commissions from './pages/Commissions'
 import WhatsNewModal from './components/WhatsNewModal'
+import MascotParty from './components/MascotParty'
 import { useTimer } from './hooks/useTimer'
 import { notifyBillingChanged } from './utils/events'
+import toast from 'react-hot-toast'
+import { Mascot } from './components/Illustrations'
 
 export default function App() {
   const navigate = useNavigate()
@@ -53,8 +56,15 @@ export default function App() {
   // Stopping a timer creates billable time, so refresh money totals
   useEffect(() => { notifyBillingChanged() }, [isRunning, isPaused])
 
+  // Starting a timer gets a small cheer from the mascot
+  const startTimerWithCheer = async (projectId: number, description?: string) => {
+    const entry = await startTimer(projectId, description)
+    if (entry) toast(`On the clock for ${entry.project_name || 'your project'}`, { icon: <Mascot size={26} mood="happy" motion="hop" />, duration: 2500 })
+    return entry
+  }
+
   const timerProps = {
-    onStartTimer: startTimer,
+    onStartTimer: startTimerWithCheer,
     onStopTimer: stopTimer,
     onPauseTimer: pauseTimer,
     onResumeTimer: resumeTimer,
@@ -68,9 +78,9 @@ export default function App() {
       <div className="flex h-screen text-fg overflow-hidden">
         <Sidebar isRunning={isRunning || isPaused} onStopTimer={stopTimer} />
 
-        <div className="flex-1 flex flex-col min-w-0 bg-bg border-l border-line">
+        <div className="flex-1 flex flex-col min-w-0 bg-bg">
           {/* Window toolbar: page title and actions portal in here */}
-          <header className="drag-region h-[52px] shrink-0 flex items-center gap-3 pl-6 pr-4 border-b border-line bg-bg z-10">
+          <header className="drag-region h-[58px] shrink-0 flex items-center gap-3 pl-7 pr-4 border-b border-line bg-bg z-10">
             <div ref={titleRef} className="flex-1 min-w-0 flex items-center" />
             <div ref={actionsRef} className="toolbar-actions no-drag flex items-center gap-2" />
             <div className="toolbar-divider w-px h-4 bg-line-strong" aria-hidden="true" />
@@ -81,7 +91,7 @@ export default function App() {
               onPause={pauseTimer}
               onResume={resumeTimer}
               onStop={stopTimer}
-              onStart={startTimer}
+              onStart={startTimerWithCheer}
             />
           </header>
 
@@ -120,9 +130,10 @@ export default function App() {
             color: 'rgb(var(--fg))',
             border: 'none',
             boxShadow: 'var(--shadow-pop)',
-            borderRadius: '10px',
-            fontSize: '13px',
-            padding: '8px 12px',
+            borderRadius: '16px',
+            fontSize: '14px',
+            fontWeight: 600,
+            padding: '10px 14px',
             maxWidth: '420px',
           },
           success: { iconTheme: { primary: 'rgb(var(--green))', secondary: 'rgb(var(--panel))' } },
@@ -130,6 +141,7 @@ export default function App() {
         }}
       />
       <WhatsNewModal />
+      <MascotParty />
     </HeaderSlotsProvider>
   )
 }
