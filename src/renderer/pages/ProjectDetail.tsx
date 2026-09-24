@@ -14,7 +14,7 @@ import ProjectForm, { type ProjectFormValues } from '../components/ProjectForm'
 import CloseOutModal, { type CloseOutChoice } from '../components/CloseOutModal'
 import { EntryRow } from './TimeTracking'
 import { formatMoney, formatDay, formatHoursShort, relativeDays, formatDurationShort } from '../utils/format'
-import { notifyBillingChanged } from '../utils/events'
+import { notifyBillingChanged, onBillingChanged } from '../utils/events'
 import type { Client, Invoice, Project, TimeEntry } from '@shared/types'
 import toast from 'react-hot-toast'
 
@@ -48,6 +48,7 @@ export default function ProjectDetail({ onStartTimer, isTimerRunning, isTimerPau
   const projectId = id ? parseInt(id) : 0
 
   useEffect(() => { if (projectId) loadData() }, [projectId, isTimerRunning, isTimerPaused])
+  useEffect(() => onBillingChanged(() => { if (projectId) loadData() }), [projectId])
 
   const loadData = async () => {
     const [p, e, inv, c] = await Promise.all([

@@ -7,6 +7,11 @@ import { generateInvoicePDF } from './pdf'
 import { generateTaxSummaryPDF } from './tax-pdf'
 import { generateCommissionInvoicePDF } from './commission-pdf'
 import { TimerManager } from './timer-manager'
+import { signOutOfContentHq, openContentUrlInBrowser } from './contenthq'
+import {
+  getPhoneSyncStatus, confirmConnect, disconnectPhone, syncPhoneNow, listPhoneActivity,
+  getOpenAtLogin, setOpenAtLogin,
+} from './phone-sync'
 import {
   listProfiles, getActiveProfile, createProfile, renameProfile,
   updateProfileColor, deleteProfile, setActiveProfileId,
@@ -16,6 +21,19 @@ import { checkForUpdates, downloadAndOpenUpdate, getCachedStatus, installUpdate,
 import { getProfileDbPath, getActiveProfileId as activeProfileId } from './profiles'
 
 export function registerIpcHandlers(timerManager: TimerManager) {
+  // ========== Content HQ ==========
+  ipcMain.handle('contenthq:sign-out', () => signOutOfContentHq())
+  ipcMain.handle('contenthq:open-in-browser', (_, url: string) => openContentUrlInBrowser(url))
+
+  // ========== Phone sync (through Content HQ) ==========
+  ipcMain.handle('phone:status', () => getPhoneSyncStatus())
+  ipcMain.handle('phone:confirm-connect', (_, requestId: string, accept: boolean) => confirmConnect(String(requestId), !!accept))
+  ipcMain.handle('phone:disconnect', () => disconnectPhone())
+  ipcMain.handle('phone:sync-now', () => syncPhoneNow())
+  ipcMain.handle('phone:activity', (_, limit?: number) => listPhoneActivity(Number(limit) || 20))
+  ipcMain.handle('phone:open-at-login', () => getOpenAtLogin())
+  ipcMain.handle('phone:set-open-at-login', (_, enabled: boolean) => setOpenAtLogin(!!enabled))
+
   // ========== Appearance ==========
   // Keeps native pieces (sidebar material, menus, dialogs) in step with the
   // theme chosen in Settings.

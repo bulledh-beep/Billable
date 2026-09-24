@@ -125,7 +125,15 @@ Everything lives locally:
     └── {other-id}/billable.db       ← Other profiles
 ```
 
-No telemetry, no accounts, no internet round-trips except for checking GitHub Releases. The only network call the app makes is to GitHub's public API to look for updates — and only when you launch it or click "Check Now."
+No telemetry and no Billable accounts. Unless you turn on phone sync (below), Billable itself makes one network call: GitHub's public API to look for updates, when you launch it or click "Check Now."
+
+The **Billable | Content HQ** switch at the top left opens your Content HQ workspace (a separate web app) inside Billable's window. It only connects when you switch to it. It runs sandboxed with its own sign-in, can't see your Billable data, and any link outside Content HQ opens in your browser. Change its address or sign out in Settings → Content HQ.
+
+**Billable on your phone** is off until you connect it. Turn it on from Content HQ inside Billable: Settings → Billable → Connect this Mac, then confirm in Billable. After that:
+
+- Billable sends a summary of the connected profile to your Content HQ account: the timer, totals, clients (names and rates), jobs, the last 60 days of time plus anything unbilled, invoice statuses, and expenses from this year and last. Client emails, addresses, invoice lines and payment details stay on the Mac.
+- Changes you make on the phone (timer, logged time, new jobs, expenses, sent and paid invoices) wait in Content HQ until Billable picks them up. That happens within about 20 seconds while Billable is running, and right away when the Mac wakes. Each one is checked before it's applied, and Settings → Billable on your phone lists them.
+- The connection key is stored encrypted with the macOS Keychain (`profiles/{id}/phone-sync.json`) and is only ever sent to the Content HQ address that issued it. Disconnect in Settings to delete it and have Content HQ delete its copy.
 
 ---
 
@@ -180,7 +188,7 @@ The script bumps the version, builds the DMG, pushes the tag, and publishes a Gi
 | `Cmd+Shift+Space` | Toggle timer (global) |
 | `Cmd+Shift+P` | Pause or resume the active timer |
 | `Cmd+Shift+S` | Stop the active timer |
-| `Cmd+1` … `Cmd+6` | Jump to Dashboard / Clients / Projects / Time / Billing / Reports |
+| `Cmd+1` … `Cmd+7` | Jump to Dashboard / Clients / Projects / Time / Billing / Reports / Content HQ |
 | `Cmd+N` | New client |
 | `Cmd+Shift+N` | New project |
 | `Cmd+T` | Add time |

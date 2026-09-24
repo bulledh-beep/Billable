@@ -11,6 +11,7 @@ import ProjectForm, { type ProjectFormValues } from '../components/ProjectForm'
 import { formatHoursShort, formatMoney, formatDay, relativeDays } from '../utils/format'
 import type { Project, Client, TimeEntry } from '@shared/types'
 import toast from 'react-hot-toast'
+import { onBillingChanged } from '../utils/events'
 
 interface ProjectsProps {
   onStartTimer: (projectId: number, description?: string) => Promise<any>
@@ -38,6 +39,7 @@ export default function Projects({
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
 
   useEffect(() => { loadData() }, [isTimerRunning, isTimerPaused])
+  useEffect(() => onBillingChanged(loadData), [])
 
   // ⌘⇧N from the menu
   useEffect(() => {

@@ -6,6 +6,8 @@ import ThemeToggle from '../components/ThemeToggle'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { Row, Section } from '../components/SettingsLayout'
 import { useUpdater } from '../hooks/useUpdater'
+import { CONTENT_HQ_DEFAULT_URL } from '../utils/contentHq'
+import PhoneSyncSettings from '../components/PhoneSyncSettings'
 import type { Settings, PaymentMethod } from '@shared/types'
 import toast from 'react-hot-toast'
 
@@ -185,6 +187,27 @@ export default function SettingsPage() {
           </select>
         </Row>
       </Section>
+
+      <Section title="Content HQ" description="Your content workspace, opened inside Billable from the sidebar.">
+        <Row label="Address" help="Leave blank for the live workspace. Changes apply the next time Billable opens.">
+          <input
+            className="input max-w-[360px]"
+            value={(settings as any).content_hq_url || ''}
+            placeholder={CONTENT_HQ_DEFAULT_URL}
+            onChange={e => update({ content_hq_url: e.target.value } as any)}
+          />
+        </Row>
+        <Row label="Sign-in" help="Content HQ keeps you signed in inside Billable. Sign out here to switch accounts.">
+          <button
+            onClick={async () => { await window.api.contentHq.signOut(); toast.success('Signed out of Content HQ. It will ask you to sign in next time.') }}
+            className="btn-secondary"
+          >
+            Sign out of Content HQ
+          </button>
+        </Row>
+      </Section>
+
+      <PhoneSyncSettings />
 
       <Section title="Appearance">
         <Row label="Theme" help="Auto follows your Mac. Shared by all profiles.">

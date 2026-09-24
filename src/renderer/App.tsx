@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Toaster } from 'react-hot-toast'
 import Sidebar from './components/Sidebar'
 import TimerControl from './components/TimerControl'
@@ -18,8 +18,12 @@ import SettingsPage from './pages/Settings'
 import TaxSettingsPage from './pages/TaxSettings'
 import TaxOverviewPage from './pages/TaxOverview'
 import Commissions from './pages/Commissions'
+import ContentHQView from './components/ContentHQView'
+import SuiteBar from './components/SuiteBar'
+import type { SuiteApp } from './components/SuiteSwitch'
 import WhatsNewModal from './components/WhatsNewModal'
 import MascotParty from './components/MascotParty'
+import PhoneConnectModal from './components/PhoneConnectModal'
 import { useTimer } from './hooks/useTimer'
 import { notifyBillingChanged } from './utils/events'
 import toast from 'react-hot-toast'
@@ -53,8 +57,43 @@ export default function App() {
     mainRef.current?.scrollTo({ top: 0 })
   }, [location.pathname])
 
+  // Content HQ loads the first time you open it, then stays alive
+  const onContentHq = location.pathname === '/content'
+  const [contentHqOpened, setContentHqOpened] = useState(false)
+  useEffect(() => { if (onContentHq) setContentHqOpened(true) }, [onContentHq])
+
+  // The suite switch: remember where you were in Billable and which app was last open
+  const lastBillableRoute = useRef('/')
+  useEffect(() => {
+    if (!onContentHq) lastBillableRoute.current = location.pathname + location.search
+    try { localStorage.setItem('billable.suite.app', onContentHq ? 'content' : 'billable') } catch { /* ignore */ }
+  }, [location.pathname, location.search, onContentHq])
+  const switchApp = (app: SuiteApp) => navigate(app === 'content' ? '/content' : lastBillableRoute.current || '/')
+  useEffect(() => {
+    try { if (localStorage.getItem('billable.suite.app') === 'content') navigate('/content') } catch { /* ignore */ }
+    const off = window.api.on('suite:switch', (app: SuiteApp) => switchApp(app))
+    return () => { off?.() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Stopping a timer creates billable time, so refresh money totals
   useEffect(() => { notifyBillingChanged() }, [isRunning, isPaused])
+
+  // Changes made on the phone: refresh what's on screen and say what happened
+  useEffect(() => {
+    const off = window.api.on('phone:applied', (results: Array<{ status: string; summary: string; message?: string }>) => {
+      notifyBillingChanged()
+      checkActive()
+      if (!results?.length) return
+      const rejected = results.filter(r => r.status === 'rejected')
+      const text = results.length === 1
+        ? (rejected.length ? `Couldn’t apply a change from your phone: ${rejected[0].message || rejected[0].summary}` : `From your phone: ${results[0].summary}`)
+        : `${results.length} changes from your phone${rejected.length ? `, ${rejected.length} couldn’t be applied` : ''}`
+      toast(text, { icon: <Mascot size={26} mood={rejected.length ? 'worried' : 'wave'} />, duration: 4000 })
+    })
+    return () => { off?.() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Starting a timer gets a small cheer from the mascot
   const startTimerWithCheer = async (projectId: number, description?: string) => {
@@ -76,10 +115,26 @@ export default function App() {
   return (
     <HeaderSlotsProvider value={slots}>
       <div className="flex h-screen text-fg overflow-hidden">
-        <Sidebar isRunning={isRunning || isPaused} onStopTimer={stopTimer} />
+        {!onContentHq && <Sidebar isRunning={isRunning || isPaused} onStopTimer={stopTimer} onSwitchApp={switchApp} />}
 
         <div className="flex-1 flex flex-col min-w-0 bg-bg">
           {/* Window toolbar: page title and actions portal in here */}
+          {onContentHq ? (
+            <SuiteBar
+              onSwitch={switchApp}
+              timer={
+                <TimerControl
+                  entry={activeEntry}
+                  isRunning={isRunning}
+                  isPaused={isPaused}
+                  onPause={pauseTimer}
+                  onResume={resumeTimer}
+                  onStop={stopTimer}
+                  onStart={startTimerWithCheer}
+                />
+              }
+            />
+          ) : (
           <header className="drag-region h-[58px] shrink-0 flex items-center gap-3 pl-7 pr-4 border-b border-line bg-bg z-10">
             <div ref={titleRef} className="flex-1 min-w-0 flex items-center" />
             <div ref={actionsRef} className="toolbar-actions no-drag flex items-center gap-2" />
@@ -94,8 +149,10 @@ export default function App() {
               onStart={startTimerWithCheer}
             />
           </header>
+          )}
 
-          <main ref={mainRef} className="flex-1 overflow-y-auto">
+          <div className="relative flex-1 min-h-0">
+          <main ref={mainRef} className={`absolute inset-0 overflow-y-auto ${onContentHq ? 'hidden' : ''}`}>
             <Routes>
               <Route path="/" element={<Dashboard {...timerProps} />} />
               <Route path="/clients" element={<Clients />} />
@@ -114,9 +171,12 @@ export default function App() {
               <Route path="/tax-overview" element={<TaxOverviewPage />} />
               <Route path="/tax-settings" element={<TaxSettingsPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/content" element={null} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </main>
+          {contentHqOpened && <ContentHQView visible={onContentHq} />}
+          </div>
         </div>
       </div>
 
@@ -142,6 +202,7 @@ export default function App() {
       />
       <WhatsNewModal />
       <MascotParty />
+      <PhoneConnectModal />
     </HeaderSlotsProvider>
   )
 }

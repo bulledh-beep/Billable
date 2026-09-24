@@ -13,7 +13,7 @@ import ProjectForm, { type ProjectFormValues } from '../components/ProjectForm'
 import EmptyState from '../components/EmptyState'
 import { ClientAvatar } from './Clients'
 import { formatMoney, formatDay, formatHoursShort, relativeDays } from '../utils/format'
-import { notifyBillingChanged } from '../utils/events'
+import { notifyBillingChanged, onBillingChanged } from '../utils/events'
 import type { Client, Project, Invoice } from '@shared/types'
 import toast from 'react-hot-toast'
 
@@ -31,6 +31,7 @@ export default function ClientDetail() {
   const [deleteOpen, setDeleteOpen] = useState(false)
 
   useEffect(() => { if (clientId) loadData() }, [clientId])
+  useEffect(() => onBillingChanged(() => { if (clientId) loadData() }), [clientId])
 
   const loadData = async () => {
     const [c, all, p, inv] = await Promise.all([

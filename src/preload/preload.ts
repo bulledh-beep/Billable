@@ -1,6 +1,19 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 const api = {
+  contentHq: {
+    signOut: () => ipcRenderer.invoke('contenthq:sign-out'),
+    openInBrowser: (url: string) => ipcRenderer.invoke('contenthq:open-in-browser', url),
+  },
+  phone: {
+    status: () => ipcRenderer.invoke('phone:status'),
+    confirmConnect: (requestId: string, accept: boolean) => ipcRenderer.invoke('phone:confirm-connect', requestId, accept),
+    disconnect: () => ipcRenderer.invoke('phone:disconnect'),
+    syncNow: () => ipcRenderer.invoke('phone:sync-now'),
+    activity: (limit?: number) => ipcRenderer.invoke('phone:activity', limit),
+    openAtLogin: () => ipcRenderer.invoke('phone:open-at-login'),
+    setOpenAtLogin: (enabled: boolean) => ipcRenderer.invoke('phone:set-open-at-login', enabled),
+  },
   appearance: {
     set: (preference: 'light' | 'dark' | 'auto') => ipcRenderer.invoke('appearance:set', preference),
   },

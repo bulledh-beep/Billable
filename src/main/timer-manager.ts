@@ -53,18 +53,19 @@ export class TimerManager {
     this.menuCallbacks?.updateTimerMenu()
   }
 
-  start(projectId: number, description?: string) {
+  // `at` is when it happened, for changes made on the phone; otherwise now.
+  start(projectId: number, description?: string, at?: Date) {
     // Stop any running timer first
     if (this.activeEntry) {
-      this.stopInternal()
+      this.stopInternal(at)
     }
     // Starting another project while paused finishes the paused entry before
     // creating the new one. The explicit Resume action keeps the paused entry.
     if (this.pausedEntry) {
-      this.stopPausedInternal()
+      this.stopPausedInternal(at)
     }
 
-    const entry = db.startTimer(projectId, description)
+    const entry = db.startTimer(projectId, description, at)
     this.activeEntry = entry
     this.pausedEntry = null
     this.startTicking()
@@ -73,16 +74,16 @@ export class TimerManager {
     return entry
   }
 
-  stop() {
+  stop(at?: Date) {
     if (this.activeEntry) {
-      const entry = this.stopInternal()
+      const entry = this.stopInternal(at)
       this.broadcastStateChange()
       this.menuCallbacks?.updateTimerMenu()
       return entry
     }
 
     if (this.pausedEntry) {
-      const entry = this.stopPausedInternal()
+      const entry = this.stopPausedInternal(at)
       this.broadcastStateChange()
       this.menuCallbacks?.updateTimerMenu()
       return entry
@@ -91,10 +92,10 @@ export class TimerManager {
     return null
   }
 
-  pause() {
+  pause(at?: Date) {
     if (!this.activeEntry) return null
 
-    const entry = db.pauseTimer(this.activeEntry.id)
+    const entry = db.pauseTimer(this.activeEntry.id, at)
     this.activeEntry = null
     this.pausedEntry = entry
     this.stopTicking()
@@ -110,10 +111,10 @@ export class TimerManager {
     return entry
   }
 
-  resume() {
+  resume(at?: Date) {
     if (!this.pausedEntry) return null
 
-    const entry = db.resumeTimer(this.pausedEntry.id)
+    const entry = db.resumeTimer(this.pausedEntry.id, at)
     this.pausedEntry = null
     this.activeEntry = entry
     this.startTicking()
@@ -126,9 +127,9 @@ export class TimerManager {
     return this.activeEntry ? this.pause() : this.pausedEntry ? this.resume() : null
   }
 
-  private stopInternal() {
+  private stopInternal(at?: Date) {
     if (!this.activeEntry) return null
-    const entry = db.stopTimer(this.activeEntry.id)
+    const entry = db.stopTimer(this.activeEntry.id, at)
     this.activeEntry = null
     this.stopTicking()
 
@@ -141,9 +142,9 @@ export class TimerManager {
     return entry
   }
 
-  private stopPausedInternal() {
+  private stopPausedInternal(at?: Date) {
     if (!this.pausedEntry) return null
-    const entry = db.stopTimer(this.pausedEntry.id)
+    const entry = db.stopTimer(this.pausedEntry.id, at)
     this.pausedEntry = null
 
     if (this.trayCallbacks) {

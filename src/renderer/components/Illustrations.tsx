@@ -385,3 +385,18 @@ export function Star({ className = '', color = '#FFC800' }: IconProps & { color?
     </svg>
   )
 }
+
+/** Content HQ: a clapperboard, for the content workspace. */
+export function IconContent({ className = '' }: IconProps) {
+  return (
+    <svg viewBox="0 0 32 32" aria-hidden="true" className={className}>
+      <rect x="3.5" y="12" width="25" height="15.5" rx="3" fill={C.purple} />
+      <path d="M3.5 24h25v.5a3 3 0 0 1-3 3h-19a3 3 0 0 1-3-3z" fill={C.purpleDeep} />
+      <g transform="rotate(-10 4 11)">
+        <rect x="3.5" y="5.5" width="25" height="6" rx="2" fill="#4B4B4B" />
+        <path d="M8 5.5h4l-3 6H5zM16 5.5h4l-3 6h-4zM24 5.5h4l-3 6h-4z" fill="#FFFFFF" />
+      </g>
+      <path d="M13.5 16.5v6.5l5.5-3.25z" fill="#FFFFFF" />
+    </svg>
+  )
+}

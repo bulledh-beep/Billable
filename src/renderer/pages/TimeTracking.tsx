@@ -14,7 +14,7 @@ import { BillingChip } from '../components/StatusBadge'
 import {
   formatTime, formatDurationShort, formatMoney, todayISO, addDays, toLocalISODate, parseLocalDate,
 } from '../utils/format'
-import { notifyBillingChanged } from '../utils/events'
+import { notifyBillingChanged, onBillingChanged } from '../utils/events'
 import { useTimerClock } from '../hooks/useTimer'
 import { StopwatchDial } from '../components/Dial'
 import type { TimeEntry, Project } from '@shared/types'
@@ -67,6 +67,8 @@ export default function TimeTracking({
   const [deleting, setDeleting] = useState<TimeEntry | null>(null)
 
   useEffect(() => { loadData() }, [isTimerRunning, isTimerPaused])
+  // Changes from the phone (and elsewhere) refresh the list
+  useEffect(() => onBillingChanged(loadData), [])
 
   // ⌘T from the menu opens the editor
   useEffect(() => {

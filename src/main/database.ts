@@ -199,6 +199,24 @@ function runMigrations() {
   addColumnIfMissing('invoice_items', 'custom_description', 'INTEGER DEFAULT 0')
   db.exec('CREATE INDEX IF NOT EXISTS idx_time_entries_invoice ON time_entries(invoice_id)')
   db.exec('CREATE INDEX IF NOT EXISTS idx_time_entries_project ON time_entries(project_id)')
+
+  // ----- Changes made on the phone through Content HQ -----
+  // One row per action, so a redelivered action is never applied twice, and
+  // Settings can show what the phone did.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS phone_actions (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('applied', 'rejected')),
+      summary TEXT NOT NULL DEFAULT '',
+      message TEXT,
+      created_billable_id TEXT,
+      occurred_at TEXT,
+      applied_at TEXT NOT NULL,
+      acked INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_phone_actions_acked ON phone_actions(acked);
+  `)
   backfillInvoiceLinks()
 }
 
@@ -700,8 +718,8 @@ export function listInvoiceableEntries(clientId: number, invoiceId?: number | nu
   return rows.map(r => withBillingState(r, today))
 }
 
-export function startTimer(projectId: number, description: string = '') {
-  const now = new Date().toISOString()
+export function startTimer(projectId: number, description: string = '', at?: Date) {
+  const now = (at || new Date()).toISOString()
   const stmt = db.prepare(`
     INSERT INTO time_entries (project_id, description, start_time, active_since, is_billable)
     VALUES (?, ?, ?, ?, 1)
@@ -710,11 +728,11 @@ export function startTimer(projectId: number, description: string = '') {
   return getTimeEntry(result.lastInsertRowid as number)
 }
 
-export function stopTimer(id: number) {
+export function stopTimer(id: number, at?: Date) {
   const entry = db.prepare('SELECT * FROM time_entries WHERE id = ?').get(id) as any
   if (!entry) return null
 
-  const now = new Date()
+  const now = at || new Date()
   const durationMinutes = getAccumulatedDurationMinutes(entry, now)
 
   // A timer that ran under a minute is almost always a mis-click or a quick
@@ -739,11 +757,11 @@ export function stopTimer(id: number) {
   return getTimeEntry(id)
 }
 
-export function pauseTimer(id: number) {
+export function pauseTimer(id: number, at?: Date) {
   const entry = db.prepare('SELECT * FROM time_entries WHERE id = ?').get(id) as any
   if (!entry || entry.end_time || entry.paused_at) return entry ? getTimeEntry(id) : null
 
-  const now = new Date()
+  const now = at || new Date()
   const durationMinutes = getAccumulatedDurationMinutes(entry, now)
   db.prepare(`
     UPDATE time_entries
@@ -754,11 +772,11 @@ export function pauseTimer(id: number) {
   return getTimeEntry(id)
 }
 
-export function resumeTimer(id: number) {
+export function resumeTimer(id: number, at?: Date) {
   const entry = db.prepare('SELECT * FROM time_entries WHERE id = ?').get(id) as any
   if (!entry || entry.end_time || !entry.paused_at) return entry ? getTimeEntry(id) : null
 
-  const now = new Date().toISOString()
+  const now = (at || new Date()).toISOString()
   db.prepare(`
     UPDATE time_entries
     SET paused_at = NULL, active_since = ?
@@ -1030,8 +1048,8 @@ export function deleteInvoice(id: number) {
   return tx()
 }
 
-export function markInvoicesSent(ids: number[]) {
-  const today = localToday()
+export function markInvoicesSent(ids: number[], sentDate?: string) {
+  const today = sentDate || localToday()
   const stmt = db.prepare(`
     UPDATE invoices SET status = 'sent', sent_at = COALESCE(sent_at, ?)
     WHERE id = ? AND status = 'draft'

@@ -124,6 +124,11 @@ export function createMenu(mainWindow: BrowserWindow, timerManager: TimerManager
           accelerator: 'Cmd+6',
           click: () => mainWindow.webContents.send('navigate', '/reports'),
         },
+        {
+          label: 'Content HQ',
+          accelerator: 'Cmd+7',
+          click: () => mainWindow.webContents.send('navigate', '/content'),
+        },
         { type: 'separator' },
         { role: 'reload' },
         { role: 'forceReload' },

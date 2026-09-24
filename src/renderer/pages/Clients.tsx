@@ -9,7 +9,7 @@ import Menu from '../components/Menu'
 import ClientForm, { type ClientFormValues } from '../components/ClientForm'
 import MergeClientsModal from '../components/MergeClientsModal'
 import { getInitials, formatMoney, relativeDays } from '../utils/format'
-import { notifyBillingChanged } from '../utils/events'
+import { notifyBillingChanged, onBillingChanged } from '../utils/events'
 import type { AttentionItem, Client } from '@shared/types'
 import toast from 'react-hot-toast'
 
@@ -42,6 +42,7 @@ export default function Clients() {
   const [merge, setMerge] = useState<{ source: number; target?: number } | null>(null)
 
   useEffect(() => { loadClients() }, [])
+  useEffect(() => onBillingChanged(loadClients), [])
 
   // ⌘N from the menu
   useEffect(() => {

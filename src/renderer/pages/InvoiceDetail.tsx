@@ -8,7 +8,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import RecordPaymentModal from '../components/RecordPaymentModal'
 import Menu from '../components/Menu'
 import { formatMoney, formatDate, formatDay, formatHoursShort, formatDurationShort, toLocalISODate } from '../utils/format'
-import { notifyBillingChanged } from '../utils/events'
+import { notifyBillingChanged, onBillingChanged } from '../utils/events'
 import type { Invoice, Settings, TaxSettings } from '@shared/types'
 import toast from 'react-hot-toast'
 
@@ -38,6 +38,7 @@ export default function InvoiceDetail() {
   const [exporting, setExporting] = useState(false)
 
   useEffect(() => { if (invoiceId) load() }, [invoiceId])
+  useEffect(() => onBillingChanged(() => { if (invoiceId) load() }), [invoiceId])
 
   const load = async () => {
     const [inv, s, tax] = await Promise.all([

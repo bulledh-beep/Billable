@@ -11,6 +11,7 @@ import ExpensePanel from '../components/ExpensePanel'
 import { formatMoney, formatMoneyCompact, formatDay } from '../utils/format'
 import type { Expense, ExpenseCategory, TaxSettings } from '@shared/types'
 import toast from 'react-hot-toast'
+import { onBillingChanged } from '../utils/events'
 
 
 const CATEGORY_LABEL: Record<ExpenseCategory, string> = {
@@ -58,6 +59,7 @@ export default function TaxOverview() {
   }, [currentYear])
 
   useEffect(() => { loadAll() }, [year])
+  useEffect(() => onBillingChanged(loadAll), [year])
 
   const loadAll = async () => {
     try {

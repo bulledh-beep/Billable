@@ -6,6 +6,8 @@ import { createTray } from './tray'
 import { createMenu } from './menu'
 import { TimerManager } from './timer-manager'
 import { migrateLegacyIfNeeded, getActiveProfileId } from './profiles'
+import { secureContentHq, registerBillableProtocol } from './contenthq'
+import { startPhoneSync } from './phone-sync'
 
 // Dev/test hook: run against an isolated data folder instead of the real
 // ~/Library/Application Support/Billable. Unset in normal use.
@@ -34,8 +36,12 @@ function createWindow() {
       preload: path.join(__dirname, '../preload/preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      // Content HQ opens inside the window in a locked-down <webview>
+      webviewTag: true,
     },
   })
+  secureContentHq(mainWindow)
+  registerBillableProtocol(mainWindow)
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
@@ -71,6 +77,9 @@ app.whenReady().then(() => {
 
   // Pass TimerManager to IPC so start/stop go through it
   registerIpcHandlers(timerManager)
+
+  // Keep Content HQ's phone view of Billable up to date
+  startPhoneSync(timerManager)
 
   // Global shortcut: Cmd+Shift+Space to toggle timer
   globalShortcut.register('CommandOrControl+Shift+Space', () => {

@@ -56,6 +56,14 @@
       "category": "public.app-category.productivity",
       "identity": null
     },
+    "protocols": [
+      {
+        "name": "Billable",
+        "schemes": [
+          "billable"
+        ]
+      }
+    ],
     "dmg": {
       "title": "Billable"
     },

@@ -9,6 +9,7 @@ import {
   IconCommissions, IconTax, IconReceipt, IconSettings,
 } from './Illustrations'
 import { onBillingChanged } from '../utils/events'
+import SuiteSwitch, { type SuiteApp } from './SuiteSwitch'
 
 // 🥚 Tap the logo 7 times in 3 seconds to discover this.
 const SECRET_MESSAGES = [
@@ -29,6 +30,7 @@ const EGG_CLICK_WINDOW_MS = 3000
 interface SidebarProps {
   isRunning: boolean
   onStopTimer: () => Promise<unknown>
+  onSwitchApp: (app: SuiteApp) => void
 }
 
 const navItems = [
@@ -63,7 +65,7 @@ function useAttentionCount(isRunning: boolean) {
   return count
 }
 
-export default function Sidebar({ isRunning, onStopTimer }: SidebarProps) {
+export default function Sidebar({ isRunning, onStopTimer, onSwitchApp }: SidebarProps) {
   const location = useLocation()
   const attention = useAttentionCount(isRunning)
   const clickTimesRef = useRef<number[]>([])
@@ -90,8 +92,10 @@ export default function Sidebar({ isRunning, onStopTimer }: SidebarProps) {
 
   return (
     <aside className="w-[228px] shrink-0 flex flex-col h-full bg-sidebar border-r border-line">
-      {/* Traffic-light row doubles as the window drag handle */}
-      <div className="drag-region h-[40px] shrink-0" />
+      {/* Traffic-light row doubles as the window drag handle; the app switch sits beside the buttons */}
+      <div className="drag-region h-[48px] shrink-0 flex items-center pl-[78px]">
+        <SuiteSwitch value="billable" onChange={onSwitchApp} />
+      </div>
 
       {/* Wordmark, goes to the Dashboard (and hides an easter egg) */}
       <div className="px-5 pb-3 shrink-0">
