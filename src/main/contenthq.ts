@@ -1,10 +1,16 @@
-import { app, shell, session, BrowserWindow, type WebContents } from 'electron'
+import { app, shell, session, webContents, BrowserWindow, type WebContents } from 'electron'
 import { getSettings } from './database'
 import { requestConnect } from './phone-sync'
 
 // Content HQ runs inside Billable in a <webview>. It is a separate website, so
 // it gets no preload, no Node, a sandbox, and its own saved sign-in, and it
-// may only move between Content HQ and the services it signs in with.
+// may only move between Content HQ and its Supabase backend.
+//
+// Google refuses to sign anyone in inside an app's embedded browser ("This
+// browser or app may not be secure"), so its sign-in pages open in the Mac's
+// own browser instead, and Content HQ hands the finished sign-in back as a
+// billable://signin link, which this window completes (see Content HQ's
+// src/lib/billable/desktop-sign-in.ts).
 
 export const CONTENT_HQ_DEFAULT_URL = 'https://content-hq-live.vercel.app'
 export const CONTENT_HQ_PARTITION = 'persist:contenthq'
@@ -19,17 +25,16 @@ function contentHqOrigin(): URL | null {
 }
 
 /**
- * Google's sign-in hops between its own domains to set cookies: the country
- * site (accounts.google.ca), accounts.youtube.com and the consent page. All of
- * them have to stay inside the view, or the half-finished sign-in lands in the
- * default browser and Google answers "400. That's an error."
+ * Google's sign-in pages: the country sites (accounts.google.ca),
+ * accounts.youtube.com and the consent page. The whole sign-in happens in the
+ * Mac's browser, from its first page, so it never splits between the two.
  */
 function isGoogleSignInHost(host: string): boolean {
   if (host === 'accounts.youtube.com') return true
   return /^(accounts|consent)\.google\.(com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})$/.test(host)
 }
 
-/** Content HQ itself, its Supabase backend, and Google sign-in. */
+/** Content HQ itself and its Supabase backend. */
 export function isAllowedContentUrl(raw: string): boolean {
   let url: URL
   try { url = new URL(raw) } catch { return false }
@@ -38,8 +43,46 @@ export function isAllowedContentUrl(raw: string): boolean {
   if (url.protocol !== 'https:' && !isLocalDev) return false
   if (home && url.host === home.host) return true
   if (url.hostname.endsWith('.supabase.co')) return true
-  if (isGoogleSignInHost(url.hostname)) return true
   return false
+}
+
+function isGoogleSignIn(raw: string): boolean {
+  try {
+    const url = new URL(raw)
+    return url.protocol === 'https:' && isGoogleSignInHost(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+/** The one Content HQ view in Billable's window. */
+function contentHqContents(): WebContents | null {
+  return webContents.getAllWebContents().find(c => c.getType() === 'webview' && !c.isDestroyed()) ?? null
+}
+
+/**
+ * billable://signin?code=…&next=… from the Mac's browser: Google is done, so
+ * finish signing in inside the window, where the sign-in began and its
+ * verifier is kept. The code is checked for shape and the destination kept
+ * to a path on Content HQ; the code alone signs nothing in.
+ */
+function finishSignIn(url: URL) {
+  const home = contentHqOrigin()
+  const code = url.searchParams.get('code') || ''
+  const next = url.searchParams.get('next') || '/home'
+  if (!home || !/^[A-Za-z0-9-]{8,128}$/.test(code)) return
+  const callback = new URL('/auth/callback', home.origin)
+  callback.searchParams.set('code', code)
+  callback.searchParams.set('next', next.startsWith('/') && !next.startsWith('//') ? next : '/home')
+  const load = () => {
+    const view = contentHqContents()
+    if (!view) return false
+    view.loadURL(callback.toString())
+    return true
+  }
+  // Content HQ's view exists once it has been opened; it was, for the sign-in
+  // to start, unless Billable restarted in between.
+  if (!load()) setTimeout(load, 1500)
 }
 
 /**
@@ -74,6 +117,8 @@ function openOutside(url: string) {
  *   billable://switch?to=content    show Content HQ
  *   billable://connect?token=…      connect phone sync (only from Content HQ
  *                                   inside Billable's window; see below)
+ *   billable://signin?code=…&next=… finish a Google sign-in begun in the
+ *                                   window (from the Mac's browser)
  * Anything else just brings Billable forward.
  */
 export function handleBillableLink(raw: string) {
@@ -84,6 +129,10 @@ export function handleBillableLink(raw: string) {
     const url = new URL(raw)
     const target = url.searchParams.get('to')
     if (url.hostname === 'switch') route = target === 'content' ? '/content' : 'last-billable'
+    if (url.hostname === 'signin') {
+      route = '/content'
+      finishSignIn(url)
+    }
   } catch {
     // Unreadable link: just show the app
   }
@@ -136,7 +185,12 @@ app.on('web-contents-created', (_event, contents: WebContents) => {
     if (isAllowedContentUrl(url)) return
     event.preventDefault()
     if (isBillableLink(url)) handleLinkFromView(contents, url)
-    else openOutside(url)
+    else if (isGoogleSignIn(url)) {
+      // Google in the Mac's browser; meanwhile the window says so.
+      openOutside(url)
+      const home = contentHqOrigin()
+      if (home) contents.loadURL(new URL('/billable-sign-in', home.origin).toString())
+    } else openOutside(url)
   }
   contents.on('will-navigate', guard)
   contents.on('will-redirect', guard)
