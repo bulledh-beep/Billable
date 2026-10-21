@@ -30,7 +30,7 @@ const EGG_CLICK_WINDOW_MS = 3000
 interface SidebarProps {
   isRunning: boolean
   onStopTimer: () => Promise<unknown>
-  onSwitchApp: (app: SuiteApp) => void
+  onSwitchApp: (app: SuiteApp, from?: DOMRect | null) => void
 }
 
 const navItems = [

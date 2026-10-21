@@ -7,7 +7,7 @@ import { contentHqView, CONTENT_HQ_NAV } from '../utils/contentHq'
  * The slim bar across the top while Content HQ fills the window: the app
  * switch, simple browser controls, and Billable's timer.
  */
-export default function SuiteBar({ onSwitch, timer }: { onSwitch: (app: SuiteApp) => void; timer: ReactNode }) {
+export default function SuiteBar({ onSwitch, timer }: { onSwitch: (app: SuiteApp, from?: DOMRect | null) => void; timer: ReactNode }) {
   const [nav, setNav] = useState({ back: false, forward: false })
 
   useEffect(() => {
