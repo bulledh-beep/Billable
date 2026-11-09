@@ -1,0 +1,9 @@
+{
+  "name": "billable-core-parity",
+  "private": true,
+  "description": "Runs the Electron app's database.ts under Node so the Rust port can be compared against it",
+  "dependencies": {
+    "better-sqlite3": "11.10.0",
+    "esbuild": "0.25.12"
+  }
+}

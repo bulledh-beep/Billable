@@ -1,0 +1,47 @@
+[package]
+name = "billable"
+description = "Billable for macOS, native"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "billable"
+path = "src/main.rs"
+
+[features]
+# Dev only: BILLABLE_SNAPSHOTS=<dir> renders each screen to a PNG (no screen
+# access needed). Uses GPUI's offscreen renderer from its test support.
+snapshots = ["gpui/test-support", "gpui_platform/test-support"]
+
+[dependencies]
+billable-core.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+gpui = { package = "gpui-pre", version = "=0.3.11" }
+# The macOS platform layer; runtime_shaders compiles Metal shaders at launch, so full Xcode isn't needed
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11", default-features = false, features = ["font-kit", "runtime_shaders"] }
+gpui-component = "0.9"
+gpui-kit-assets = "0.9"
+allsorts = "0.17"
+tray-icon = "0.26"
+# Content HQ inside the window (the Mac's WebKit)
+wry = { version = "0.57", default-features = false }
+global-hotkey = "0.9"
+image = { version = "0.25", default-features = false, features = ["png"] }
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+# PDF exports: print the HTML with the system WebKit, then fit the pages to A4
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "objc2-app-kit", "objc2-core-foundation", "WKWebView", "WKWebViewConfiguration", "WKPreferences", "WKNavigation", "WKNavigationDelegate"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "objc2", "CGContext", "CGPDFContext", "CGPDFDocument", "CGPDFPage"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "objc2", "CFURL", "CFCGTypes", "CFDictionary"] }
+# The updater: a small blocking HTTP client (rustls + ring, webpki roots)
+ureq = { version = "3.5", default-features = false, features = ["rustls"] }
+libc = "0.2"
+# Phone sync: the connection token lives in the Keychain
+security-framework = "3"
+# Phone sync: NSWorkspace wake / screen-unlock observers
+block2 = "0.6"

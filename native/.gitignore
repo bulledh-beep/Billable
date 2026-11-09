@@ -1,0 +1,5 @@
+# Scenarios that read a private copy of real data
+/core/parity/scenarios/dev.json
+/target
+/target-core
+/target-snap
