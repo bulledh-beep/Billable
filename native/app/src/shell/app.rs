@@ -89,6 +89,11 @@ pub fn navigate(route: Route, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Whether Content HQ is the side showing in the window.
+pub fn showing_content(cx: &App) -> bool {
+    cx.try_global::<Nav>().and_then(|n| n.0.upgrade()).is_some_and(|app| *app.read(cx).route() == Route::Content)
+}
+
 /// Go back to the previous screen (the browser's history.back()).
 pub fn navigate_back(window: &mut Window, cx: &mut App) {
     if let Some(app) = cx.try_global::<Nav>().and_then(|n| n.0.upgrade()) {

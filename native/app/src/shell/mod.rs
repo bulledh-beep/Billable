@@ -8,7 +8,7 @@ pub mod sidebar;
 pub mod timer_control;
 pub mod toolbar;
 
-pub use app::{navigate, navigate_back, navigate_path, BillableApp, Header, Page};
+pub use app::{navigate, navigate_back, navigate_path, showing_content, BillableApp, Header, Page};
 pub use route::Route;
 
 use gpui::{App, Window};

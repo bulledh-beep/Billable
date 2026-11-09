@@ -837,6 +837,11 @@ fn request_connect(token: String, origin: String, cx: &mut App) {
                 s.pending.insert(request_id, Pending { token, origin, expires: now + 5 * 60_000 });
                 s.request = Some(request.clone());
             });
+            // The dialog is drawn by Billable, and Content HQ's page is a native
+            // view on top of it: switch to Billable's side so it can be seen.
+            if crate::shell::showing_content(cx) {
+                crate::platform::with_main_window(cx, |w, cx| crate::shell::navigate_path("/", w, cx));
+            }
             emit(PhoneEvent::ConnectRequest(Some(request)), cx);
         });
     })
