@@ -181,9 +181,14 @@ fn now_iso() -> String {
 
 fn emit(event: PhoneEvent, cx: &mut App) {
     let listeners: Vec<Listener> = with(|s| s.listeners.iter().map(|(_, l)| l.clone()).collect());
-    for l in listeners {
-        l(&event, cx);
-    }
+    // Listeners run once the current update has finished: emit is often
+    // reached from inside a listener's own view (the connect dialog's Connect
+    // button), and updating a view while it's being updated aborts the app.
+    cx.defer(move |cx| {
+        for l in listeners {
+            l(&event, cx);
+        }
+    });
 }
 
 /// Hear about status changes, applied phone changes and connect requests.

@@ -40,10 +40,18 @@ impl PhoneConnectModal {
             std::rc::Rc::new(move |event: &PhoneEvent, cx: &mut App| {
                 if let PhoneEvent::ConnectRequest(request) = event {
                     let request = request.clone();
+                    let autoconfirm = request.is_some() && cfg!(debug_assertions) && std::env::var_os("BILLABLE_PHONE_AUTOCONFIRM").is_some();
                     let _ = this.update(cx, |m, cx| {
                         m.request = request;
                         cx.notify();
                     });
+                    // Dev-only test hook: press Connect the way the button does.
+                    if autoconfirm {
+                        let this = this.clone();
+                        cx.defer(move |cx| {
+                            let _ = this.update(cx, |m, cx| m.answer(true, cx));
+                        });
+                    }
                 }
             }),
         );
