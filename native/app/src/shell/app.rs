@@ -159,6 +159,8 @@ impl BillableApp {
         let weak = cx.weak_entity();
         cx.set_global(Nav(weak));
         cx.observe_window_appearance(window, |_, _, cx| cx.notify()).detach();
+        // Looping motion pauses in the background and resumes on focus.
+        cx.observe_window_activation(window, |_, _, cx| cx.notify()).detach();
         // Dev and test hook: open on a given screen, e.g. BILLABLE_START_ROUTE=/billing
         // Otherwise reopen Content HQ if that's where you left off (App.tsx).
         let route = std::env::var("BILLABLE_START_ROUTE").map(|p| Route::parse(&p)).unwrap_or_else(|_| {

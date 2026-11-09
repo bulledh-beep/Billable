@@ -82,7 +82,7 @@ fn head_link(t: &Theme, id: &str, label: &str, to: Route) -> impl IntoElement {
 }
 
 impl Render for DashboardPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.data.is_none() || self.rev != store::rev(cx) {
             self.reload(cx);
         }
@@ -194,13 +194,13 @@ impl Render for DashboardPage {
             .flex_col()
             .child(rise_in("dash-rise-0", 0, talk.mb(r(5.))))
             .child(rise_in("dash-rise-1", 1, metrics.mb(r(6.))))
-            .child(rise_in("dash-rise-2", 2, today_ruler(&t, d, active.as_ref(), now).mb(r(7.))))
+            .child(rise_in("dash-rise-2", 2, today_ruler(&t, d, active.as_ref(), now, window, cx).mb(r(7.))))
             .child(rise_in("dash-rise-3", 3, div().flex().gap(r(6.)).items_start().child(left).child(right)))
             .into_any_element()
     }
 }
 
-fn today_ruler(t: &Theme, d: &Data, active: Option<&TimerRow>, now: chrono::DateTime<Local>) -> Div {
+fn today_ruler(t: &Theme, d: &Data, active: Option<&TimerRow>, now: chrono::DateTime<Local>, window: &Window, cx: &mut gpui::App) -> Div {
     let today = now.date_naive();
     let midnight = format::local_midnight(today);
     let hours_at = |s: &str| format::parse_time(s).map(|x| ((x - midnight).num_milliseconds() as f64 / 3_600_000.0).clamp(0.0, 24.0)).unwrap_or(0.0);
@@ -296,11 +296,19 @@ fn today_ruler(t: &Theme, d: &Data, active: Option<&TimerRow>, now: chrono::Date
     );
     if !motion::reduced() {
         // pulse-ring: grows from the dot and fades, every 2.2s
-        needle = needle.child(div().absolute().with_animation("needle-pulse", Animation::new(Duration::from_millis(2200)).repeat(), move |el, delta| {
-            let p = 1.0 - (1.0 - delta).powi(2);
-            let size = 11.0 * (1.0 + 1.6 * p);
-            el.left(px(-size / 2.0)).top(px(0.5 - size / 2.0)).size(px(size)).rounded_full().bg(accent.opacity(0.6 * (1.0 - p)))
-        }));
+        // Drawn from the clock at 30fps rather than on every display frame
+        // (a repeating animation redraws the whole window each frame).
+        // It only pulses while Billable is the active window; in the
+        // background it rests at its end state (faded out).
+        let delta = if window.is_window_active() {
+            crate::motion::redraw_in(1.0 / 30.0, window, cx);
+            (crate::motion::clock() % 2.2) / 2.2
+        } else {
+            1.0
+        };
+        let p = 1.0 - (1.0 - delta).powi(2);
+        let size = 11.0 * (1.0 + 1.6 * p);
+        needle = needle.child(div().absolute().left(px(-size / 2.0)).top(px(0.5 - size / 2.0)).size(px(size)).rounded_full().bg(accent.opacity(0.6 * (1.0 - p))));
     }
     needle = needle.child(div().absolute().top(px(-5.)).left(px(-5.5)).size(px(11.)).rounded_full().bg(accent).border_2().border_color(panel));
     track = track.child(needle);

@@ -8,11 +8,54 @@ use gpui::{div, px, Animation, AnimationExt as _, AnyElement, App, IntoElement, 
 
 thread_local! {
     static REDUCED: Cell<bool> = const { Cell::new(false) };
+    static EPOCH: std::time::Instant = std::time::Instant::now();
+    static WAKES: std::cell::RefCell<Vec<(gpui::EntityId, std::time::Instant)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Seconds since the app started: the shared clock for looping motion, so a
+/// loop is drawn from the time rather than by asking for every frame.
+pub fn clock() -> f32 {
+    EPOCH.with(|e| e.elapsed().as_secs_f32())
+}
+
+/// Redraw the view being drawn `secs` from now (once, however many elements ask for
+/// about the same moment). Looping motion uses this instead of a repeating
+/// `with_animation`, which redraws the whole window on every display frame:
+/// a blink only needs a redraw when the picture changes.
+pub fn redraw_in(secs: f32, window: &gpui::Window, cx: &mut App) {
+    // Only the view being drawn is marked for redraw, like an animation
+    // frame; `window.refresh()` would invalidate every view in the window.
+    let handle = window.current_view();
+    let at = std::time::Instant::now() + Duration::from_secs_f32(secs.max(0.0));
+    let slack = Duration::from_millis(6);
+    let pending = WAKES.with(|w| {
+        let mut w = w.borrow_mut();
+        let now = std::time::Instant::now();
+        w.retain(|(_, t)| *t + slack > now);
+        // A wake already due at or before this moment covers it: that redraw
+        // asks again for whatever comes next.
+        if w.iter().any(|(h, t)| *h == handle && *t <= at + slack) {
+            return true;
+        }
+        w.push((handle, at));
+        false
+    });
+    if pending {
+        return;
+    }
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(at.saturating_duration_since(std::time::Instant::now())).await;
+        WAKES.with(|w| w.borrow_mut().retain(|(h, t)| !(*h == handle && *t == at)));
+        cx.update(|cx| cx.notify(handle));
+    })
+    .detach();
 }
 
 /// Refresh the cached Reduce Motion flag (call once per frame from the root).
 pub fn sync(cx: &App) {
-    REDUCED.with(|r| r.set(cx.reduce_motion()));
+    // BILLABLE_REDUCE_MOTION=1 forces it on (for measuring and testing).
+    let forced = std::env::var_os("BILLABLE_REDUCE_MOTION").is_some_and(|v| v == "1");
+    REDUCED.with(|r| r.set(forced || cx.reduce_motion()));
 }
 
 /// Whether to skip decorative motion.

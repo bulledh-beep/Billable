@@ -48,6 +48,10 @@ pub struct Store {
     pub rev: u64,
     pub timer: Timer,
     pub prefs: Prefs,
+    /// profiles.json as last read, with its modification time: the sidebar
+    /// asks for the profile on every frame, so it's only re-read when the
+    /// file changes.
+    profile_cache: std::cell::RefCell<Option<(Option<std::time::SystemTime>, Option<billable_core::profiles::ProfilesFile>)>>,
 }
 
 impl Global for Store {}
@@ -73,18 +77,36 @@ impl Store {
                 p
             }
         };
-        Ok(Store { dir, profiles, db, rev: 1, timer, prefs })
+        Ok(Store { dir, profiles, db, rev: 1, timer, prefs, profile_cache: Default::default() })
+    }
+
+    /// profiles.json, read again only when it has changed on disk.
+    fn profiles_file(&self) -> Option<billable_core::profiles::ProfilesFile> {
+        let mtime = std::fs::metadata(self.profiles.index_path()).and_then(|m| m.modified()).ok();
+        let mut cache = self.profile_cache.borrow_mut();
+        if let Some((at, file)) = cache.as_ref() {
+            if *at == mtime && mtime.is_some() {
+                return file.clone();
+            }
+        }
+        let file = self.profiles.read_index();
+        *cache = Some((mtime, file.clone()));
+        file
     }
 
     pub fn active_profile(&self) -> Profile {
-        self.profiles
-            .get_active_profile()
-            .or_else(|| self.profile_list().into_iter().next())
+        let file = self.profiles_file();
+        let list = file.as_ref().map(|f| f.profiles.clone()).unwrap_or_default();
+        let active = file.as_ref().and_then(|f| f.active.clone());
+        list.iter()
+            .find(|p| Some(&p.id) == active.as_ref())
+            .cloned()
+            .or_else(|| list.into_iter().next())
             .unwrap_or_else(|| serde_json::from_value(serde_json::json!({"id": "default", "name": "Profile", "color": "#F5A623", "created_at": ""})).expect("profile"))
     }
 
     pub fn profile_list(&self) -> Vec<Profile> {
-        self.profiles.list_profiles()
+        self.profiles_file().map(|f| f.profiles).unwrap_or_default()
     }
 
     pub fn save_prefs(&self) {

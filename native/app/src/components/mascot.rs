@@ -35,8 +35,18 @@ impl Mascot {
     }
 }
 
+/// mascot-blink: shut for 4.255s..4.485s of every 4.6s.
+const BLINK: f32 = 4.6;
+const SHUT: (f32, f32) = (4.255, 4.485);
+/// mascot-bob: up 3px and back every 3.2s.
+const BOB: f32 = 3.2;
+
+fn bob_offset(t: f32) -> f32 {
+    -3.0 * (0.5 - 0.5 * ((t % BOB) / BOB * std::f32::consts::TAU).cos())
+}
+
 impl RenderOnce for Mascot {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let size = self.size;
         let gallery = cx.global_mut::<Gallery>();
         let open = gallery.get(Art::Mascot { mood: self.mood, blink: false }, size);
@@ -44,11 +54,14 @@ impl RenderOnce for Mascot {
             return img(open).size(px(size)).flex_none().into_any_element();
         }
         let shut = gallery.get(Art::Mascot { mood: self.mood, blink: true }, size);
-        let face = div().size(px(size)).flex_none().with_animation(
-            ElementId::Name(format!("{}-blink", self.id).into()),
-            Animation::new(Duration::from_millis(4600)).repeat(),
-            move |d, delta| d.child(img(if (0.925..0.975).contains(&delta) { shut.clone() } else { open.clone() }).size(px(size))),
-        );
+        // Drawn from the clock, with a redraw booked only for the next
+        // moment the picture changes (not every frame).
+        let now = motion::clock();
+        let t = now % BLINK;
+        let closed = (SHUT.0..SHUT.1).contains(&t);
+        let next_blink = if t < SHUT.0 { SHUT.0 - t } else if closed { SHUT.1 - t } else { BLINK - t + SHUT.0 };
+        motion::redraw_in(next_blink, window, cx);
+        let face = div().size(px(size)).flex_none().child(img(if closed { shut } else { open }).size(px(size)));
         let holder = div().relative().flex_none().child(face);
         let el: AnyElement = match self.motion {
             Motion::None => holder.into_any_element(),
@@ -67,13 +80,18 @@ impl RenderOnce for Mascot {
                     d.top(px(if delta >= 1.0 { 0.0 } else { y }))
                 })
                 .into_any_element(),
-            Motion::Bob => holder
-                .with_animation(
-                    ElementId::Name(format!("{}-bob", self.id).into()),
-                    Animation::new(Duration::from_millis(3200)).repeat(),
-                    |d, delta| d.top(px(-3.0 * (0.5 - 0.5 * (delta * std::f32::consts::TAU).cos()))),
-                )
-                .into_any_element(),
+            Motion::Bob => {
+                // Only redraw when the bob moves a whole device pixel.
+                let sf = window.scale_factor();
+                let q = |t: f32| (bob_offset(t) * sf).round() / sf;
+                let y = q(now);
+                let mut dt = 0.008;
+                while dt < BOB && q(now + dt) == y {
+                    dt += 0.008;
+                }
+                motion::redraw_in(dt, window, cx);
+                holder.top(px(y)).into_any_element()
+            }
         };
         el
     }

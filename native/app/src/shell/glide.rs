@@ -150,10 +150,16 @@ pub struct Glide {
     y: f32,
     /// The mark's size: the icon's, a third larger.
     size: f32,
-    start: Instant,
+    /// When the move's clock started: on the second frame, once the first
+    /// has laid both apps out (a screen drawn for the first time can take a
+    /// while, and the move shouldn't lose its opening to that).
+    start: Option<Instant>,
     ground: Arc<Image>,
+    /// Content HQ's web view, until the clock starts and Core Animation has it.
+    web: Option<native::Object>,
     native: Option<native::Native>,
     frames: u32,
+    asked: Instant,
 }
 
 impl Glide {
@@ -161,7 +167,7 @@ impl Glide {
     /// under Reduce Motion or when the icon hasn't been laid out.
     /// `web` is Content HQ's web view (already made and shown), if any.
     pub fn start(from: SuiteApp, to: SuiteApp, web: Option<native::Object>, t: &Theme, window: &mut Window, cx: &mut App) -> Option<Glide> {
-        if from == to || cx.reduce_motion() {
+        if from == to || cx.reduce_motion() || crate::motion::reduced() || native::system_reduces_motion() {
             return None;
         }
         let icon = ICONS.with(|i| i.borrow()[to.ix()])?;
@@ -173,16 +179,19 @@ impl Glide {
         let size = (f32::from(icon.size.width) * 4.0 / 3.0).round();
         let viewport = window.viewport_size();
         let ground = ground_image(to, x, y, f32::from(viewport.width), f32::from(viewport.height), t, cx);
-        let native = native::Native::start(window, web, to, x, y, from == SuiteApp::Content);
+        if let (Some(web), SuiteApp::Content) = (&web, to) {
+            // Shown already, but not there until it fades in.
+            native::hold_back(web);
+        }
         RUNNING.with(|r| r.set(true));
         if log_enabled() {
-            eprintln!("glide start {from:?} -> {to:?} at ({x:.1}, {y:.1}) mark {size}px, web {}", native.as_ref().is_some_and(|n| n.has_web()));
+            eprintln!("glide {from:?} -> {to:?} from ({x:.1}, {y:.1}), mark {size}px, web view {}", web.is_some());
         }
-        Some(Glide { from, to, x, y, size, start: Instant::now(), ground, native, frames: 0 })
+        Some(Glide { from, to, x, y, size, start: None, ground, web, native: None, frames: 0, asked: Instant::now() })
     }
 
     pub fn elapsed_ms(&self) -> f32 {
-        self.start.elapsed().as_secs_f32() * 1000.0
+        self.start.map_or(0.0, |s| s.elapsed().as_secs_f32() * 1000.0)
     }
 
     pub fn finished(&self) -> bool {
@@ -199,6 +208,13 @@ impl Glide {
     /// and, with BILLABLE_GLIDE_LOG set, notes where everything is.
     pub fn tick(&mut self, window: &mut Window) {
         window.request_animation_frame();
+        if self.start.is_none() && self.frames > 0 {
+            self.start = Some(Instant::now());
+            self.native = native::Native::start(window, self.web.take(), self.to, self.x, self.y, self.from == SuiteApp::Content);
+            if log_enabled() {
+                eprintln!("glide clock starts {:.1}ms after the switch", self.asked.elapsed().as_secs_f32() * 1000.0);
+            }
+        }
         self.frames += 1;
         if log_enabled() {
             let t = self.elapsed_ms();
@@ -220,6 +236,8 @@ impl Glide {
         }
         if let Some(n) = self.native {
             n.finish();
+        } else if let Some(web) = &self.web {
+            native::show(web);
         }
         RUNNING.with(|r| r.set(false));
     }
@@ -411,10 +429,33 @@ pub mod native {
         unsafe { Retained::retain(h.ns_view.as_ptr() as *mut AnyObject) }
     }
 
-    impl Native {
-        pub fn has_web(&self) -> bool {
-            self.web.is_some()
+    /// The Mac's Reduce Motion setting (prefers-reduced-motion), asked
+    /// directly: GPUI's own flag isn't fed from it.
+    pub fn system_reduces_motion() -> bool {
+        unsafe {
+            let ws: Option<Object> = msg_send![class!(NSWorkspace), sharedWorkspace];
+            ws.is_some_and(|ws| {
+                let b: Bool = msg_send![&*ws, accessibilityDisplayShouldReduceMotion];
+                b.as_bool()
+            })
         }
+    }
+
+    /// Keep the web view out of sight until its move begins.
+    pub fn hold_back(web: &Object) {
+        unsafe {
+            let _: () = msg_send![&**web, setAlphaValue: 0.0f64];
+        }
+    }
+
+    /// Undo `hold_back` (a move replaced before it began).
+    pub fn show(web: &Object) {
+        unsafe {
+            let _: () = msg_send![&**web, setAlphaValue: 1.0f64];
+        }
+    }
+
+    impl Native {
 
         /// Start the glow at the icon (x, y, window points from the top left)
         /// and move the web view: out if `web_leaves`, else in.
@@ -532,12 +573,14 @@ pub mod native {
         let masks: Bool = msg_send![&*layer, masksToBounds];
         let position: CGPoint = msg_send![&*layer, position];
         let model: CGRect = msg_send![&*layer, frame];
-        let flipped: Bool = msg_send![&*layer, isGeometryFlipped];
-        // Where the icon is from the layer's anchor, in the layer's own
-        // orientation: scaling by s about the icon is scaling about the
+        // Where the icon is from the layer's anchor, in its superlayer's
+        // space (the transform works there, even though WebKit's layer is
+        // geometry-flipped): scaling by s about the icon is scaling about the
         // anchor and moving by (1 - s) × this.
-        let dy = icon.y - position.y;
-        let to_icon = (icon.x - position.x, if flipped.as_bool() { -dy } else { dy });
+        let to_icon = (icon.x - position.x, icon.y - position.y);
+        if super::log_enabled() {
+            eprintln!("glide web layer: frame=({:.1},{:.1} {:.1}x{:.1}) icon=({:.1},{:.1})", model.origin.x, model.origin.y, model.size.width, model.size.height, icon.x, icon.y);
+        }
         let _: () = msg_send![&*layer, setCornerRadius: 12.0f64];
         let _: () = msg_send![&*layer, setMasksToBounds: Bool::YES];
         let _: () = msg_send![&*view, setAlphaValue: 1.0f64];
@@ -570,7 +613,7 @@ mod tests {
         // 40% of its eased move and settled at the end.
         assert!((leave_at(0.0).0 - 1.0).abs() < 1e-4 && leave_at(240.0).0.abs() < 1e-4);
         assert!((leave_at(240.0).1 - 0.92).abs() < 1e-4);
-        assert_eq!(enter_at(0.0), (0.0, 0.92));
+        assert!(enter_at(0.0).0.abs() < 1e-4 && (enter_at(0.0).1 - 0.92).abs() < 1e-4);
         assert!(enter_at(110.0).0.abs() < 1e-4);
         assert!((enter_at(TOTAL_MS).0 - 1.0).abs() < 1e-4 && (enter_at(TOTAL_MS).1 - 1.0).abs() < 1e-4);
         assert!(mark_at(480.0).0.abs() < 1e-3);

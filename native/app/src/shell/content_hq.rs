@@ -80,7 +80,10 @@ fn open_outside(url: &str) {
 thread_local! {
     /// Links from the page, handled on the next tick with the app at hand.
     static FROM_VIEW: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    static VIEW: RefCell<Option<Rc<WebView>>> = const { RefCell::new(None) };
+    /// The view lives as long as the app. It's never dropped: at exit the
+    /// thread's storage is torn down in no set order, and wry's teardown
+    /// reaches into storage of its own that may be gone by then.
+    static VIEW: RefCell<Option<std::mem::ManuallyDrop<Rc<WebView>>>> = const { RefCell::new(None) };
     /// The first page has loaded, so the view covers the placeholder for good.
     static LOADED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -199,7 +202,7 @@ impl ContentHq {
             });
         match builder.build_as_child(&*window) {
             Ok(view) => {
-                VIEW.with(|v| *v.borrow_mut() = Some(Rc::new(view)));
+                VIEW.with(|v| *v.borrow_mut() = Some(std::mem::ManuallyDrop::new(Rc::new(view))));
                 self.failed = None;
             }
             Err(e) => self.failed = Some(e.to_string()),
