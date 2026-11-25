@@ -103,9 +103,12 @@ if (versionedDmgs.length === 0) {
   )
 }
 
-// Prefer arch-specific arm64 DMG if present, otherwise first matching DMG
-const armDmg = versionedDmgs.find(f => /arm64/i.test(f))
-const dmgFile = armDmg || versionedDmgs[0]
+// Prefer the universal DMG (runs on Apple Silicon and Intel), then arm64,
+// otherwise the first matching DMG
+const dmgFile =
+  versionedDmgs.find(f => /universal/i.test(f)) ||
+  versionedDmgs.find(f => /arm64/i.test(f)) ||
+  versionedDmgs[0]
 const dmgPath = path.join(releaseDir, dmgFile)
 console.log(`\n📦 Built ${dmgFile} (${(fs.statSync(dmgPath).size / 1024 / 1024).toFixed(1)} MB)`)
 

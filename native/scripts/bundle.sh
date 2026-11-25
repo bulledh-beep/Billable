@@ -1,19 +1,29 @@
 #!/bin/bash
-# Builds the release app and its disk image, matching what electron-builder
-# made: release/Billable.app and release/Billable-<version>-arm64.dmg.
+# Builds the release app and its disk image: release/Billable.app and
+# release/Billable-<version>-universal.dmg. The app is universal, with one
+# binary that runs natively on both Apple Silicon (arm64) and Intel (x86_64).
 # Usage: scripts/bundle.sh [--no-dmg]
 # It never opens the app (the release build uses the real data folder).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)
-cargo build --release -p billable
+# Match LSMinimumSystemVersion below, for both slices and the C code they build.
+export MACOSX_DEPLOYMENT_TARGET=12.0
+TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
+rustup target add "${TARGETS[@]}" >/dev/null 2>&1 || true
+SLICES=()
+for T in "${TARGETS[@]}"; do
+  cargo build --release -p billable --target "$T"
+  SLICES+=("target/$T/release/billable")
+done
 
 OUT=release
 APP="$OUT/Billable.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp target/release/billable "$APP/Contents/MacOS/billable"
+lipo -create "${SLICES[@]}" -output "$APP/Contents/MacOS/billable"
+lipo "$APP/Contents/MacOS/billable" -verify_arch arm64 x86_64
 cp ../resources/icon.icns "$APP/Contents/Resources/icon.icns"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -40,10 +50,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 codesign --force --deep --sign - "$APP"
-echo "$APP ($(du -sh "$APP" | cut -f1))"
+echo "$APP ($(du -sh "$APP" | cut -f1), $(lipo -archs "$APP/Contents/MacOS/billable"))"
 
 if [[ " ${*:-} " != *" --no-dmg "* ]]; then
-  DMG="$OUT/Billable-$VERSION-arm64.dmg"
+  DMG="$OUT/Billable-$VERSION-universal.dmg"
   STAGE=$(mktemp -d)
   cp -R "$APP" "$STAGE/"
   ln -s /Applications "$STAGE/Applications"

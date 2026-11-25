@@ -1,0 +1,154 @@
+name: macOS build
+
+# Builds the universal Billable.app (Apple Silicon + Intel), then runs it on
+# an Apple Silicon Mac and on a real Intel Mac.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  universal:
+    name: Universal app (Apple Silicon)
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: This runner
+        run: |
+          echo "machine: $(uname -m), macOS $(sw_vers -productVersion)"
+          sysctl -n machdep.cpu.brand_string
+
+      - name: Rust toolchain (both Mac targets)
+        run: rustup show
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: cargo-universal-${{ hashFiles('native/Cargo.lock', 'native/rust-toolchain.toml') }}
+          restore-keys: cargo-universal-
+
+      - name: Unit tests (Apple Silicon)
+        run: cargo test --workspace
+
+      - name: Build universal app and DMG
+        run: scripts/bundle.sh
+
+      - name: Check both architectures are in the app
+        run: |
+          BIN=release/Billable.app/Contents/MacOS/billable
+          lipo -detailed_info "$BIN"
+          lipo "$BIN" -verify_arch arm64 x86_64
+          for A in arm64 x86_64; do
+            echo "== $A"
+            vtool -arch "$A" -show-build "$BIN" | grep -E 'platform|minos|sdk'
+            vtool -arch "$A" -show-build "$BIN" | grep -q 'minos 12.0'
+          done
+          codesign --verify --deep --strict --verbose=2 release/Billable.app
+
+      - name: Launch the Apple Silicon slice
+        run: scripts/smoke-test.sh release/Billable.app arm64
+
+      - name: Launch the Intel slice under Rosetta
+        continue-on-error: true
+        run: |
+          if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            softwareupdate --install-rosetta --agree-to-license
+          fi
+          scripts/smoke-test.sh release/Billable.app x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Billable-universal-dmg
+          path: native/release/*.dmg
+          if-no-files-found: error
+
+  intel:
+    name: Intel Mac (native x86_64)
+    needs: universal
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm this is an Intel Mac
+        run: |
+          echo "machine: $(uname -m), macOS $(sw_vers -productVersion)"
+          sysctl -n machdep.cpu.brand_string
+          test "$(uname -m)" = x86_64
+          test "$(sysctl -in hw.optional.arm64 || echo 0)" != 1
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Billable-universal-dmg
+          path: dmg
+
+      - name: Install from the DMG, like a person would
+        working-directory: .
+        run: |
+          DMG="$(ls dmg/*.dmg | head -n 1)"
+          echo "DMG: $DMG"
+          MOUNT="$(hdiutil attach "$DMG" -nobrowse -noverify -noautoopen | grep -oE '/Volumes/.+$' | head -n 1)"
+          ls -la "$MOUNT"
+          test -L "$MOUNT/Applications"
+          mkdir -p "$RUNNER_TEMP/Applications"
+          cp -R "$MOUNT/Billable.app" "$RUNNER_TEMP/Applications/"
+          hdiutil detach "$MOUNT"
+          lipo -archs "$RUNNER_TEMP/Applications/Billable.app/Contents/MacOS/billable"
+
+      - name: Launch the installed app on Intel
+        run: scripts/smoke-test.sh "$RUNNER_TEMP/Applications/Billable.app"
+
+      - name: Rust toolchain
+        run: rustup show
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: cargo-intel-${{ hashFiles('native/Cargo.lock', 'native/rust-toolchain.toml') }}
+          restore-keys: cargo-intel-
+
+      - name: Unit tests (Intel)
+        run: cargo test --workspace
+
+      - name: Draw every main screen on Intel
+        run: |
+          cargo build --release -p billable --features snapshots
+          export BILLABLE_USER_DATA="$RUNNER_TEMP/snap-data"
+          export BILLABLE_SNAPSHOTS="$RUNNER_TEMP/snapshots"
+          export BILLABLE_SNAPSHOT_ROUTES="/,/clients,/projects,/time,/billing,/reports,/tax-overview,/settings"
+          perl -e 'alarm 600; exec @ARGV' target/release/billable
+          ls -la "$BILLABLE_SNAPSHOTS"
+          test "$(ls "$BILLABLE_SNAPSHOTS"/*.png | wc -l)" -eq 8
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Intel-screenshots
+          path: ${{ runner.temp }}/snapshots
+          if-no-files-found: ignore

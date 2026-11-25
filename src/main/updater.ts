@@ -106,10 +106,18 @@ function fetchLatestRelease(): Promise<GitHubRelease> {
 }
 
 function pickDmgAsset(release: GitHubRelease): GitHubAsset | null {
-  // Prefer arch-specific arm64 DMG, fall back to any DMG
-  const arm64 = release.assets.find(a => /arm64.*\.dmg$/i.test(a.name))
-  if (arm64) return arm64
-  return release.assets.find(a => a.name.toLowerCase().endsWith('.dmg')) ?? null
+  // The universal DMG, else the one for this Mac's chip, else one with no
+  // chip in its name. Never a DMG built only for the other kind of Mac.
+  const appleSilicon = process.arch === 'arm64' || app.runningUnderARM64Translation
+  const dmgs = release.assets.filter(a => a.name.toLowerCase().endsWith('.dmg'))
+  const isArm = (n: string) => /arm64|aarch64/i.test(n)
+  const isIntel = (n: string) => /x86_64|x64|intel/i.test(n)
+  return (
+    dmgs.find(a => /universal/i.test(a.name)) ??
+    dmgs.find(a => (appleSilicon ? isArm(a.name) : isIntel(a.name))) ??
+    dmgs.find(a => !isArm(a.name) && !isIntel(a.name)) ??
+    null
+  )
 }
 
 export async function checkForUpdates(force = false): Promise<UpdateStatus> {

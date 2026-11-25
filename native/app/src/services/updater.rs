@@ -143,22 +143,65 @@ pub fn compare_versions(a: &str, b: &str) -> Ordering {
     }
 }
 
-/// `/arm64.*\.dmg$/i`
-fn is_arm64_dmg(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    match (lower.find("arm64"), lower.strip_suffix(".dmg")) {
-        (Some(at), Some(stem)) => at + "arm64".len() <= stem.len(),
-        _ => false,
-    }
+/// Which Macs a disk image is built for, read from its file name the way
+/// the releases name them: `-universal`, `-arm64`, `-x86_64` / `-x64`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DmgArch {
+    Universal,
+    AppleSilicon,
+    Intel,
+    /// No architecture in the name.
+    Unnamed,
 }
 
-/// The arm64 disk image, else any disk image.
+/// The architecture of a disk image, or `None` when it isn't a `.dmg`.
+fn dmg_arch(name: &str) -> Option<DmgArch> {
+    let lower = name.to_ascii_lowercase();
+    let stem = lower.strip_suffix(".dmg")?;
+    Some(if stem.contains("universal") {
+        DmgArch::Universal
+    } else if stem.contains("arm64") || stem.contains("aarch64") {
+        DmgArch::AppleSilicon
+    } else if stem.contains("x86_64") || stem.contains("x64") || stem.contains("intel") {
+        DmgArch::Intel
+    } else {
+        DmgArch::Unnamed
+    })
+}
+
+/// Whether this Mac has an Apple Silicon chip. True for the Intel slice too
+/// when it runs under Rosetta, so an update installs the native build.
+pub fn on_apple_silicon() -> bool {
+    if cfg!(target_arch = "aarch64") {
+        return true;
+    }
+    let mut translated: libc::c_int = 0;
+    let mut size = std::mem::size_of::<libc::c_int>();
+    // SAFETY: a C string name, and an int-sized buffer with its size.
+    let ok = unsafe {
+        libc::sysctlbyname(
+            c"sysctl.proc_translated".as_ptr(),
+            (&mut translated as *mut libc::c_int).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } == 0;
+    ok && translated == 1
+}
+
+/// The disk image for this Mac: the universal one, else the one built for
+/// this chip, else one with no architecture in its name. Never a disk image
+/// built only for the other kind of Mac, which wouldn't open after the update.
 pub fn pick_dmg_asset(release: &GitHubRelease) -> Option<&GitHubAsset> {
-    release
-        .assets
-        .iter()
-        .find(|a| is_arm64_dmg(&a.name))
-        .or_else(|| release.assets.iter().find(|a| a.name.to_lowercase().ends_with(".dmg")))
+    pick_dmg_asset_for(release, on_apple_silicon())
+}
+
+fn pick_dmg_asset_for(release: &GitHubRelease, apple_silicon: bool) -> Option<&GitHubAsset> {
+    let native = if apple_silicon { DmgArch::AppleSilicon } else { DmgArch::Intel };
+    [DmgArch::Universal, native, DmgArch::Unnamed]
+        .into_iter()
+        .find_map(|want| release.assets.iter().find(|a| dmg_arch(&a.name) == Some(want)))
 }
 
 /// The status a release gives this build.
@@ -676,31 +719,56 @@ mod tests {
     }
 
     #[test]
-    fn picks_the_arm64_disk_image() {
-        let r = release("v1.5.3", &["Billable-1.5.3.dmg", "Billable-1.5.3-arm64.dmg", "latest-mac.yml"]);
-        assert_eq!(pick_dmg_asset(&r).unwrap().name, "Billable-1.5.3-arm64.dmg");
-        let r = release("v1.5.3", &["Billable-1.5.3-ARM64.DMG"]);
-        assert_eq!(pick_dmg_asset(&r).unwrap().name, "Billable-1.5.3-ARM64.DMG");
-        // Falls back to any disk image.
-        let r = release("v1.5.3", &["Billable-1.5.3-arm64.zip", "Billable-1.5.3-x64.dmg"]);
-        assert_eq!(pick_dmg_asset(&r).unwrap().name, "Billable-1.5.3-x64.dmg");
-        let r = release("v1.5.3", &["Billable-1.5.3-arm64.dmg.blockmap", "Billable.DMG"]);
-        assert_eq!(pick_dmg_asset(&r).unwrap().name, "Billable.DMG");
-        // "arm64" has to come before the extension.
-        assert!(!is_arm64_dmg("arm64.dmg.zip"));
-        assert!(is_arm64_dmg("arm64.dmg"));
-        assert!(!is_arm64_dmg("Billable.dmgarm64"));
-        let r = release("v1.5.3", &["Billable-1.5.3-arm64.zip", "notes.txt"]);
-        assert!(pick_dmg_asset(&r).is_none());
+    fn reads_the_architecture_from_the_file_name() {
+        use DmgArch::*;
+        assert_eq!(dmg_arch("Billable-2.1.0-universal.dmg"), Some(Universal));
+        assert_eq!(dmg_arch("Billable-1.5.3-ARM64.DMG"), Some(AppleSilicon));
+        assert_eq!(dmg_arch("Billable-2.1.0-aarch64.dmg"), Some(AppleSilicon));
+        assert_eq!(dmg_arch("Billable-2.1.0-x86_64.dmg"), Some(Intel));
+        assert_eq!(dmg_arch("Billable-1.5.3-x64.dmg"), Some(Intel));
+        assert_eq!(dmg_arch("Billable.DMG"), Some(Unnamed));
+        // Only disk images count.
+        assert_eq!(dmg_arch("arm64.dmg.zip"), None);
+        assert_eq!(dmg_arch("Billable-1.5.3-arm64.dmg.blockmap"), None);
+        assert_eq!(dmg_arch("latest-mac.yml"), None);
+    }
+
+    #[test]
+    fn picks_the_disk_image_for_this_mac() {
+        let pick = |assets: &[&str], apple_silicon: bool| {
+            pick_dmg_asset_for(&release("v2.1.0", assets), apple_silicon).map(|a| a.name.clone())
+        };
+        let all = ["Billable-2.1.0-arm64.dmg", "Billable-2.1.0-x86_64.dmg", "Billable-2.1.0-universal.dmg"];
+        // Universal first, on both kinds of Mac.
+        assert_eq!(pick(&all, true).as_deref(), Some("Billable-2.1.0-universal.dmg"));
+        assert_eq!(pick(&all, false).as_deref(), Some("Billable-2.1.0-universal.dmg"));
+        // Then the one built for this chip.
+        let split = ["Billable-2.1.0-arm64.dmg", "Billable-2.1.0-x64.dmg"];
+        assert_eq!(pick(&split, true).as_deref(), Some("Billable-2.1.0-arm64.dmg"));
+        assert_eq!(pick(&split, false).as_deref(), Some("Billable-2.1.0-x64.dmg"));
+        // Then one with no architecture in its name.
+        let unnamed = ["Billable-2.1.0-arm64.dmg.blockmap", "Billable.DMG"];
+        assert_eq!(pick(&unnamed, true).as_deref(), Some("Billable.DMG"));
+        assert_eq!(pick(&unnamed, false).as_deref(), Some("Billable.DMG"));
+        // Never the other kind of Mac's build.
+        assert_eq!(pick(&["Billable-2.0.2-arm64.dmg"], false), None);
+        assert_eq!(pick(&["Billable-2.0.2-x86_64.dmg"], true), None);
+        assert_eq!(pick(&["Billable-2.1.0-arm64.zip", "notes.txt"], true), None);
+    }
+
+    #[test]
+    fn knows_which_mac_it_is_on() {
+        // Run natively (not under Rosetta), the answer is the build's own chip.
+        assert_eq!(on_apple_silicon(), cfg!(target_arch = "aarch64"));
     }
 
     #[test]
     fn status_from_a_release() {
-        let r = release("v2.1.0", &["Billable-2.1.0-arm64.dmg"]);
+        let r = release("v2.1.0", &["Billable-2.1.0-universal.dmg"]);
         let s = status_for(Some(&r), "2.0.0", "2026-11-08T00:00:00.000Z".into());
         assert!(s.update_available);
         assert_eq!(s.latest_version.as_deref(), Some("2.1.0"));
-        assert_eq!(s.download_url.as_deref(), Some("https://example.com/Billable-2.1.0-arm64.dmg"));
+        assert_eq!(s.download_url.as_deref(), Some("https://example.com/Billable-2.1.0-universal.dmg"));
         assert_eq!(s.download_size_bytes, Some(100.0));
         assert_eq!(s.release_notes.as_deref(), Some("Notes"));
 
@@ -709,7 +777,7 @@ mod tests {
         assert_eq!(s.latest_version.as_deref(), Some("1.5.3"));
         assert!(s.download_url.is_none());
 
-        let mut pre = release("v3.0.0-beta", &["a-arm64.dmg"]);
+        let mut pre = release("v3.0.0-beta", &["a-universal.dmg"]);
         pre.prerelease = true;
         let s = status_for(Some(&pre), "2.0.0", "t".into());
         assert!(!s.update_available);

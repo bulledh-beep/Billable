@@ -7,6 +7,8 @@ A local-first freelance time tracker, invoice generator, and tax estimator for m
 
 > Track time. Invoice clients. Estimate your tax set-aside. All offline. All yours.
 
+Runs natively on **every Mac**, Apple Silicon and Intel, on macOS 12 Monterey or later. Each release is one universal DMG.
+
 ---
 
 ## Quick install
@@ -29,7 +31,7 @@ INSTALL_DIR=~/Applications curl -fsSL https://raw.githubusercontent.com/bulledh-
 
 Prefer to do it yourself?
 
-1. Download the latest `Billable-*-arm64.dmg` from [Releases](https://github.com/bulledh-beep/Billable/releases/latest)
+1. Download the latest `Billable-*-universal.dmg` from [Releases](https://github.com/bulledh-beep/Billable/releases/latest)
 2. Open the DMG and drag **Billable** into your Applications folder
 3. Right-click the app → **Open** → **Open** (one-time bypass for Gatekeeper, since the build is unsigned)
 
@@ -139,22 +141,19 @@ The **Billable | Content HQ** switch at the top left opens your Content HQ works
 
 ## Build from source
 
-If you'd rather build the DMG yourself (e.g. you're on Intel, or want to modify the code):
+The app is native Rust (GPUI), in `native/`. On a Mac with Xcode's command line tools and [rustup](https://rustup.rs):
 
 ```bash
 git clone https://github.com/bulledh-beep/Billable.git
-cd Billable
-npm install
-npm run build         # produces release/Billable-*-arm64.dmg
+cd Billable/native
+scripts/bundle.sh     # produces release/Billable.app and release/Billable-*-universal.dmg
 ```
 
-Or run in dev mode with hot reload:
+`bundle.sh` builds an Apple Silicon and an Intel binary and joins them into one universal app, so the same DMG works on any Mac. Building on either kind of Mac works.
 
-```bash
-npm run dev
-```
+To check a build, `scripts/smoke-test.sh release/Billable.app` launches it against a throwaway data folder (pass `x86_64` or `arm64` to run one slice). Every push also runs the [macOS build](.github/workflows/macos.yml) check, which builds the universal DMG and launches it on both an Apple Silicon Mac and an Intel Mac.
 
-This launches the Vite dev server and Electron together.
+The older Electron app is still in `src/` (`npm install && npm run dev`).
 
 ---
 

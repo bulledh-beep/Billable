@@ -10,7 +10,7 @@
 #   INSTALL_DIR=~/Applications curl -fsSL ... | bash
 #
 # What this does:
-#   1. Detects your CPU architecture (arm64 / x86_64)
+#   1. Detects whether this Mac is Apple Silicon or Intel
 #   2. Asks GitHub for the latest release
 #   3. Downloads the matching .dmg to a temp file
 #   4. Quits any running Billable
@@ -46,14 +46,16 @@ note()  { printf "%s   %s%s\n" "$DIM" "$1" "$RESET"; }
 # ---------- Pre-flight checks ----------
 [[ "$(uname)" == "Darwin" ]] || fail "Billable is macOS only."
 
+# Releases ship one universal DMG that runs natively on every Mac. Older
+# releases shipped chip-specific DMGs, so we also know which chip this is.
 ARCH="$(uname -m)"
+# A Terminal running under Rosetta reports x86_64 on an Apple Silicon Mac.
+if [[ "$ARCH" == "x86_64" && "$(sysctl -in sysctl.proc_translated 2>/dev/null)" == "1" ]]; then
+  ARCH="arm64"
+fi
 case "$ARCH" in
-  arm64) DMG_PATTERN="arm64" ;;
-  x86_64)
-    warn "Intel Macs aren't currently supported by the published release (only Apple Silicon arm64 builds are shipped)."
-    warn "You can still build from source: https://github.com/$REPO_OWNER/$REPO_NAME#build-from-source"
-    fail "No Intel DMG available."
-    ;;
+  arm64)  CHIP_PATTERN="(arm64|aarch64)";  CHIP_NAME="Apple Silicon" ;;
+  x86_64) CHIP_PATTERN="(x86_64|x64|intel)"; CHIP_NAME="Intel" ;;
   *) fail "Unsupported architecture: $ARCH" ;;
 esac
 
@@ -67,14 +69,19 @@ step "Looking up the latest Billable release…"
 API_URL="https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest"
 RELEASE_JSON="$(curl -fsSL "$API_URL")" || fail "Couldn't reach GitHub. Check your internet connection."
 
-# Parse without jq dependency. Extracts the browser_download_url for an asset
-# whose name contains the arch pattern and ends in .dmg.
-DMG_URL="$(printf '%s' "$RELEASE_JSON" | \
+# Parse without jq dependency. Lists every asset's browser_download_url that
+# ends in .dmg, then picks the universal one, else the one for this chip.
+DMG_URLS="$(printf '%s' "$RELEASE_JSON" | \
   grep -oE '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]+"' | \
   sed -E 's/.*"([^"]+)"/\1/' | \
-  grep -E "${DMG_PATTERN}.*\\.dmg\$" | head -n 1)"
+  grep -iE '\.dmg$' || true)"
 
-[[ -n "$DMG_URL" ]] || fail "No matching DMG found in the latest release."
+DMG_URL="$(printf '%s\n' "$DMG_URLS" | grep -iE 'universal[^/]*\.dmg$' | head -n 1 || true)"
+if [[ -z "$DMG_URL" ]]; then
+  DMG_URL="$(printf '%s\n' "$DMG_URLS" | grep -iE "${CHIP_PATTERN}[^/]*\\.dmg\$" | head -n 1 || true)"
+fi
+
+[[ -n "$DMG_URL" ]] || fail "The latest release has no DMG for $CHIP_NAME Macs yet."
 
 VERSION="$(printf '%s' "$RELEASE_JSON" | \
   grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' | \

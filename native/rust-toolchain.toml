@@ -2,3 +2,5 @@
 channel = "1.99.1"
 profile = "minimal"
 components = ["clippy", "rustfmt"]
+# Release builds are universal: one app for Apple Silicon and Intel Macs.
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
