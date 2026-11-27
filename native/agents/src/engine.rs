@@ -1349,7 +1349,7 @@ impl State {
     fn feedhq_connect(&mut self) -> Value {
         let pkce = oauth::pkce();
         let state = oauth::new_state();
-        let url = oauth::authorize_url(self.auth.origin(), &pkce.challenge, &state);
+        let url = oauth::authorize_url(&self.cfg.feedhq_origin, self.auth.origin(), &pkce.challenge, &state);
         self.sign_ins.insert(state, (pkce.verifier, Instant::now()));
         json!({ "authorizeUrl": url })
     }

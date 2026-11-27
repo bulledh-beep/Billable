@@ -67,15 +67,19 @@ pub fn issuer_from_metadata(body: &Value) -> Option<String> {
     (bare == issuer && (bare.starts_with("https://") || local)).then_some(bare)
 }
 
-pub fn authorize_url(origin: &str, challenge: &str, state: &str) -> String {
-    let origin = origin.trim_end_matches('/');
+/// The Allow page opens on `page_origin`, the address the person is signed in
+/// to inside Billable's window (it may be an alias such as
+/// content-hq-live.vercel.app); the token is for the issuer's connector.
+pub fn authorize_url(page_origin: &str, issuer: &str, challenge: &str, state: &str) -> String {
+    let origin = page_origin.trim_end_matches('/');
+    let issuer = issuer.trim_end_matches('/');
     format!(
         "{origin}/oauth/authorize?response_type=code&client_id={}&redirect_uri={}&code_challenge={}&code_challenge_method=S256&state={}&resource={}",
         url_encode(CLIENT_ID),
         url_encode(REDIRECT_URI),
         url_encode(challenge),
         url_encode(state),
-        url_encode(&resource(origin))
+        url_encode(&resource(issuer))
     )
 }
 
@@ -347,11 +351,14 @@ mod tests {
 
     #[test]
     fn authorize_and_redirect() {
-        let url = authorize_url("https://feedhq.app/", "CH", "ST");
+        let url = authorize_url("https://feedhq.app/", "https://feedhq.app", "CH", "ST");
         assert_eq!(
             url,
             "https://feedhq.app/oauth/authorize?response_type=code&client_id=billable-mac&redirect_uri=billable%3A%2F%2Foauth&code_challenge=CH&code_challenge_method=S256&state=ST&resource=https%3A%2F%2Ffeedhq.app%2Fapi%2Fmcp"
         );
+        let alias = authorize_url("https://content-hq-live.vercel.app", "https://feedhq.app", "CH", "ST");
+        assert!(alias.starts_with("https://content-hq-live.vercel.app/oauth/authorize?"));
+        assert!(alias.ends_with("&resource=https%3A%2F%2Ffeedhq.app%2Fapi%2Fmcp"));
         let r = parse_redirect("billable://oauth?code=fhq_code_1&state=ST&iss=https%3A%2F%2Ffeedhq.app").unwrap();
         assert_eq!((r.code.as_deref(), r.state.as_deref(), r.iss.as_deref()), (Some("fhq_code_1"), Some("ST"), Some("https://feedhq.app")));
         let r = parse_redirect("billable://oauth/?error=access_denied&state=ST").unwrap();
