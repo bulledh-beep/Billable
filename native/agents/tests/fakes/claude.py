@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# A fake Claude Code CLI for the engine tests: answers --version, auth status,
-# the one-shot title call, and the stream-json protocol. Every launch and
+# A fake Claude Code CLI for the engine tests: answers --version, auth status
+# and the stream-json protocol; any other one-shot call is logged as "title"
+# so the tests can tell none was made. Every launch and
 # every line it reads is logged to claude.log next to this script.
 import json, os, sys
 
@@ -27,8 +28,7 @@ if args[:2] == ["auth", "status"]:
     sys.exit(0)
 if "--output-format" in args and args[args.index("--output-format") + 1] == "json":
     log("title", args)
-    print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": "\"Pottery Launch Plan.\""}))
-    sys.exit(0)
+    sys.exit(1)
 
 log("launch", args)
 session = "sess-1"
@@ -77,7 +77,7 @@ while True:
         sub = msg["request"]["subtype"]
         if sub == "initialize":
             out({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": {
-                "models": [{"value": "opus", "displayName": "Opus", "supportsEffort": True, "supportedEffortLevels": ["low", "high"]}]}}})
+                "models": [{"value": "opus", "displayName": "Opus", "supportsEffort": True, "supportedEffortLevels": ["low", "medium", "high"]}]}}})
         elif sub == "interrupt":
             out({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": {}}})
             finish(ok=False)

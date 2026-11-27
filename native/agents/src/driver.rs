@@ -10,6 +10,9 @@ use crate::protocol::{Decision, TurnStatus, Usage};
 pub enum DriverEvent {
     /// The agent's own session (Claude Code session id, Codex thread id).
     Session(String),
+    /// The models the CLI offers, as it said when a session the user
+    /// started came up (and the default).
+    Models(Vec<crate::protocol::Model>, String),
     TextDelta { key: String, text: String },
     /// The whole text of a block, once it's finished.
     TextDone { key: String, text: String },

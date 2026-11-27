@@ -137,7 +137,7 @@ Engine → screen, an **event** (any time, not tied to a request):
 | `thread.create` | `{ agent, model, effort?: string \| null }` | `{ thread: Thread }` |
 | `thread.update` | `{ threadId, title?, pinned?, settled?: boolean, archived?: boolean }` | `{ thread: Thread }` |
 | `thread.delete` | `{ threadId }` | `{}` |
-| `thread.retitle` | `{ threadId }` | `{ thread: Thread }` (asks the agent's cheapest model for a 2–5 word title) |
+| `thread.retitle` | `{ threadId }` | always `bad_request` "Rename it instead." (titles never use a model; rename with `thread.update`) |
 | `turn.send` | `{ threadId, text, agent?, model?, effort? }` | `{ turnId, userItem: Item }` |
 | `turn.stop` | `{ threadId }` | `{}` |
 | `approval.answer` | `{ threadId, approvalId, decision: "allow" \| "allow_always" \| "deny" }` | `{}` |
@@ -149,8 +149,12 @@ Engine → screen, an **event** (any time, not tied to a request):
 thread: the engine adds a `divider` item first, then starts the new agent with
 a **handoff** (below). Sending while `status` is `running` fails with `busy`.
 
-The first message of an untitled thread gets a title automatically after the
-first reply (`thread.updated`).
+An untitled thread is titled from its first message when it's sent: the
+first 6 words, trimmed (`thread.updated`). No model is asked. Nothing runs
+on the person's Claude or ChatGPT subscription unless they started it: no
+background titles, probes or polling, and a failed turn is never resent on
+their behalf (a resumed session that failed straight away is forgotten, so
+their next message starts fresh with a handoff).
 
 ## Events
 

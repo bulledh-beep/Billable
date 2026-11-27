@@ -13,6 +13,11 @@
 //! become approvals. The FeedHQ connector goes in each thread's `config` as
 //! `mcp_servers.feedhq` with the relay's URL (T3 Code passes its own MCP
 //! server the same way).
+//!
+//! Only the person's own, unmodified `codex` runs, signed in as they left
+//! it. `initialize` names Billable itself (`clientInfo.name = "billable"`,
+//! the app's version), never a first-party client, and no credential file
+//! or API key is touched.
 
 use std::{
     collections::HashMap,
@@ -52,7 +57,7 @@ pub fn version(bin: &Path) -> Option<String> {
     parse_version(&out.stdout)
 }
 
-/// Used when app-server can't be asked.
+/// Used until an app-server the person started lists its models.
 pub fn fallback_models() -> Vec<Model> {
     let efforts: Vec<String> = ["low", "medium", "high", "xhigh"].iter().map(|s| s.to_string()).collect();
     [("gpt-6.1-sol", "GPT-6.1 Sol"), ("gpt-6-astra", "GPT-6 Astra"), ("gpt-6-luna", "GPT-6 Luna")]
@@ -89,44 +94,22 @@ pub fn models_from_list(result: &Value) -> Option<(Vec<Model>, String)> {
     Some((models, default))
 }
 
-/// `account/read` → signed in (an account, or no OpenAI sign-in needed).
-pub fn signed_in_from_account(result: &Value) -> bool {
-    result.get("account").is_some_and(|a| !a.is_null()) || result.get("requiresOpenaiAuth") == Some(&Value::Bool(false))
-}
-
-pub struct Probe {
-    pub signed_in: Option<bool>,
-    pub models: Option<(Vec<Model>, String)>,
-}
-
-/// Start app-server, ask for the account and models, stop it.
-pub fn probe(bin: &Path, cwd: &Path) -> Probe {
-    let none = Probe { signed_in: None, models: None };
-    let Ok(server) = Server::start(bin, cwd, Arc::new(|_| {})) else { return none };
-    let timeout = Duration::from_secs(20);
-    let signed_in = server.peer.request("account/read", json!({}), timeout).ok().map(|r| signed_in_from_account(&r));
-    let models = server.peer.request("model/list", json!({}), timeout).ok().and_then(|r| models_from_list(&r));
-    Probe { signed_in, models }
-}
-
-/// The cheapest-looking model for titles: a "mini", else the last listed.
-pub fn title_model(models: &[Model]) -> Option<String> {
-    models.iter().find(|m| m.id.contains("mini")).or_else(|| models.last()).map(|m| m.id.clone())
-}
-
-/// A title from `codex exec`, one shot (`--output-last-message`).
-pub fn title(bin: &Path, cwd: &Path, model: Option<&str>, prompt: &str) -> Option<String> {
-    let out_file = std::env::temp_dir().join(format!("billable-title-{}.txt", crate::util::uuid()));
-    let mut cmd = agent_command(bin, cwd);
-    cmd.args(["exec", "--skip-git-repo-check", "--sandbox", "read-only", "-c", "model_reasoning_effort=\"low\"", "--output-last-message"]).arg(&out_file);
-    if let Some(m) = model {
-        cmd.args(["-m", m]);
+/// `codex login status`: exit 0 when signed in ("Logged in using …"), an
+/// error saying "Not logged in" when not. `None` when it can't tell (an
+/// older CLI without the command).
+pub fn parse_login_status(status: Option<i32>, output: &str) -> Option<bool> {
+    let text = output.to_ascii_lowercase();
+    match status {
+        Some(0) if text.contains("logged in") => Some(true),
+        Some(_) if text.contains("not logged in") => Some(false),
+        _ => None,
     }
-    cmd.arg(prompt);
-    let ran = run_with_timeout(&mut cmd, Duration::from_secs(90));
-    let text = std::fs::read_to_string(&out_file).ok();
-    let _ = std::fs::remove_file(&out_file);
-    ran.and(text).filter(|t| !t.trim().is_empty())
+}
+
+/// Asks the CLI's own status command; never reads its files.
+pub fn signed_in(bin: &Path) -> Option<bool> {
+    let out = run_with_timeout(agent_command(bin, &std::env::temp_dir()).args(["login", "status"]), Duration::from_secs(10))?;
+    parse_login_status(out.status, &format!("{}\n{}", out.stdout, out.stderr))
 }
 
 // ---------- JSON-RPC over stdio ----------
@@ -550,9 +533,9 @@ mod tests {
         assert_eq!(models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["gpt-6.1-sol", "gpt-6-mini"]);
         assert_eq!(default, "gpt-6.1-sol");
         assert_eq!(models[0].efforts, vec!["low", "medium"]);
-        assert_eq!(title_model(&models).as_deref(), Some("gpt-6-mini"));
-        assert!(signed_in_from_account(&json!({"account":{"type":"chatgpt","email":null,"planType":"pro"},"requiresOpenaiAuth":true})));
-        assert!(!signed_in_from_account(&json!({"account":null,"requiresOpenaiAuth":true})));
+        assert_eq!(parse_login_status(Some(0), "Logged in using ChatGPT\n"), Some(true));
+        assert_eq!(parse_login_status(Some(1), "Not logged in\n"), Some(false));
+        assert_eq!(parse_login_status(Some(2), "error: unrecognized subcommand 'status'"), None);
     }
 
     #[test]

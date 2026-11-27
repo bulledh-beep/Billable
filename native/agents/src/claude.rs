@@ -4,10 +4,14 @@
 //! Claude Code, driven as `claude -p` with stream-json in and out.
 //!
 //! One long-lived process per chat. Turns go in as `user` messages on stdin;
-//! the CLI asks before a step with a `can_use_tool` control request (the
-//! same control protocol the Claude Agent SDK speaks, which T3 Code drives),
-//! and is stopped with an `interrupt` control request. A chat that comes
+//! the CLI asks before a step with a `can_use_tool` control request, and is
+//! stopped with an `interrupt` control request. A chat that comes
 //! back later resumes its session with `--resume <session id>`.
+//!
+//! Only the person's own, unmodified `claude` runs, signed in as they left
+//! it: Billable never reads its credentials, never sets a token or API key
+//! for it, and passes its environment through (PATH aside). The models come
+//! from the `initialize` answer of a session the person started.
 //!
 //! The FeedHQ connector goes in with `--mcp-config` as an `http` server
 //! named `feedhq` pointing at the local relay; the user's own settings are
@@ -16,7 +20,7 @@
 use std::{
     collections::HashMap,
     io::Write as _,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Child, ChildStdin, Stdio},
     sync::{Arc, Mutex},
     time::Duration,
@@ -33,8 +37,9 @@ use crate::{
 
 pub const AGENT_ID: &str = "claude";
 pub const AGENT_NAME: &str = "Claude Code";
-/// The cheapest model, for titles.
-pub const TITLE_MODEL: &str = "haiku";
+
+/// The id of the `initialize` each session starts with.
+const INIT_REQUEST: &str = "init";
 
 /// Said to every session, after Claude Code's own system prompt.
 pub const SYSTEM_NOTE: &str = "You are running inside FeedHQ's Agents chat in the Billable app on the user's Mac. \
@@ -102,66 +107,6 @@ pub fn version(bin: &Path) -> Option<String> {
 pub fn signed_in(bin: &Path) -> Option<bool> {
     let out = run_with_timeout(agent_command(bin, &std::env::temp_dir()).args(["auth", "status", "--json"]), Duration::from_secs(10))?;
     parse_auth_status(&out.stdout)
-}
-
-/// Ask the CLI for its models: start it, send `initialize`, read the answer,
-/// stop it. No message is sent, so nothing is billed.
-pub fn probe_models(bin: &Path, cwd: &Path) -> Option<(Vec<Model>, String)> {
-    let mut child = agent_command(bin, cwd)
-        .args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let mut stdin = child.stdin.take()?;
-    let stdout = child.stdout.take()?;
-    let (tx, rx) = std::sync::mpsc::channel::<Value>();
-    read_lines(
-        stdout,
-        move |line| {
-            if let Ok(v) = serde_json::from_str::<Value>(&line) {
-                if v.get("type").and_then(Value::as_str) == Some("control_response") {
-                    let _ = tx.send(v);
-                }
-            }
-        },
-        || {},
-    );
-    let _ = writeln!(stdin, "{}", json!({"type":"control_request","request_id":"probe","request":{"subtype":"initialize"}}));
-    let _ = stdin.flush();
-    let answer = rx.recv_timeout(Duration::from_secs(20)).ok();
-    drop(stdin);
-    kill(&mut child);
-    let response = answer?.get("response")?.get("response")?.clone();
-    models_from_initialize(&response)
-}
-
-/// A 2–5 word title from the cheapest model, one shot.
-pub fn title(bin: &Path, cwd: &Path, prompt: &str) -> Option<String> {
-    let out = run_with_timeout(
-        agent_command(bin, cwd).args([
-            "-p",
-            "--model",
-            TITLE_MODEL,
-            "--output-format",
-            "json",
-            "--no-session-persistence",
-            "--tools",
-            "",
-            "--setting-sources",
-            "",
-            "--strict-mcp-config",
-            "--disable-slash-commands",
-            prompt,
-        ]),
-        Duration::from_secs(60),
-    )?;
-    let v: Value = serde_json::from_str(out.stdout.trim()).ok()?;
-    if v.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
-        return None;
-    }
-    v.get("result").and_then(Value::as_str).map(str::to_string)
 }
 
 // ---------- Launch ----------
@@ -343,6 +288,12 @@ impl Mapper {
                     replies.push(json!({"type":"control_response","response":{"subtype":"error","request_id":id,"error":"Billable doesn't handle this request."}}).to_string());
                 }
             }
+            // Our `initialize`, sent as the session starts: its model list.
+            "control_response" if v.pointer("/response/request_id").and_then(Value::as_str) == Some(INIT_REQUEST) => {
+                if let Some((models, default)) = v.pointer("/response/response").and_then(models_from_initialize) {
+                    out.push(DriverEvent::Models(models, default));
+                }
+            }
             "control_cancel_request" => {
                 if let Some(id) = v.get("request_id").and_then(Value::as_str) {
                     if let Ok(mut p) = self.pending.lock() {
@@ -491,7 +442,7 @@ impl Session {
             },
         );
         let session = Session { child, stdin, pending, launch, next_request: 0 };
-        write_line(&session.stdin, &json!({"type":"control_request","request_id":"init","request":{"subtype":"initialize"}}).to_string())?;
+        write_line(&session.stdin, &json!({"type":"control_request","request_id":INIT_REQUEST,"request":{"subtype":"initialize"}}).to_string())?;
         Ok(session)
     }
 
@@ -526,15 +477,6 @@ impl Drop for Session {
     fn drop(&mut self) {
         self.stop();
     }
-}
-
-/// Where Claude Code keeps a session's transcript, to tell whether it can be
-/// resumed (`~/.claude/projects/<cwd with / as ->/<id>.jsonl`).
-pub fn session_file(cwd: &Path, session_id: &str) -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    let config = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| home.join(".claude"));
-    let slug: String = cwd.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
-    Some(config.join("projects").join(slug).join(format!("{session_id}.jsonl")))
 }
 
 #[cfg(test)]

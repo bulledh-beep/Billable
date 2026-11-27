@@ -58,8 +58,6 @@ pub struct EngineConfig {
     pub codex_bin: Option<PathBuf>,
     /// Ask the login shell for its PATH when looking for the CLIs.
     pub login_shell: bool,
-    /// Ask each CLI for its model list (off in tests).
-    pub probe_models: bool,
     /// Ask FeedHQ for its OAuth issuer, which may differ from the
     /// configured address (e.g. a vercel.app alias of feedhq.app).
     pub discover_issuer: bool,
@@ -77,7 +75,6 @@ impl EngineConfig {
             claude_bin: None,
             codex_bin: None,
             login_shell: true,
-            probe_models: true,
             discover_issuer: true,
         }
     }
@@ -99,8 +96,9 @@ enum Cmd {
     CodexServer { gen: u64, result: Result<codex::Server, String> },
     CodexBound { thread: String, gen: u64, codex_thread: String },
     CodexTurn { thread: String, turn: String, gen: u64, result: Result<String, String> },
-    Agents { agents: Vec<Agent>, bins: Binaries, last: bool, reply: Option<ReplyTo> },
-    Titled { thread: String, title: String, reply: Option<ReplyTo> },
+    Agents { agents: Vec<Agent>, bins: Binaries, reply: Option<ReplyTo> },
+    /// Models a Codex app-server the user started listed.
+    CodexModels { models: Vec<Model>, default: String },
     FeedhqChanged,
     SignInFailed(String),
     Shutdown(Sender<()>),
@@ -209,7 +207,6 @@ struct Turn {
     /// Started by resuming the agent's own session: if that fails before
     /// anything comes back, try again fresh with a handoff.
     resumed: bool,
-    user_text: String,
     /// Codex's id for this turn, once it's known.
     codex_turn: Option<String>,
 }
@@ -289,20 +286,20 @@ fn issuer_for(cfg: &EngineConfig, store: &Store) -> String {
     }
 }
 
-/// A title as the model wrote it → a short plain one.
-pub fn clean_title(raw: &str) -> Option<String> {
-    let line = raw.lines().map(str::trim).find(|l| !l.is_empty())?;
-    let line = line.trim_start_matches("Title:").trim_start_matches("title:");
-    let t = line.trim().trim_matches(|c: char| c == '"' || c == '\'' || c == '*' || c == '`' || c == '#' || c == '“' || c == '”').trim();
-    let t = t.trim_end_matches(['.', '!', ':', ';']).trim();
-    (!t.is_empty()).then(|| cut(t, 60))
+/// A chat's title: the first 6 words of its first message. No model is
+/// asked, so naming a chat never uses the person's subscription.
+pub fn title_from(first_message: &str) -> String {
+    let words = first_words(first_message, 6);
+    let t = words.trim().trim_end_matches(['.', ',', '!', '?', ':', ';']).trim();
+    cut(t, 60)
 }
 
-pub fn title_prompt(first_message: &str) -> String {
-    format!(
-        "Write a 2 to 5 word title for a chat that starts with the message below. Reply with only the title, no quotes.\n\nMessage: {}",
-        cut(first_message, 2000)
-    )
+/// The CLIs' own words when they're signed out (Claude Code: "Invalid API
+/// key · Please run /login", "not logged in"; Codex: "Not logged in",
+/// 401 Unauthorized).
+pub fn looks_signed_out(error: &str) -> bool {
+    let e = error.to_ascii_lowercase();
+    ["/login", "not logged in", "please log in", "please login", "codex login", "unauthorized", "authentication_error", "oauth token has expired"].iter().any(|m| e.contains(m))
 }
 
 fn params<T: serde::de::DeserializeOwned>(v: &Value) -> Result<T, ProtoError> {
@@ -460,8 +457,8 @@ impl State {
                 }
             }
             Cmd::CodexTurn { thread, turn, gen, result } => self.codex_turn_started(&thread, &turn, gen, result),
-            Cmd::Agents { agents, bins, last, reply } => self.agents_found(agents, bins, last, reply),
-            Cmd::Titled { thread, title, reply } => self.titled(&thread, title, reply),
+            Cmd::Agents { agents, bins, reply } => self.agents_found(agents, bins, reply),
+            Cmd::CodexModels { models, default } => self.models_reported(codex::AGENT_ID, models, default),
             Cmd::FeedhqChanged => self.feedhq_changed(),
             Cmd::SignInFailed(message) => {
                 eprintln!("[agents] FeedHQ sign-in failed: {message}");
@@ -513,10 +510,8 @@ impl State {
             "thread.create" => params::<ThreadCreateParams>(p).and_then(|p| self.thread_create(p)),
             "thread.update" => params::<ThreadUpdateParams>(p).and_then(|p| self.thread_update(p)),
             "thread.delete" => params::<ThreadIdParams>(p).and_then(|p| self.thread_delete(&p.thread_id)),
-            "thread.retitle" => match params::<ThreadIdParams>(p).and_then(|p| self.thread(&p.thread_id)) {
-                Ok(t) => return self.start_title(&t, Some(to)),
-                Err(e) => Err(e),
-            },
+            // Titles never cost a model call; the person renames instead.
+            "thread.retitle" => Err(ProtoError::bad_request("Rename it instead.")),
             "turn.send" => match params::<TurnSendParams>(p).and_then(|p| self.turn_send(p, &to)) {
                 // turn_send replies itself, before the turn starts.
                 Ok(()) => return,
@@ -557,31 +552,23 @@ impl State {
             return;
         }
         self.refreshing = true;
-        let opts = discovery::Options { claude_bin: self.cfg.claude_bin.clone(), codex_bin: self.cfg.codex_bin.clone(), login_shell: self.cfg.login_shell, cwd: self.cfg.work_dir.clone() };
-        let (tx, cached, probe, quick_first) = (self.tx.clone(), self.agents.clone(), self.cfg.probe_models, self.agents.is_empty());
+        let opts = discovery::Options { claude_bin: self.cfg.claude_bin.clone(), codex_bin: self.cfg.codex_bin.clone(), login_shell: self.cfg.login_shell };
+        let (tx, cached) = (self.tx.clone(), self.agents.clone());
         std::thread::spawn(move || {
-            if quick_first && probe {
-                let (agents, bins) = discovery::detect(&opts, false, &cached);
-                let _ = tx.send(Cmd::Agents { agents: agents.clone(), bins, last: false, reply: None });
-            }
-            let (agents, bins) = discovery::detect(&opts, probe, &cached);
-            let _ = tx.send(Cmd::Agents { agents, bins, last: true, reply });
+            let (agents, bins) = discovery::detect(&opts, &cached);
+            let _ = tx.send(Cmd::Agents { agents, bins, reply });
         });
     }
 
-    fn agents_found(&mut self, agents: Vec<Agent>, bins: Binaries, last: bool, reply: Option<ReplyTo>) {
+    fn agents_found(&mut self, agents: Vec<Agent>, bins: Binaries, reply: Option<ReplyTo>) {
         // A hello may have been answered from last time's list, so any
         // change is announced, the first detection included.
         let changed = agents != self.agents;
         self.agents = agents;
         self.bins = bins;
         self.agents_ready = true;
-        if last {
-            self.refreshing = false;
-            if let Ok(s) = serde_json::to_string(&self.agents) {
-                let _ = self.store.set_meta("agents", &s);
-            }
-        }
+        self.refreshing = false;
+        self.save_agents();
         for to in std::mem::take(&mut self.waiting_hello) {
             self.reply(&to, Ok(self.hello()));
         }
@@ -595,6 +582,40 @@ impl State {
 
     fn agent(&self, id: &str) -> Option<&Agent> {
         self.agents.iter().find(|a| a.id == id)
+    }
+
+    fn save_agents(&self) {
+        if let Ok(s) = serde_json::to_string(&self.agents) {
+            let _ = self.store.set_meta("agents", &s);
+        }
+    }
+
+    /// An agent's models, as its CLI listed them in a session the user
+    /// started (never asked for in the background).
+    fn models_reported(&mut self, id: &str, models: Vec<Model>, default: String) {
+        let Some(a) = self.agents.iter_mut().find(|a| a.id == id) else { return };
+        if a.models == models && a.default_model == default {
+            return;
+        }
+        a.models = models;
+        a.default_model = default;
+        self.save_agents();
+        self.emit(Event::AgentsChanged { agents: self.agents.clone() });
+    }
+
+    /// A turn failed with what reads like the CLI's own "sign in" error:
+    /// show the agent as signed out until the next look says otherwise.
+    fn note_sign_in_error(&mut self, id: &str, error: &str) {
+        if !looks_signed_out(error) {
+            return;
+        }
+        let Some(a) = self.agents.iter_mut().find(|a| a.id == id) else { return };
+        if !a.signed_in {
+            return;
+        }
+        a.signed_in = false;
+        self.save_agents();
+        self.emit(Event::AgentsChanged { agents: self.agents.clone() });
     }
 
     /// "Claude Code, Opus 5.5" for the handoff.
@@ -799,6 +820,9 @@ impl State {
         t.status = ThreadStatus::Running;
         t.updated_at = now_iso();
         t.preview = one_line(&text, 140);
+        if t.title.is_empty() {
+            t.title = title_from(&text);
+        }
         self.save_thread(&t);
 
         let session = self.store.session(&t.id, &agent).ok().flatten();
@@ -819,7 +843,6 @@ impl State {
                 error: None,
                 stop_at: None,
                 resumed: session.is_some(),
-                user_text: text,
                 codex_turn: None,
             },
         );
@@ -901,6 +924,16 @@ impl State {
                         let _ = sink_tx.send(Cmd::Codex { gen, inc });
                     });
                     let result = codex::Server::start(&bin, &cwd, sink).map_err(|e| e.to_string());
+                    // The server the person's message started lists its models
+                    // (a local call: nothing goes to a model).
+                    if let Ok(server) = &result {
+                        let (peer, tx) = (server.peer.clone(), tx.clone());
+                        std::thread::spawn(move || {
+                            if let Some((models, default)) = peer.request("model/list", json!({}), codex::REQUEST_TIMEOUT).ok().and_then(|r| codex::models_from_list(&r)) {
+                                let _ = tx.send(Cmd::CodexModels { models, default });
+                            }
+                        });
+                    }
                     let _ = tx.send(Cmd::CodexServer { gen, result });
                 });
             }
@@ -1090,6 +1123,8 @@ impl State {
                     let _ = self.store.set_session(thread, &agent, &id, &now_iso());
                 }
             }
+            // Only Claude Code reports these (its initialize answer).
+            DriverEvent::Models(models, default) => self.models_reported(claude::AGENT_ID, models, default),
             _ if !self.turns.contains_key(thread) => {}
             DriverEvent::TextDelta { key, text } => self.text_delta(thread, &key, ItemKind::Assistant, text),
             DriverEvent::ReasoningDelta { key, text } => self.text_delta(thread, &key, ItemKind::Reasoning, text),
@@ -1263,9 +1298,10 @@ impl State {
         let Some(turn) = self.turns.get(thread) else { return };
         let stopped = turn.stop_at.is_some();
         // A resumed session that failed straight away (e.g. its transcript is
-        // gone): start over with a handoff, once.
+        // gone) is forgotten, so the person's next message starts fresh with a
+        // handoff. Nothing is sent again on their behalf.
         if status == TurnStatus::Failed && turn.resumed && turn.outputs == 0 && !stopped {
-            let (agent, text) = (turn.agent.clone(), turn.user_text.clone());
+            let agent = turn.agent.clone();
             let _ = self.store.clear_session(thread, &agent);
             if let Some(mut run) = self.claude.remove(thread) {
                 run.session.stop();
@@ -1273,16 +1309,6 @@ impl State {
             if let Some(c) = self.codex.as_mut() {
                 c.loaded.remove(thread);
             }
-            let mut history = self.store.items(thread).unwrap_or_default();
-            // The message being retried goes after the handoff, not in it.
-            if let Some(pos) = history.iter().rposition(|i| i.kind == ItemKind::User) {
-                history.truncate(pos);
-            }
-            let prompt = handoff::build(&history, &|a, m| self.speaker(a, m), &text);
-            if let Some(t) = self.turns.get_mut(thread) {
-                t.resumed = false;
-            }
-            return self.start_agent(thread, &prompt, None);
         }
         let Some(mut turn) = self.turns.remove(thread) else { return };
         let status = if stopped { TurnStatus::Stopped } else { status };
@@ -1305,6 +1331,7 @@ impl State {
         let error = if status == TurnStatus::Stopped { None } else { error.or(turn.error.take()) };
         if status == TurnStatus::Failed {
             let message = error.clone().unwrap_or_else(|| "Something went wrong.".into());
+            self.note_sign_in_error(&turn.agent, &message);
             self.add_item(thread, Some(&turn.id), ItemKind::Error, Some(message), |_| {});
         }
         if let Some(run) = self.claude.get_mut(thread) {
@@ -1313,53 +1340,8 @@ impl State {
         let Ok(Some(mut t)) = self.store.thread(thread) else { return };
         t.status = if status == TurnStatus::Failed { ThreadStatus::Failed } else { ThreadStatus::Idle };
         t.updated_at = now_iso();
-        let needs_title = t.title.is_empty() && status == TurnStatus::Done;
         self.save_thread(&t);
         self.emit(Event::TurnFinished { thread_id: thread.to_string(), turn_id: turn.id.clone(), status, error, usage: usage.or(turn.usage) });
-        if needs_title {
-            self.start_title(&t, None);
-        }
-    }
-
-    // ---------- Titles ----------
-
-    fn start_title(&mut self, t: &Thread, reply: Option<ReplyTo>) {
-        let first = self.store.items(&t.id).ok().and_then(|items| items.into_iter().find(|i| i.kind == ItemKind::User)).and_then(|i| i.text).unwrap_or_default();
-        if first.trim().is_empty() {
-            if let Some(to) = reply {
-                self.reply(&to, Ok(json!({ "thread": t })));
-            }
-            return;
-        }
-        let (tx, id, cwd) = (self.tx.clone(), t.id.clone(), self.cfg.work_dir.clone());
-        let codex_model = self.agent(codex::AGENT_ID).and_then(|a| codex::title_model(&a.models));
-        let job: Box<dyn FnOnce() -> Option<String> + Send> = match (t.agent.as_str(), self.bins.claude.clone(), self.bins.codex.clone()) {
-            ("claude", Some(bin), _) => Box::new(move || claude::title(&bin, &cwd, &title_prompt(&first))),
-            ("codex", _, Some(bin)) => Box::new(move || codex::title(&bin, &cwd, codex_model.as_deref(), &title_prompt(&first))),
-            _ => Box::new(|| None),
-        };
-        let fallback = first_words(&self.store.items(&t.id).ok().and_then(|items| items.into_iter().find(|i| i.kind == ItemKind::User)).and_then(|i| i.text).unwrap_or_default(), 6);
-        std::thread::spawn(move || {
-            let title = job().and_then(|raw| clean_title(&raw)).unwrap_or_else(|| cut(&fallback, 60));
-            let _ = tx.send(Cmd::Titled { thread: id, title, reply });
-        });
-    }
-
-    fn titled(&mut self, thread: &str, title: String, reply: Option<ReplyTo>) {
-        let Ok(Some(mut t)) = self.store.thread(thread) else {
-            if let Some(to) = reply {
-                self.reply(&to, Err(ProtoError::not_found()));
-            }
-            return;
-        };
-        // An automatic title never replaces one the person set meanwhile.
-        if reply.is_some() || t.title.is_empty() {
-            t.title = title;
-            self.save_thread(&t);
-        }
-        if let Some(to) = reply {
-            self.reply(&to, Ok(json!({ "thread": t })));
-        }
     }
 
     // ---------- FeedHQ ----------
@@ -1416,10 +1398,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn titles_are_cleaned() {
-        assert_eq!(clean_title("\"Instagram Pottery Plan.\"\n").as_deref(), Some("Instagram Pottery Plan"));
-        assert_eq!(clean_title("Title: **Weekly posts**").as_deref(), Some("Weekly posts"));
-        assert_eq!(clean_title("  \n "), None);
-        assert!(title_prompt("hi").ends_with("Message: hi"));
+    fn titles_and_sign_in_errors() {
+        assert_eq!(title_from("  Plan my pottery launch for spring, please and thanks"), "Plan my pottery launch for spring");
+        assert_eq!(title_from("Hi there."), "Hi there");
+        assert!(looks_signed_out("Invalid API key · Please run /login"));
+        assert!(looks_signed_out("Not logged in. Run codex login."));
+        assert!(!looks_signed_out("The file wasn't found."));
     }
 }

@@ -1,8 +1,9 @@
 //! Which agents are installed and signed in, and their models.
 //!
-//! Two passes: a quick one (where the CLIs are, versions, sign-in) whose
-//! models come from the last full pass or a built-in list, and a full one
-//! that also asks each CLI for its models.
+//! Only `--version` and the CLIs' own status commands (`claude auth status`,
+//! `codex login status`) run here; nothing is sent to a model and no
+//! credential file is opened. Models come from what a session the user
+//! started reported last time, else a built-in list.
 
 use std::path::{Path, PathBuf};
 
@@ -21,8 +22,6 @@ pub struct Options {
     pub codex_bin: Option<PathBuf>,
     /// Also ask the login shell for its PATH.
     pub login_shell: bool,
-    /// Where probes run.
-    pub cwd: PathBuf,
 }
 
 fn locate(fixed: &Option<PathBuf>, name: &str, login_shell: bool) -> Option<PathBuf> {
@@ -36,54 +35,48 @@ fn cached_models(cached: &[Agent], id: &str) -> Option<(Vec<crate::protocol::Mod
     cached.iter().find(|a| a.id == id && !a.models.is_empty()).map(|a| (a.models.clone(), a.default_model.clone()))
 }
 
-fn claude_agent(bin: Option<&Path>, opts: &Options, probe: bool, cached: &[Agent]) -> Agent {
+fn models_or_fallback(cached: &[Agent], id: &str, fallback: fn() -> Vec<crate::protocol::Model>) -> (Vec<crate::protocol::Model>, String) {
+    cached_models(cached, id).unwrap_or_else(|| {
+        let m = fallback();
+        let d = m[0].id.clone();
+        (m, d)
+    })
+}
+
+/// Sign-in as the CLI's own status command says; unknown (an older CLI):
+/// what was known before, else assumed, and a turn's error tells.
+fn sign_in(said: Option<bool>, cached: &[Agent], id: &str) -> bool {
+    said.or(cached.iter().find(|a| a.id == id && a.installed).map(|a| a.signed_in)).unwrap_or(true)
+}
+
+fn claude_agent(bin: Option<&Path>, cached: &[Agent]) -> Agent {
     let Some(bin) = bin else {
         let models = claude::fallback_models();
         return Agent { id: claude::AGENT_ID.into(), name: claude::AGENT_NAME.into(), installed: false, signed_in: false, version: None, default_model: models[0].id.clone(), models };
     };
     let version = claude::version(bin);
-    // Unknown (an older CLI without `auth status`): let a turn find out.
-    let signed_in = claude::signed_in(bin).unwrap_or(true);
-    let (models, default_model) = probe
-        .then(|| claude::probe_models(bin, &opts.cwd))
-        .flatten()
-        .or_else(|| cached_models(cached, claude::AGENT_ID))
-        .unwrap_or_else(|| {
-            let m = claude::fallback_models();
-            let d = m[0].id.clone();
-            (m, d)
-        });
+    let signed_in = sign_in(claude::signed_in(bin), cached, claude::AGENT_ID);
+    let (models, default_model) = models_or_fallback(cached, claude::AGENT_ID, claude::fallback_models);
     Agent { id: claude::AGENT_ID.into(), name: claude::AGENT_NAME.into(), installed: true, signed_in, version, models, default_model }
 }
 
-fn codex_agent(bin: Option<&Path>, opts: &Options, probe: bool, cached: &[Agent]) -> Agent {
+fn codex_agent(bin: Option<&Path>, cached: &[Agent]) -> Agent {
     let Some(bin) = bin else {
         let models = codex::fallback_models();
         return Agent { id: codex::AGENT_ID.into(), name: codex::AGENT_NAME.into(), installed: false, signed_in: false, version: None, default_model: models[0].id.clone(), models };
     };
     let version = codex::version(bin);
-    let (signed_in, probed) = if probe {
-        let p = codex::probe(bin, &opts.cwd);
-        (p.signed_in, p.models)
-    } else {
-        (None, None)
-    };
-    let previous = cached.iter().find(|a| a.id == codex::AGENT_ID);
-    let signed_in = signed_in.or(previous.filter(|a| a.installed).map(|a| a.signed_in)).unwrap_or(true);
-    let (models, default_model) = probed.or_else(|| cached_models(cached, codex::AGENT_ID)).unwrap_or_else(|| {
-        let m = codex::fallback_models();
-        let d = m[0].id.clone();
-        (m, d)
-    });
+    let signed_in = sign_in(codex::signed_in(bin), cached, codex::AGENT_ID);
+    let (models, default_model) = models_or_fallback(cached, codex::AGENT_ID, codex::fallback_models);
     Agent { id: codex::AGENT_ID.into(), name: codex::AGENT_NAME.into(), installed: true, signed_in, version, models, default_model }
 }
 
 /// The agents, in picker order (Claude Code, Codex), and where they are.
-pub fn detect(opts: &Options, probe: bool, cached: &[Agent]) -> (Vec<Agent>, Binaries) {
+pub fn detect(opts: &Options, cached: &[Agent]) -> (Vec<Agent>, Binaries) {
     let bins = Binaries { claude: locate(&opts.claude_bin, "claude", opts.login_shell), codex: locate(&opts.codex_bin, "codex", opts.login_shell) };
     let (c, x) = std::thread::scope(|s| {
-        let c = s.spawn(|| claude_agent(bins.claude.as_deref(), opts, probe, cached));
-        let x = s.spawn(|| codex_agent(bins.codex.as_deref(), opts, probe, cached));
+        let c = s.spawn(|| claude_agent(bins.claude.as_deref(), cached));
+        let x = s.spawn(|| codex_agent(bins.codex.as_deref(), cached));
         (c.join(), x.join())
     });
     let mut agents = Vec::new();
@@ -98,8 +91,8 @@ mod tests {
 
     #[test]
     fn missing_agents_are_listed_as_not_installed() {
-        let opts = Options { claude_bin: Some("/nope/claude".into()), codex_bin: Some("/nope/codex".into()), login_shell: false, cwd: std::env::temp_dir() };
-        let (agents, bins) = detect(&opts, true, &[]);
+        let opts = Options { claude_bin: Some("/nope/claude".into()), codex_bin: Some("/nope/codex".into()), login_shell: false };
+        let (agents, bins) = detect(&opts, &[]);
         assert_eq!(bins, Binaries::default());
         assert_eq!(agents.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), vec!["claude", "codex"]);
         assert!(agents.iter().all(|a| !a.installed && !a.signed_in && !a.models.is_empty()));

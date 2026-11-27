@@ -140,7 +140,9 @@ fn drain(mut r: impl Read + Send + 'static) -> std::thread::JoinHandle<String> {
     })
 }
 
-/// A command for an agent CLI with the widened PATH, in `cwd`.
+/// A command for an agent CLI, in `cwd`. The environment is passed through
+/// as it is, apart from a widened PATH: no token or API key is added (one
+/// the person already has in their environment stays theirs).
 pub fn agent_command(binary: &Path, cwd: &Path) -> Command {
     let mut cmd = Command::new(binary);
     cmd.current_dir(cwd).env("PATH", child_path(Some(binary)));

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# A fake Codex CLI for the engine tests: --version, a failing `exec` (so
-# titles fall back to the first words), and `app-server` JSON-RPC. Every
+# A fake Codex CLI for the engine tests: --version, `login status`, and
+# `app-server` JSON-RPC (`exec` is logged so tests can tell it never ran). Every
 # line it reads is logged to codex.log next to this script.
 import json, os, sys
 
@@ -22,7 +22,11 @@ def out(obj):
 if args == ["--version"]:
     print("codex-cli 0.130.0")
     sys.exit(0)
+if args == ["login", "status"]:
+    sys.stderr.write("Logged in using ChatGPT\n")
+    sys.exit(0)
 if args[:1] == ["exec"]:
+    log("exec", args)
     sys.exit(1)
 if args != ["app-server"]:
     sys.exit(2)
@@ -57,6 +61,9 @@ while True:
     method, rid, p = msg.get("method"), msg.get("id"), msg.get("params") or {}
     if method == "initialize":
         out({"id": rid, "result": {"userAgent": "fake"}})
+    elif method == "model/list":
+        out({"id": rid, "result": {"data": [{"id": "gpt-6.1-sol", "model": "gpt-6.1-sol", "displayName": "GPT-6.1 Sol", "isDefault": True,
+             "defaultReasoningEffort": "medium", "supportedReasoningEfforts": [{"reasoningEffort": "medium"}]}]}})
     elif method == "thread/start":
         threads += 1
         out({"id": rid, "result": {"thread": {"id": "cx-%d" % threads}}})

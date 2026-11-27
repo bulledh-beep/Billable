@@ -75,7 +75,6 @@ fn start(dir: &Path, origin: &str, secrets: Arc<dyn SecretStore>) -> (Engine, Re
     cfg.claude_bin = Some(dir.join("claude"));
     cfg.codex_bin = Some(dir.join("codex"));
     cfg.login_shell = false;
-    cfg.probe_models = false;
     cfg.device_name = Some("Test Mac".into());
     Engine::new(cfg).unwrap()
 }
@@ -178,7 +177,8 @@ fn chats_end_to_end_with_fake_agents() {
     let r = h.call("turn.send", json!({"threadId": "t_missing", "text": "hi"}));
     assert_eq!(r["error"]["code"], "not_found");
 
-    // A Claude chat: streaming, usage, and an automatic title
+    // A Claude chat: streaming, usage, a title from its first words, and the
+    // models Claude Code listed when the session came up
     let thread = h.ok("thread.create", json!({"agent": "claude", "model": "opus"}))["thread"].clone();
     let tid = thread["id"].as_str().unwrap().to_string();
     let mark = h.events.len();
@@ -194,7 +194,12 @@ fn chats_end_to_end_with_fake_agents() {
     assert_eq!(items.iter().map(|i| i["kind"].as_str().unwrap()).collect::<Vec<_>>(), vec!["user", "assistant"]);
     assert_eq!(items[1]["text"], "Hello there");
     assert_eq!(items[1]["agent"], "claude");
-    h.wait_event(mark, |e| e["type"] == "thread.updated" && e["thread"]["title"] == "Pottery Launch Plan");
+    assert_eq!(h.ok("thread.get", json!({"threadId": tid}))["thread"]["title"], "Plan my pottery launch");
+    let models = h.wait_event(0, |e| e["type"] == "agents.changed" && e["agents"][0]["models"].as_array().is_some_and(|m| m.len() == 1))["agents"][0]["models"].clone();
+    assert_eq!(models[0]["efforts"], json!(["low", "medium", "high"]));
+    assert_eq!(h.call("thread.retitle", json!({"threadId": tid}))["error"], json!({"code": "bad_request", "message": "Rename it instead."}));
+    // Nothing but the user's own session ran: no title or probe calls.
+    assert!(h.log("claude").iter().all(|l| l["kind"] != "title"));
     let launches: Vec<Value> = h.log("claude").into_iter().filter(|l| l["kind"] == "launch").collect();
     assert_eq!(launches.len(), 1);
     let args: Vec<String> = serde_json::from_value(launches[0]["value"].clone()).unwrap();
@@ -251,13 +256,15 @@ fn chats_end_to_end_with_fake_agents() {
     let thread_now = h.ok("thread.get", json!({"threadId": tid}))["thread"].clone();
     assert_eq!((thread_now["agent"].as_str(), thread_now["model"].as_str()), (Some("codex"), Some("gpt-6.1-sol")));
 
-    // A Codex chat's title falls back to the first words (its exec fails)
+    // A Codex chat's title is its first words too
     let cx = h.ok("thread.create", json!({"agent": "codex", "model": "gpt-6.1-sol"}))["thread"]["id"].as_str().unwrap().to_string();
     let mark = h.events.len();
     h.ok("turn.send", json!({"threadId": cx, "text": "Draft seven posts about the spring sale please"}));
     assert_eq!(h.finished(mark, &cx)["status"], "done");
-    let cx2 = cx.clone();
-    h.wait_event(mark, |e| e["type"] == "thread.updated" && e["thread"]["id"] == json!(cx2) && e["thread"]["title"] == "Draft seven posts about the spring");
+    assert_eq!(h.ok("thread.get", json!({"threadId": cx}))["thread"]["title"], "Draft seven posts about the spring");
+    assert!(!h.log("codex").iter().any(|l| l["kind"] == "exec"), "no codex exec");
+    let init = h.log("codex").into_iter().find(|l| l["value"]["method"] == "initialize").unwrap();
+    assert_eq!(init["value"]["params"]["clientInfo"]["name"], "billable");
 
     // FeedHQ sign-in: the authorize URL, the redirect, then agents get the relay
     let url = h.ok("feedhq.connect", json!({}))["authorizeUrl"].as_str().unwrap().to_string();
@@ -309,7 +316,7 @@ fn chats_end_to_end_with_fake_agents() {
     let mut h = Harness::new(dir.clone(), &origin, secrets);
     let threads = h.ok("threads.list", json!({}))["threads"].as_array().unwrap().clone();
     assert_eq!(threads.len(), 1);
-    assert_eq!(threads[0]["title"], "Pottery Launch Plan");
+    assert_eq!(threads[0]["title"], "Plan my pottery launch");
     assert_eq!(h.items(&tid).len(), count);
     h.engine.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
