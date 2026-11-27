@@ -16,6 +16,8 @@ snapshots = ["gpui/test-support", "gpui_platform/test-support"]
 
 [dependencies]
 billable-core.workspace = true
+# FeedHQ's Agents screen: Claude Code and Codex, the FeedHQ relay, the remote link
+billable-agents.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true

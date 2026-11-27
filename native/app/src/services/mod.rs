@@ -1,5 +1,6 @@
 //! Background services the Electron main process ran (src/main).
 
+pub mod agents;
 pub mod updater;
 pub mod phone;
 // The app-wide connect confirmation (PhoneConnectModal.tsx). It belongs with

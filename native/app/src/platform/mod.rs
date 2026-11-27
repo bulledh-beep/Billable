@@ -79,6 +79,12 @@ fn handle_links(cx: &mut App) {
             }
             continue;
         }
+        if path.trim_end_matches('/') == "oauth" {
+            // FeedHQ's sign-in for the agents, finished in the Mac's browser.
+            // The engine only takes one it started (state and PKCE).
+            crate::services::agents::handle_oauth_link(&url, cx);
+            continue;
+        }
         if path.trim_end_matches('/') == "switch" {
             let to = query.split('&').find_map(|kv| kv.strip_prefix("to=")).unwrap_or("billable");
             show_main_window(cx);

@@ -212,6 +212,13 @@ pub fn status() -> Status {
     with(|s| s.status.clone())
 }
 
+/// The connection's address and token, with a number that changes whenever
+/// the connection does, for the agents' remote link (services/agents.rs).
+/// The token is only handed to that link, never logged or shown.
+pub fn remote_credentials() -> (u64, Option<(String, String)>) {
+    with(|s| (s.conn_gen, s.conn.as_ref().map(|c| (c.origin.clone(), c.token.clone()))))
+}
+
 /// The confirmation waiting for an answer, if any.
 pub fn pending_request() -> Option<ConnectRequest> {
     with(|s| s.request.clone())

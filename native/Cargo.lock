@@ -558,6 +558,7 @@ version = "2.0.2"
 dependencies = [
  "allsorts",
  "anyhow",
+ "billable-agents",
  "billable-core",
  "block2 0.6.2",
  "chrono",

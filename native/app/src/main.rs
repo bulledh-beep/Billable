@@ -63,6 +63,7 @@ fn main() {
 
         platform::init(cx);
         services::phone::start(cx);
+        services::agents::start(cx);
         open_main_window(cx);
         #[cfg(feature = "snapshots")]
         snapshots::start(cx);
