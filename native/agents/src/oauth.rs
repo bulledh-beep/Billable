@@ -47,6 +47,26 @@ pub fn resource(origin: &str) -> String {
     format!("{}/api/mcp", origin.trim_end_matches('/'))
 }
 
+/// FeedHQ's own name for itself (its OAuth `issuer`), read from
+/// `<origin>/.well-known/oauth-authorization-server`. The site can be
+/// reached at more than one address, but tokens are only granted for the
+/// issuer's `/api/mcp`, so sign-in, refresh and the relay all use it. Only
+/// a bare https origin (or localhost) is accepted.
+pub fn discover_issuer(origin: &str) -> Option<String> {
+    let origin = origin.trim_end_matches('/');
+    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(8))).user_agent(format!("Billable/{}", env!("CARGO_PKG_VERSION"))).build().into();
+    let mut res = agent.get(format!("{origin}/.well-known/oauth-authorization-server")).header("Accept", "application/json").call().ok()?;
+    let body: Value = serde_json::from_str(&res.body_mut().read_to_string().ok()?).ok()?;
+    issuer_from_metadata(&body)
+}
+
+pub fn issuer_from_metadata(body: &Value) -> Option<String> {
+    let issuer = body.get("issuer")?.as_str()?.trim_end_matches('/');
+    let bare = crate::util::origin_of(issuer)?;
+    let local = bare.starts_with("http://localhost") || bare.starts_with("http://127.0.0.1");
+    (bare == issuer && (bare.starts_with("https://") || local)).then_some(bare)
+}
+
 pub fn authorize_url(origin: &str, challenge: &str, state: &str) -> String {
     let origin = origin.trim_end_matches('/');
     format!(
@@ -303,6 +323,17 @@ mod tests {
         secrets::MemorySecrets,
     };
     use std::{io::BufReader, net::TcpListener, sync::atomic::{AtomicUsize, Ordering}};
+
+    #[test]
+    fn issuer_metadata() {
+        use serde_json::json;
+        assert_eq!(issuer_from_metadata(&json!({"issuer": "https://feedhq.app/"})).as_deref(), Some("https://feedhq.app"));
+        assert_eq!(issuer_from_metadata(&json!({"issuer": "http://localhost:3000"})).as_deref(), Some("http://localhost:3000"));
+        assert_eq!(issuer_from_metadata(&json!({"issuer": "http://feedhq.app"})), None);
+        assert_eq!(issuer_from_metadata(&json!({"issuer": "https://feedhq.app/tenant"})), None);
+        assert_eq!(issuer_from_metadata(&json!({})), None);
+        assert_eq!(discover_issuer("http://127.0.0.1:9"), None);
+    }
 
     #[test]
     fn pkce_s256() {

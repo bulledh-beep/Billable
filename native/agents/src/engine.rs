@@ -60,6 +60,9 @@ pub struct EngineConfig {
     pub login_shell: bool,
     /// Ask each CLI for its model list (off in tests).
     pub probe_models: bool,
+    /// Ask FeedHQ for its OAuth issuer, which may differ from the
+    /// configured address (e.g. a vercel.app alias of feedhq.app).
+    pub discover_issuer: bool,
 }
 
 impl EngineConfig {
@@ -75,6 +78,7 @@ impl EngineConfig {
             codex_bin: None,
             login_shell: true,
             probe_models: true,
+            discover_issuer: true,
         }
     }
 }
@@ -119,16 +123,21 @@ impl Engine {
         let (tx, rx) = mpsc::channel();
         let (out_tx, out_rx) = mpsc::channel();
         let remote: Arc<Mutex<Option<Sender<String>>>> = Arc::default();
-        let auth = Arc::new(FeedhqAuth::new(&cfg.feedhq_origin, cfg.secrets.clone()));
-        {
-            let tx = tx.clone();
-            auth.set_on_change(Arc::new(move |_| {
-                let _ = tx.send(Cmd::FeedhqChanged);
-            }));
-        }
-        let relay = Relay::start(auth.clone()).map_err(|e| eprintln!("[agents] the FeedHQ relay didn't start: {e}")).ok();
-        let mut state = State::new(cfg, store, tx.clone(), out_tx, remote.clone(), auth, relay);
-        std::thread::Builder::new().name("agents-engine".into()).spawn(move || state.run(rx))?;
+        let (state_tx, state_remote) = (tx.clone(), remote.clone());
+        std::thread::Builder::new().name("agents-engine".into()).spawn(move || {
+            // Requests wait in the channel while FeedHQ's issuer is looked up.
+            let issuer = issuer_for(&cfg, &store);
+            let auth = Arc::new(FeedhqAuth::new(&issuer, cfg.secrets.clone()));
+            {
+                let tx = state_tx.clone();
+                auth.set_on_change(Arc::new(move |_| {
+                    let _ = tx.send(Cmd::FeedhqChanged);
+                }));
+            }
+            let relay = Relay::start(auth.clone()).map_err(|e| eprintln!("[agents] the FeedHQ relay didn't start: {e}")).ok();
+            let mut state = State::new(cfg, store, state_tx, out_tx, state_remote, auth, relay);
+            state.run(rx)
+        })?;
         Ok((Engine { tx, remote }, out_rx))
     }
 
@@ -262,6 +271,22 @@ fn device_name() -> Option<String> {
             .filter(|n| !n.is_empty())
     })
     .map(|n| cut(&n, 60))
+}
+
+/// The issuer FeedHQ names at the configured address, remembered so an
+/// offline start still finds the same Keychain item.
+fn issuer_for(cfg: &EngineConfig, store: &Store) -> String {
+    if !cfg.discover_issuer {
+        return cfg.feedhq_origin.clone();
+    }
+    let key = format!("issuer {}", cfg.feedhq_origin);
+    match oauth::discover_issuer(&cfg.feedhq_origin) {
+        Some(issuer) => {
+            let _ = store.set_meta(&key, &issuer);
+            issuer
+        }
+        None => store.meta(&key).ok().flatten().unwrap_or_else(|| cfg.feedhq_origin.clone()),
+    }
 }
 
 /// A title as the model wrote it → a short plain one.

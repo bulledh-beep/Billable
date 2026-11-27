@@ -47,6 +47,7 @@ fn install_fake(dir: &Path, name: &str) -> PathBuf {
 fn fake_feedhq() -> String {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin = format!("http://{}", l.local_addr().unwrap());
+    let issuer = origin.clone();
     std::thread::spawn(move || {
         let mut n = 0;
         for s in l.incoming() {
@@ -57,6 +58,8 @@ fn fake_feedhq() -> String {
                 n += 1;
                 let body = if req.path == "/api/oauth/token" {
                     format!(r#"{{"access_token":"fhq_at_{n}","expires_in":3600,"refresh_token":"fhq_rt_{n}"}}"#)
+                } else if req.path == "/.well-known/oauth-authorization-server" {
+                    json!({ "issuer": issuer }).to_string()
                 } else {
                     "{}".to_string()
                 };
