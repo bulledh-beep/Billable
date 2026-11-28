@@ -111,6 +111,9 @@ pub fn signed_in(bin: &Path) -> Option<bool> {
 
 // ---------- Launch ----------
 
+/// Tools a lookup never gets.
+pub const READ_ONLY_DENIED: &[&str] = &["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"];
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Launch {
     pub model: String,
@@ -118,12 +121,16 @@ pub struct Launch {
     pub resume: Option<String>,
     /// The FeedHQ relay's URL, when FeedHQ is connected.
     pub mcp_url: Option<String>,
-    /// Orchestrators only: the relay's `billable` server for this thread.
+    /// The relay's `billable` server for this thread (every chat but a lookup).
     pub orchestrate_url: Option<String>,
+    /// Said after the usual note: the chat's seat guidance and project memory.
+    pub notes: String,
+    /// A lookup: it may read but never change anything.
+    pub read_only: bool,
 }
 
-/// The `--mcp-config` JSON: `feedhq` (the relay) and, for an orchestrator,
-/// `billable`. `None` when there's neither.
+/// The `--mcp-config` JSON: `feedhq` (the relay) and `billable`. `None`
+/// when there's neither.
 pub fn mcp_config(l: &Launch) -> Option<String> {
     let mut servers = serde_json::Map::new();
     if let Some(url) = &l.mcp_url {
@@ -166,13 +173,16 @@ pub fn launch_args(l: &Launch) -> Vec<String> {
         a.push(cfg);
     }
     a.push("--append-system-prompt".into());
+    a.push(if l.notes.is_empty() { SYSTEM_NOTE.into() } else { format!("{SYSTEM_NOTE}\n\n{}", l.notes) });
     if l.orchestrate_url.is_some() {
-        // The engine's own tools need no approval; what workers do still does.
-        a.push(format!("{SYSTEM_NOTE}\n\n{}", crate::orchestrator::GUIDANCE));
+        // The engine's own tools need no approval; what jobs do still does.
         a.push("--allowedTools".into());
         a.push(format!("mcp__{}", crate::orchestrator::SERVER_NAME));
-    } else {
-        a.push(SYSTEM_NOTE.into());
+    }
+    if l.read_only {
+        // Anything else that would need an approval is turned down by the engine.
+        a.push("--disallowedTools".into());
+        a.push(READ_ONLY_DENIED.join(","));
     }
     a
 }
@@ -434,8 +444,8 @@ fn write_line(stdin: &Mutex<ChildStdin>, line: &str) -> std::io::Result<()> {
 impl Session {
     pub fn start(bin: &Path, cwd: &Path, launch: Launch, sink: Sink) -> anyhow::Result<Session> {
         let mut cmd = agent_command(bin, cwd);
-        // wait_for_agents can take up to 30 minutes; the person's own
-        // setting, if they made one, stands.
+        // wait_for_agents and ask_person can take up to 30 minutes; the
+        // person's own setting, if they made one, stands.
         if launch.orchestrate_url.is_some() && std::env::var_os("MCP_TOOL_TIMEOUT").is_none() {
             cmd.env("MCP_TOOL_TIMEOUT", "1900000");
         }
@@ -600,7 +610,7 @@ mod tests {
 
     #[test]
     fn launch_flags() {
-        let a = launch_args(&Launch { model: "opus".into(), effort: Some("high".into()), resume: Some("s-1".into()), mcp_url: Some("http://127.0.0.1:9/mcp/x".into()), orchestrate_url: None });
+        let a = launch_args(&Launch { model: "opus".into(), effort: Some("high".into()), resume: Some("s-1".into()), mcp_url: Some("http://127.0.0.1:9/mcp/x".into()), orchestrate_url: None, notes: String::new(), read_only: false });
         let joined = a.join(" ");
         for f in ["-p", "--input-format stream-json", "--output-format stream-json", "--verbose", "--include-partial-messages", "--permission-prompt-tool stdio", "--model opus", "--effort high", "--resume s-1"] {
             assert!(joined.contains(f), "{f} missing from {joined}");
@@ -609,10 +619,12 @@ mod tests {
         let cfg: Value = serde_json::from_str(&a[i + 1]).unwrap();
         assert_eq!(cfg, json!({"mcpServers":{"feedhq":{"type":"http","url":"http://127.0.0.1:9/mcp/x"}}}));
         assert!(!a.iter().any(|x| x == "--allowedTools"));
-        let a = launch_args(&Launch { model: "haiku".into(), effort: None, resume: None, mcp_url: None, orchestrate_url: None });
+        let a = launch_args(&Launch { model: "haiku".into(), effort: None, resume: None, mcp_url: None, orchestrate_url: None, notes: String::new(), read_only: true });
         assert!(!a.iter().any(|x| x == "--effort" || x == "--resume" || x == "--mcp-config"));
+        // A lookup can't write or run commands
+        assert!(a.windows(2).any(|w| w == ["--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash"]));
         // An orchestrator: both servers, the guidance, its own tools allowed
-        let a = launch_args(&Launch { model: "opus".into(), effort: None, resume: None, mcp_url: Some("http://h/mcp/x".into()), orchestrate_url: Some("http://h/mcp/x/orchestrate/t_1".into()) });
+        let a = launch_args(&Launch { model: "opus".into(), effort: None, resume: None, mcp_url: Some("http://h/mcp/x".into()), orchestrate_url: Some("http://h/mcp/x/orchestrate/t_1".into()), notes: crate::orchestrator::notes(Some(crate::orchestrator::Seat::Coordinator), None), read_only: false });
         let i = a.iter().position(|x| x == "--mcp-config").unwrap();
         let cfg: Value = serde_json::from_str(&a[i + 1]).unwrap();
         assert_eq!(cfg["mcpServers"]["billable"], json!({"type":"http","url":"http://h/mcp/x/orchestrate/t_1"}));

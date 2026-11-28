@@ -151,6 +151,7 @@ mod tests {
             model: Some("opus".into()),
             tool: None,
             divider: None,
+            decision: None,
         }
     }
 

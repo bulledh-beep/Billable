@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::Context as _;
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::protocol::{Approval, Decision, Item, Thread, ThreadRole, ThreadStatus};
+use crate::protocol::{Approval, Decision, Item, Thread, ThreadRole, ThreadStatus, WorkerKind};
 
 /// Each entry moves the schema one version up (`PRAGMA user_version`).
 const MIGRATIONS: &[&str] = &[
@@ -63,6 +63,15 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE threads ADD COLUMN role TEXT;
     ALTER TABLE threads ADD COLUMN parent_id TEXT;
     CREATE INDEX threads_parent ON threads(parent_id);",
+    // 3: coordinators (projects, jobs and lookups, review, memory)
+    "ALTER TABLE threads ADD COLUMN project_id TEXT;
+    ALTER TABLE threads ADD COLUMN worker_kind TEXT;
+    ALTER TABLE threads ADD COLUMN review_at TEXT;
+    CREATE TABLE project_memory (
+        project_id TEXT PRIMARY KEY,
+        text TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );",
 ];
 
 pub struct Store {
@@ -87,6 +96,9 @@ fn thread_from_row(r: &rusqlite::Row) -> rusqlite::Result<Thread> {
         cwd: r.get("cwd")?,
         role: r.get::<_, Option<String>>("role")?.as_deref().and_then(ThreadRole::parse),
         parent_id: r.get("parent_id")?,
+        project_id: r.get("project_id")?,
+        worker_kind: r.get::<_, Option<String>>("worker_kind")?.as_deref().and_then(WorkerKind::parse),
+        review_at: r.get("review_at")?,
     })
 }
 
@@ -136,8 +148,8 @@ impl Store {
 
     pub fn insert_thread(&self, t: &Thread) -> anyhow::Result<()> {
         self.conn.execute(
-            "INSERT INTO threads (id, title, agent, model, effort, status, pinned, settled_at, archived_at, created_at, updated_at, preview, cwd, role, parent_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            "INSERT INTO threads (id, title, agent, model, effort, status, pinned, settled_at, archived_at, created_at, updated_at, preview, cwd, role, parent_id, project_id, worker_kind, review_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 t.id,
                 t.title,
@@ -153,7 +165,10 @@ impl Store {
                 t.preview,
                 t.cwd,
                 t.role.map(ThreadRole::as_str),
-                t.parent_id
+                t.parent_id,
+                t.project_id,
+                t.worker_kind.map(WorkerKind::as_str),
+                t.review_at
             ],
         )?;
         Ok(())
@@ -162,8 +177,8 @@ impl Store {
     pub fn save_thread(&self, t: &Thread) -> anyhow::Result<()> {
         self.conn.execute(
             "UPDATE threads SET title = ?2, agent = ?3, model = ?4, effort = ?5, status = ?6, pinned = ?7, settled_at = ?8,
-             archived_at = ?9, updated_at = ?10, preview = ?11 WHERE id = ?1",
-            params![t.id, t.title, t.agent, t.model, t.effort, t.status.as_str(), t.pinned as i64, t.settled_at, t.archived_at, t.updated_at, t.preview],
+             archived_at = ?9, updated_at = ?10, preview = ?11, project_id = ?12, review_at = ?13 WHERE id = ?1",
+            params![t.id, t.title, t.agent, t.model, t.effort, t.status.as_str(), t.pinned as i64, t.settled_at, t.archived_at, t.updated_at, t.preview, t.project_id, t.review_at],
         )?;
         Ok(())
     }
@@ -225,6 +240,40 @@ impl Store {
 
     pub fn item_count(&self, thread_id: &str) -> anyhow::Result<usize> {
         Ok(self.conn.query_row("SELECT COUNT(*) FROM items WHERE thread_id = ?1", [thread_id], |r| r.get::<_, i64>(0))? as usize)
+    }
+
+    /// Decision cards still waiting for the person, oldest first.
+    pub fn open_decisions(&self, thread_id: Option<&str>) -> anyhow::Result<Vec<Item>> {
+        let mut stmt = self.conn.prepare("SELECT body FROM items WHERE kind = 'decision' AND (?1 IS NULL OR thread_id = ?1) ORDER BY seq")?;
+        let rows = stmt.query_map([thread_id], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for body in rows {
+            if let Ok(item) = serde_json::from_str::<Item>(&body?) {
+                if item.decision.as_ref().is_some_and(|d| d.answered_at.is_none()) {
+                    out.push(item);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    // ---------- Project memory ----------
+
+    pub fn memory(&self, project_id: &str) -> anyhow::Result<Option<(String, String)>> {
+        Ok(self.conn.query_row("SELECT text, updated_at FROM project_memory WHERE project_id = ?1", [project_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?)
+    }
+
+    pub fn set_memory(&self, project_id: &str, text: &str, at: &str) -> anyhow::Result<()> {
+        if text.trim().is_empty() {
+            self.conn.execute("DELETE FROM project_memory WHERE project_id = ?1", [project_id])?;
+        } else {
+            self.conn.execute(
+                "INSERT INTO project_memory (project_id, text, updated_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(project_id) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at",
+                params![project_id, text, at],
+            )?;
+        }
+        Ok(())
     }
 
     // ---------- Approvals ----------
@@ -332,6 +381,9 @@ mod tests {
             cwd: None,
             role: None,
             parent_id: None,
+            project_id: None,
+            worker_kind: None,
+            review_at: None,
         }
     }
 
@@ -347,6 +399,7 @@ mod tests {
             model: None,
             tool: None,
             divider: None,
+            decision: None,
         }
     }
 

@@ -129,6 +129,23 @@ def orchestrate(mid, hang):
     finish()
 
 
+def plan(mid):
+    rpc("tools/list", {})
+    decided = tool(mid, "propose_plan", {"summary": "Build it in two parts", "agents": [
+        {"title": "Find the files", "task": "Quick read. lookup task", "kind": "lookup", "effort": "low", "reason": "A quick read"},
+        {"title": "Build part 1", "task": "Everyday work. review task 1", "reason": "Everyday"},
+        {"title": "Build part 2", "task": "Everyday work. review task 2"}]})
+    waited = tool(mid, "wait_for_agents", {"timeoutSeconds": 60})
+    say(mid, "Plan: %s; %s" % (decided["approved"], ", ".join("%s %s %s" % (w["title"], w["kind"], w["status"]) for w in waited)))
+    finish()
+
+
+def ask(mid, question):
+    answer = tool(mid, "ask_person", {"question": question, "detail": "Either works.", "options": [{"label": "Teal", "detail": "Calm"}, {"label": "Orange"}], "recommended": 0})
+    say(mid, "You chose %s" % (answer["label"] if isinstance(answer, dict) else answer))
+    finish()
+
+
 while True:
     msg = read()
     if msg.get("type") == "control_request":
@@ -152,6 +169,26 @@ while True:
     mid = "msg_%d" % turns
     if "orchestrate" in asked and billable_url():
         orchestrate(mid, "hang" in asked)
+        continue
+    if "coordinate with a plan" in asked:
+        plan(mid)
+        continue
+    if "ask me" in asked:
+        ask(mid, "Pick a colour?")
+        continue
+    if "remember this" in asked:
+        kept = tool(mid, "remember", {"note": "Keep posts under 200 words"})
+        say(mid, "Saved: " + kept["memory"].replace("\n", " | "))
+        finish()
+        continue
+    if "review task" in asked:
+        tool(mid, "ready_for_review", {"summary": "Part ready to check"})
+        say(mid, "Built " + asked.split(". ")[-1])
+        finish()
+        continue
+    if "lookup task" in asked:
+        say(mid, "Found it")
+        finish()
         continue
     if "slow task" in asked:
         time.sleep(1)
