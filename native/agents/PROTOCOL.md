@@ -155,7 +155,7 @@ Engine → screen, an **event** (any time, not tied to a request):
 
 | Method | Params | Result |
 | --- | --- | --- |
-| `hello` | `{ client: "billable" \| "web" \| "phone" }` | `{ engine: "mac" \| "cloud", engineVersion, protocol: 1, agents: Agent[], feedhq: { connected: boolean, account: string \| null }, device: string \| null, features?: string[] }` (`features` lists what this engine adds to v1: `"folders"` (cwd + system.pickFolder), `"orchestrator"`, `"bulk-delete"`, `"coordinator"`, `"decisions"`, `"memory"`, `"lookups"`, `"review"`; missing = none) |
+| `hello` | `{ client: "billable" \| "web" \| "phone" }` | `{ engine: "mac" \| "cloud", engineVersion, protocol: 1, agents: Agent[], feedhq: { connected: boolean, account: string \| null }, device: string \| null, features?: string[] }` (`features` lists what this engine adds to v1: `"folders"` (cwd + system.pickFolder), `"orchestrator"`, `"bulk-delete"`, `"coordinator"`, `"decisions"`, `"memory"`, `"lookups"`, `"review"`, `"tools"`, `"computer"`; missing = none) |
 | `threads.list` | `{ includeArchived?: boolean }` | `{ threads: Thread[] }` (newest `updatedAt` first) |
 | `thread.get` | `{ threadId }` | `{ thread: Thread, items: Item[], approvals: Approval[] }` (items oldest first) |
 | `thread.create` | `{ agent, model, effort?: string \| null, cwd?: string \| null, role?: "orchestrator" \| null, projectId?: string \| null }` | `{ thread: Thread }` |
@@ -173,6 +173,12 @@ Engine → screen, an **event** (any time, not tied to a request):
 | `feedhq.connect` | `{}` | `{ authorizeUrl: string }` (Mac engine only; the screen navigates there) |
 | `feedhq.disconnect` | `{}` | `{}` |
 | `system.pickFolder` | `{}` | `{ path: string \| null }` (Mac engine, inside Billable only: shows the Mac's folder picker; null = cancelled. From the relay: `bad_request` "Pick the folder on your Mac.") |
+| `tools.list` | `{ cwd?: string \| null }` | `{ servers: McpServer[], computer: ComputerAccess }` (see "Tools") |
+| `tools.check` | `{ cwd? }` | the same, after Claude Code started and checked each server |
+| `tools.add` | `{ agents: ("claude" \| "codex")[], name, command?: string, url?: string, env?: Record<string,string>, scope?: "user" \| "local", cwd? }` | the same list |
+| `tools.remove` | `{ id, cwd? }` | the same list |
+| `tools.import` | `{ id, agents: ("claude" \| "codex")[] }` (an `app` server) | the same list |
+| `computer.allow` | `{ which: "screen" \| "control" }` | `{ computer: ComputerAccess }` (asks macOS, and opens its settings pane) |
 
 `cwd` must be an existing folder (`bad_request` "That folder isn't on this Mac." otherwise). It's fixed when the thread is made; every turn of the thread, and every
 worker it starts, runs there.
@@ -273,6 +279,61 @@ for its seat:
   memory starts a fresh agent process on the next turn (the session resumes).
 - Worker statuses: queued, running, waiting (an approval or a card is open),
   review, done, stopped, failed, not_started, deleted.
+
+## Tools (Mac engine, `features` "tools")
+
+The person's own MCP servers, as the agents load them. Billable never edits
+an agent's files itself: it reads `~/.claude.json` (user and this folder's
+local list), the folder's `.mcp.json` and `~/.codex/config.toml`, and changes
+them only when the person asks, with the agents' own `claude mcp add-json` /
+`mcp remove` and `codex mcp add` / `mcp remove`. Nothing here starts a model.
+
+```ts
+McpServer = {
+  id: string;            // "<agent>:<scope>:<name>"
+  name: string;
+  agent: "claude" | "codex" | "app";        // app = the Claude app, to copy over
+  scope: "user" | "local" | "project" | "app";
+  transport: "stdio" | "http" | "sse";
+  detail: string;        // the command line or address
+  status: "connected" | "failed" | "needs_auth" | "off" | "unknown";
+  error: string | null;
+  copiedTo?: ("claude" | "codex")[];        // app servers: already copied
+}
+ComputerAccess = { supported: boolean, screen: boolean, control: boolean }
+```
+
+- Claude Code's status comes from each chat's start (`system/init`'s
+  `mcp_servers`) and from `tools.check` (`claude mcp list`).
+- The Claude app's servers are its `claude_desktop_config.json` list and its
+  installed extensions (`Claude Extensions/*/manifest.json`, with the
+  person's settings filled in; turned-off ones are left out). `tools.import`
+  copies one under a cleaned name (`DaVinci Resolve Studio` →
+  `davinci-resolve-studio`), for every folder. An extension written for the
+  app's built-in Node runs on the Claude app itself
+  (`ELECTRON_RUN_AS_NODE=1`) when the Mac has no Node of its own.
+
+## Computer (Mac engine, `features` "computer")
+
+Every chat but a lookup has these on the `billable` server. Billable does the
+work itself, so it's the same for Claude Code and Codex, and only Billable
+needs Screen Recording and Accessibility.
+
+| Tool | Does |
+| --- | --- |
+| `computer_screenshot` | an image of the main display, at most 1280 px on its long side; coordinates for the rest are in its pixels |
+| `computer_click` | `{ x, y, button?, count?, modifiers? }` |
+| `computer_move`, `computer_drag`, `computer_scroll` | pointer |
+| `computer_type`, `computer_key` | keyboard (`"cmd+s"`, `"return"`) |
+| `computer_open_app` | `{ name }` |
+| `computer_cursor_position`, `computer_wait` | |
+
+- One chat at a time: the first to act holds the screen until its turn ends.
+- The first screenshot asks "Let this chat see your screen?", and acting in
+  an app asks "Let this chat use <App>?", as decision cards. Allow holds for
+  that chat until Billable quits; Don't allow fails the call.
+- Billable itself is never clicked or typed into.
+- Missing macOS access fails the call with a plain line, and asks macOS.
 
 ## Handoff when switching agents mid-chat
 

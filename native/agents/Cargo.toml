@@ -17,3 +17,7 @@ ureq = { version = "3.5", default-features = false, features = ["rustls"] }
 sha2 = "0.10"
 base64 = "0.22"
 getrandom = "0.3"
+# Reading Codex's config.toml (its MCP servers)
+toml = "0.8"
+# Splitting a command line the person typed for a new MCP server
+shlex = "2"

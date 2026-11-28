@@ -501,6 +501,29 @@ pub struct ThreadsListParams {
     pub include_archived: bool,
 }
 
+/// tools.list, tools.check, tools.add, tools.remove and tools.import.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolsParams {
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub agents: Vec<String>,
+    /// "user" (default) or "local" (this folder only; Claude Code).
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadIdParams {

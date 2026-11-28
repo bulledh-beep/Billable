@@ -346,7 +346,14 @@ fn id_of(v: &Value) -> String {
 fn folders_and_bulk_delete() {
     let Some(mut h) = setup("folders") else { return };
     let hello = h.ok("hello", json!({}));
-    assert_eq!(hello["features"], json!(["folders", "orchestrator", "bulk-delete", "coordinator", "decisions", "memory", "lookups", "review"]));
+    assert_eq!(hello["features"], json!(["folders", "orchestrator", "bulk-delete", "coordinator", "decisions", "memory", "lookups", "review", "tools", "computer"]));
+
+    // Tools: the list comes from the agents' own config; computer use says what macOS allows.
+    let tools = h.ok("tools.list", json!({}));
+    assert!(tools["servers"].is_array(), "{tools}");
+    assert_eq!(tools["computer"]["supported"], json!(cfg!(target_os = "macos")));
+    let added = h.call("tools.add", json!({"agents": [], "name": "x", "command": "uvx x"}));
+    assert_eq!(added["ok"], false, "{added}");
     let site = h.dir.join("my site");
     std::fs::create_dir_all(&site).unwrap();
     let site_s = site.to_string_lossy().to_string();
@@ -436,7 +443,9 @@ fn orchestrator_runs_workers() {
 
     let rpcs: Vec<Value> = h.log("claude").into_iter().filter(|l| l["kind"] == "rpc").map(|l| l["value"].clone()).collect();
     let tools_list = rpcs.iter().find(|r| r["method"] == "tools/list").unwrap();
-    assert_eq!(tools_list["answer"]["result"]["tools"].as_array().unwrap().len(), 7);
+    let names: Vec<&str> = tools_list["answer"]["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+    assert_eq!(names.iter().filter(|n| !n.starts_with("computer_")).count(), 7, "{names:?}");
+    assert_eq!(names.iter().filter(|n| n.starts_with("computer_")).count(), 10);
     let result_of = |name: &str| -> Value {
         let r = rpcs.iter().find(|r| r["method"] == "tools/call" && r["params"]["name"] == name).unwrap_or_else(|| panic!("no {name}"));
         assert_eq!(r["answer"]["result"]["isError"], false, "{r}");

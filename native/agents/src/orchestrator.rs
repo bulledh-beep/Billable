@@ -15,6 +15,8 @@ use serde_json::{json, Value};
 /// The MCP server's name in the agent's config (tools are `mcp__billable__*`).
 pub const SERVER_NAME: &str = "billable";
 pub const TOOL_PREFIX: &str = "mcp__billable__";
+/// A tool answer `{ "__content": [...] }` is sent as that MCP content.
+pub const CONTENT: &str = "__content";
 
 /// At most this many jobs run at once per coordinator.
 pub const MAX_RUNNING: usize = 4;
@@ -233,7 +235,7 @@ fn one(msg: &Value, engine: &dyn Fn(Call) -> Result<Value, String>) -> Option<Va
                 "protocolVersion": version,
                 "capabilities": {"tools": {"listChanged": false}},
                 "serverInfo": {"name": SERVER_NAME, "title": "Billable", "version": env!("CARGO_PKG_VERSION")},
-                "instructions": "Coordinate jobs, ask the person and keep the project's memory, in Billable."
+                "instructions": "Coordinate jobs, ask the person, keep the project's memory and use the Mac's screen, in Billable."
             }))
         }
         "ping" => ok(json!({})),
@@ -241,11 +243,12 @@ fn one(msg: &Value, engine: &dyn Fn(Call) -> Result<Value, String>) -> Option<Va
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("").to_string();
             let args = params.get("arguments").cloned().filter(|a| a.is_object()).unwrap_or(json!({}));
-            let (text, is_error) = match engine(Call::Tool { name, args }) {
-                Ok(v) => (v.to_string(), false),
-                Err(e) => (e, true),
-            };
-            ok(json!({"content": [{"type": "text", "text": text}], "isError": is_error}))
+            match engine(Call::Tool { name, args }) {
+                // Content of its own (a screenshot): passed on as it is.
+                Ok(Value::Object(mut o)) if o.get(CONTENT).is_some_and(Value::is_array) => ok(json!({"content": o.remove(CONTENT).unwrap_or_default(), "isError": false})),
+                Ok(v) => ok(json!({"content": [{"type": "text", "text": v.to_string()}], "isError": false})),
+                Err(e) => ok(json!({"content": [{"type": "text", "text": e}], "isError": true})),
+            }
         }
         _ => Some(json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": format!("Billable doesn't know {method}.")}})),
     }

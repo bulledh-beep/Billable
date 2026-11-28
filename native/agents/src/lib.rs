@@ -2,6 +2,7 @@
 
 pub mod claude;
 pub mod codex;
+pub mod computer;
 pub mod discovery;
 pub mod driver;
 pub mod handoff;
@@ -12,6 +13,7 @@ pub mod protocol;
 pub mod orchestrator;
 pub mod relay;
 pub mod secrets;
+pub mod servers;
 pub mod store;
 pub mod tools;
 pub mod util;

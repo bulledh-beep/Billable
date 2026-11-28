@@ -245,6 +245,13 @@ impl Mapper {
                 if let Some(s) = v.get("session_id").and_then(Value::as_str) {
                     out.push(DriverEvent::Session(s.to_string()));
                 }
+                if let Some(list) = v.get("mcp_servers").and_then(Value::as_array) {
+                    let servers = list
+                        .iter()
+                        .filter_map(|m| Some((m.get("name")?.as_str()?.to_string(), crate::servers::status_word(m.get("status").and_then(Value::as_str).unwrap_or("")).to_string())))
+                        .collect();
+                    out.push(DriverEvent::McpStatus(servers));
+                }
             }
             "stream_event" if main => self.stream_event(v.get("event").unwrap_or(&Value::Null), &mut out),
             "assistant" if main => {
@@ -522,7 +529,7 @@ mod tests {
 
     /// Recorded from Claude Code 2.1.332 (trimmed): a Bash call with an
     /// approval, then a text reply, streamed with partial messages.
-    const TRANSCRIPT: &str = r#"{"type":"system","subtype":"init","cwd":"/w","session_id":"s-1","tools":["Bash"],"mcp_servers":[],"model":"claude-haiku-5-5","permissionMode":"default"}
+    const TRANSCRIPT: &str = r#"{"type":"system","subtype":"init","cwd":"/w","session_id":"s-1","tools":["Bash"],"mcp_servers":[{"name":"resolve","status":"connected"},{"name":"linear","status":"needs-auth"}],"model":"claude-haiku-5-5","permissionMode":"default"}
 {"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[]}},"session_id":"s-1","parent_tool_use_id":null}
 {"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}},"session_id":"s-1","parent_tool_use_id":null}
 {"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Need to run it"}},"session_id":"s-1","parent_tool_use_id":null}
@@ -547,6 +554,7 @@ mod tests {
         let events = lines(&mut m, TRANSCRIPT);
         let expected = vec![
             DriverEvent::Session("s-1".into()),
+            DriverEvent::McpStatus(vec![("resolve".into(), "connected".into()), ("linear".into(), "needs_auth".into())]),
             DriverEvent::ReasoningDelta { key: "msg_1:r0".into(), text: "Need to run it".into() },
             DriverEvent::ToolStarted { key: "toolu_1".into(), name: "Bash".into(), input: json!({}) },
             DriverEvent::ReasoningDone { key: "msg_1:r0".into(), text: "Need to run it".into() },

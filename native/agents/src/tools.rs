@@ -100,6 +100,20 @@ fn orchestrator_title(tool: &str, input: &Value) -> (String, Option<String>) {
         "message_agent" => ("Messaged an agent".into(), s(input, "text").map(|t| one_line(t, 200))),
         "list_agents" => ("Checked on agents".into(), None),
         "stop_agents" => ("Stopped agents".into(), None),
+        "ask_person" => ("Asked you".into(), s(input, "question").map(|t| one_line(t, 200))),
+        "computer_screenshot" => ("Looked at the screen".into(), None),
+        "computer_click" => {
+            let double = input.get("count").and_then(Value::as_u64).unwrap_or(1) > 1;
+            (if double { "Double-clicked" } else { "Clicked" }.into(), None)
+        }
+        "computer_move" => ("Moved the pointer".into(), None),
+        "computer_drag" => ("Dragged".into(), None),
+        "computer_scroll" => (format!("Scrolled {}", s(input, "direction").unwrap_or("down")), None),
+        "computer_type" => ("Typed".into(), s(input, "text").map(|t| one_line(t, 200))),
+        "computer_key" => ("Pressed keys".into(), s(input, "keys").map(str::to_string)),
+        "computer_open_app" => (format!("Opened {}", s(input, "name").unwrap_or("an app")), None),
+        "computer_cursor_position" => ("Found the pointer".into(), None),
+        "computer_wait" => ("Waited".into(), None),
         other => (format!("Used {}", words(other).join(" ")), None),
     }
 }
@@ -235,6 +249,8 @@ mod tests {
         assert_eq!(describe("mcp__billable__wait_for_agents", &json!({})).0, "Waited for the agents");
         assert_eq!(describe("mcp__billable__message_agent", &json!({"id":"a","text":"And tests"})), ("Messaged an agent".into(), Some("And tests".into())));
         assert_eq!(describe("mcp__billable__list_agents", &json!({})).0, "Checked on agents");
+        assert_eq!(describe("mcp__billable__computer_open_app", &json!({"name":"DaVinci Resolve"})).0, "Opened DaVinci Resolve");
+        assert_eq!(describe("mcp__billable__computer_key", &json!({"keys":"cmd+s"})), ("Pressed keys".into(), Some("cmd+s".into())));
         assert_eq!(describe("mcp__billable__stop_agents", &json!({})).0, "Stopped agents");
         assert!(!is_feedhq("mcp__billable__start_agents"));
     }

@@ -26,6 +26,9 @@ pub enum DriverEvent {
     /// The agent withdrew a question it asked.
     ApprovalWithdrawn { native: String },
     Usage(Usage),
+    /// The MCP servers the agent started with and how each went (name,
+    /// status word from servers::status_word).
+    McpStatus(Vec<(String, String)>),
     /// A problem worth showing that doesn't end the turn by itself.
     Error(String),
     TurnDone { status: TurnStatus, error: Option<String>, usage: Option<Usage> },
