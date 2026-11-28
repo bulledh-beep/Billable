@@ -23,6 +23,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>2.0.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>NSMicrophoneUsageDescription</key><string>Billable uses the microphone so you can dictate in FeedHQ.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>Billable turns your speech into text when you dictate in FeedHQ.</string>
 </dict></plist>
 PLIST
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true

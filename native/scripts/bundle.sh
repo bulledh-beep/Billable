@@ -45,6 +45,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>Billable uses the microphone so you can dictate in FeedHQ.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>Billable turns your speech into text when you dictate in FeedHQ.</string>
   <key>CFBundleURLTypes</key>
   <array><dict>
     <key>CFBundleURLName</key><string>Billable</string>
