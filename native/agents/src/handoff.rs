@@ -152,6 +152,7 @@ mod tests {
             tool: None,
             divider: None,
             decision: None,
+            attachments: None,
         }
     }
 

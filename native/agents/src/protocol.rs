@@ -351,6 +351,9 @@ pub struct Item {
     pub divider: Option<Divider>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<DecisionCard>,
+    /// A user item's attachments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<crate::attachments::Attachment>>,
 }
 
 /// A question an agent put to the person (ask_person), or a plan of jobs
@@ -581,6 +584,8 @@ pub struct TurnSendParams {
     /// Absent: keep the thread's effort. `null`: no effort.
     #[serde(default, deserialize_with = "present")]
     pub effort: Option<Option<String>>,
+    #[serde(default)]
+    pub attachments: Vec<crate::attachments::AttachmentIn>,
 }
 
 /// Tells an absent field (`None`) from an explicit `null` (`Some(None)`).
@@ -660,6 +665,7 @@ mod tests {
             tool: Some(ToolInfo { name: "Bash".into(), title: "Ran ls".into(), detail: Some("ls".into()), status: ToolStatus::Running, output: None, feedhq: false, threads: vec![] }),
             divider: None,
             decision: None,
+            attachments: None,
         };
         assert_eq!(
             serde_json::to_value(&item).unwrap(),

@@ -245,6 +245,9 @@ impl Mapper {
                 if let Some(s) = v.get("session_id").and_then(Value::as_str) {
                     out.push(DriverEvent::Session(s.to_string()));
                 }
+                if let Some(list) = v.get("slash_commands").and_then(Value::as_array) {
+                    out.push(DriverEvent::Commands(list.iter().filter_map(Value::as_str).map(str::to_string).collect()));
+                }
                 if let Some(list) = v.get("mcp_servers").and_then(Value::as_array) {
                     let servers = list
                         .iter()
@@ -429,6 +432,14 @@ pub fn user_message_line(text: &str) -> String {
     json!({"type": "user", "message": {"role": "user", "content": text}, "parent_tool_use_id": null, "session_id": ""}).to_string()
 }
 
+/// A message with images: text and image blocks.
+pub fn user_message_with_images(text: &str, images: &[std::path::PathBuf]) -> String {
+    if images.is_empty() {
+        return user_message_line(text);
+    }
+    json!({"type": "user", "message": {"role": "user", "content": crate::attachments::claude_content(text, images)}, "parent_tool_use_id": null, "session_id": ""}).to_string()
+}
+
 // ---------- The process ----------
 
 pub type Sink = Arc<dyn Fn(DriverEvent) + Send + Sync>;
@@ -486,8 +497,8 @@ impl Session {
         Ok(session)
     }
 
-    pub fn send(&mut self, text: &str) -> anyhow::Result<()> {
-        write_line(&self.stdin, &user_message_line(text))?;
+    pub fn send(&mut self, text: &str, images: &[std::path::PathBuf]) -> anyhow::Result<()> {
+        write_line(&self.stdin, &user_message_with_images(text, images))?;
         Ok(())
     }
 

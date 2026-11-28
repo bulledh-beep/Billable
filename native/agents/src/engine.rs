@@ -27,7 +27,7 @@ use std::{
 use serde_json::{json, Value};
 
 use crate::{
-    claude, codex, computer,
+    attachments, claude, codex, commands, computer,
     discovery::{self, Binaries},
     driver::DriverEvent,
     handoff,
@@ -51,15 +51,22 @@ const STOP_GRACE: Duration = Duration::from_secs(10);
 /// A sign-in started with feedhq.connect must finish within this.
 const SIGN_IN_LIMIT: Duration = Duration::from_secs(15 * 60);
 
-/// Answers a folder pick: the chosen folder, or `None` when cancelled.
-pub type FolderAnswer = Box<dyn FnOnce(Option<PathBuf>) + Send>;
-/// Shows the Mac's folder picker for `system.pickFolder`. It's called on
-/// the engine thread and must return at once, calling the answer later
-/// (from any thread).
-pub type FolderPicker = Arc<dyn Fn(FolderAnswer) + Send + Sync>;
+/// Answers a pick: what was chosen (empty when cancelled).
+pub type FolderAnswer = Box<dyn FnOnce(Vec<PathBuf>) + Send>;
+/// What the picker is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickKind {
+    /// One folder (`system.pickFolder`).
+    Folder,
+    /// Files and folders to attach, several at once (`system.pickFiles`).
+    Files,
+}
+/// Shows the Mac's picker. It's called on the engine thread and must return
+/// at once, calling the answer later (from any thread).
+pub type FolderPicker = Arc<dyn Fn(PickKind, FolderAnswer) + Send + Sync>;
 
 /// The `features` this engine adds to protocol v1.
-pub const FEATURES: &[&str] = &["folders", "orchestrator", "bulk-delete", "coordinator", "decisions", "memory", "lookups", "review", "tools", "computer"];
+pub const FEATURES: &[&str] = &["folders", "orchestrator", "bulk-delete", "coordinator", "decisions", "memory", "lookups", "review", "tools", "computer", "attachments"];
 /// At most this many chats per threads.delete.
 const MAX_BULK_DELETE: usize = 200;
 
@@ -128,6 +135,10 @@ enum Cmd {
     /// A chat's call through the relay's `billable` server.
     Orchestrate { thread: String, call: Call, reply: Sender<Result<Value, String>> },
     FolderPicked { to: ReplyTo, path: Option<PathBuf> },
+    /// A message's uploads came down (or one didn't).
+    Downloaded { begun: Box<Begun>, failed: Option<String> },
+    /// An answer worked out off the engine thread.
+    Answer { to: ReplyTo, result: Result<Value, ProtoError> },
     /// A Tools change or check finished (servers.rs): the list is sent again.
     ToolsDone { to: ReplyTo, cwd: Option<PathBuf>, result: Result<Option<servers::Statuses>, String> },
     Shutdown(Sender<()>),
@@ -248,6 +259,8 @@ struct Turn {
     parent: Option<String>,
     /// A lookup: read-only, its own slots, never asks the person.
     lookup: bool,
+    /// The message's images, for the agent's own image inputs.
+    images: Vec<PathBuf>,
 }
 
 /// An ask_person or propose_plan call, answered when the person picks on
@@ -276,6 +289,8 @@ struct Begun {
     user: Item,
     prompt: String,
     session: Option<String>,
+    /// Uploads to fetch before the agent starts (link → path).
+    downloads: Vec<(String, PathBuf)>,
 }
 
 struct OpenApproval {
@@ -330,6 +345,8 @@ struct State {
     asks: Vec<Ask>,
     /// Claude Code's MCP servers as they last came up: name → (status, error).
     mcp_status: servers::Statuses,
+    /// Claude Code's slash commands, as its latest session listed them.
+    claude_commands: Vec<String>,
     /// The chat using the screen (one at a time, until its turn ends).
     screen_holder: Option<String>,
     /// What the person allowed each chat on the screen: "screen", "app:<name>".
@@ -459,6 +476,7 @@ impl State {
             asks: Vec::new(),
             mcp_status: servers::Statuses::new(),
             screen_holder: None,
+            claude_commands: Vec::new(),
             grants: HashMap::new(),
             computer_cards: HashMap::new(),
         }
@@ -609,6 +627,14 @@ impl State {
             }
             Cmd::Orchestrate { thread, call, reply } => self.orchestrate(&thread, call, reply),
             Cmd::FolderPicked { to, path } => self.reply(&to, Ok(json!({ "path": path.map(|p| p.to_string_lossy().to_string()) }))),
+            Cmd::Downloaded { begun, failed } => match failed {
+                None => self.launch(*begun),
+                Some(e) => {
+                    self.emit(Event::TurnStarted { thread_id: begun.thread.clone(), turn_id: begun.turn_id.clone() });
+                    self.finish_turn(&begun.thread, TurnStatus::Failed, Some(e), None);
+                }
+            },
+            Cmd::Answer { to, result } => self.reply(&to, result),
             Cmd::ToolsDone { to, cwd, result } => {
                 let result = result.map_err(ProtoError::failed).map(|checked| {
                     if let Some(checked) = checked {
@@ -704,8 +730,8 @@ impl State {
                     // Answered when the person picks (or cancels); the engine
                     // carries on meanwhile.
                     let (tx, reply_to) = (self.tx.clone(), to.clone());
-                    picker(Box::new(move |path| {
-                        let _ = tx.send(Cmd::FolderPicked { to: reply_to, path });
+                    picker(PickKind::Folder, Box::new(move |paths| {
+                        let _ = tx.send(Cmd::FolderPicked { to: reply_to, path: paths.into_iter().next() });
                     }));
                     return;
                 }
@@ -717,6 +743,35 @@ impl State {
                     return;
                 }
                 Err(e) => Err(e),
+            },
+            "files.search" => {
+                let root = p.get("cwd").and_then(Value::as_str).filter(|_| src == Source::Local).map(PathBuf::from).filter(|c| c.is_dir()).or_else(|| p.get("threadId").and_then(Value::as_str).and_then(|t| self.work_dir(t).ok()));
+                let Some(root) = root else { return self.reply(&to, Err(ProtoError::bad_request("This chat has no folder."))) };
+                let query = p.get("query").and_then(Value::as_str).unwrap_or("").to_string();
+                let tx = self.tx.clone();
+                std::thread::spawn(move || {
+                    let files = attachments::project_files(&root);
+                    let hits = attachments::search(&root, &files, &query, 30);
+                    let _ = tx.send(Cmd::Answer { to, result: Ok(json!({ "root": root.to_string_lossy(), "results": hits })) });
+                });
+                return;
+            }
+            "commands.list" => {
+                let cwd = p.get("cwd").and_then(Value::as_str).filter(|_| src == Source::Local).map(PathBuf::from).filter(|c| c.is_dir()).or_else(|| p.get("threadId").and_then(Value::as_str).and_then(|t| self.work_dir(t).ok()));
+                let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+                Ok(json!({ "commands": commands::list(&home, cwd.as_deref(), &self.claude_commands) }))
+            }
+            "system.pickFiles" => match (src, self.cfg.folder_picker.clone()) {
+                (Source::Remote, _) => Err(ProtoError::bad_request("Pick files on your Mac.")),
+                (Source::Local, None) => Err(ProtoError::bad_request("Billable can't show a file picker here.")),
+                (Source::Local, Some(picker)) => {
+                    let (tx, reply_to) = (self.tx.clone(), to.clone());
+                    picker(PickKind::Files, Box::new(move |paths| {
+                        let paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
+                        let _ = tx.send(Cmd::Answer { to: reply_to, result: Ok(json!({ "paths": paths })) });
+                    }));
+                    return;
+                }
             },
             "computer.allow" => {
                 match p.get("which").and_then(Value::as_str) {
@@ -1039,6 +1094,7 @@ impl State {
             tool: None,
             divider: None,
             decision: None,
+            attachments: None,
         };
         fill(&mut item);
         if let Err(e) = self.store.insert_item(&item) {
@@ -1080,9 +1136,10 @@ impl State {
             return Err(ProtoError::new(ErrorCode::Busy, "This chat is still working. Stop it or wait for it to finish."));
         }
         let text = p.text.trim().to_string();
-        if text.is_empty() {
+        if text.is_empty() && p.attachments.is_empty() {
             return Err(ProtoError::bad_request("Write a message first."));
         }
+        let attached = attachments::prepare(&p.attachments, &self.attachments_dir(&t.id)).map_err(ProtoError::bad_request)?;
         let agent = p.agent.unwrap_or_else(|| t.agent.clone());
         self.check_agent(&agent)?;
         let model = p.model.filter(|m| !m.is_empty()).unwrap_or_else(|| if agent == t.agent { t.model.clone() } else { self.agent(&agent).map(|a| a.default_model.clone()).unwrap_or_default() });
@@ -1111,7 +1168,9 @@ impl State {
             }
         }
         let history = if had_items { self.store.items(&t.id).map_err(store_err)? } else { Vec::new() };
-        let user = self.add_item(&t.id, Some(&turn_id), ItemKind::User, Some(text.clone()), |_| {});
+        let shown = (!attached.shown.is_empty()).then(|| attached.shown.clone());
+        let user = self.add_item(&t.id, Some(&turn_id), ItemKind::User, Some(text.clone()), |i| i.attachments = shown);
+        let text = attachments::prompt_with(&text, &attached.shown);
 
         t.agent = agent.clone();
         t.model = model.clone();
@@ -1120,9 +1179,10 @@ impl State {
         t.review_at = None;
         t.status = ThreadStatus::Running;
         t.updated_at = now_iso();
-        t.preview = one_line(&text, 140);
+        let said = p.text.trim();
+        t.preview = one_line(if said.is_empty() { attached.shown.first().map(|a| a.name.as_str()).unwrap_or("") } else { said }, 140);
         if t.title.is_empty() {
-            t.title = title_from(&text);
+            t.title = title_from(if said.is_empty() { &t.preview } else { said });
         }
         self.save_thread(&t);
 
@@ -1147,14 +1207,30 @@ impl State {
                 codex_turn: None,
                 parent: t.parent_id.clone(),
                 lookup: t.worker_kind == Some(WorkerKind::Lookup),
+                images: attachments::images(&attached.shown),
             },
         );
-        Ok(Begun { thread: t.id, turn_id, user, prompt, session })
+        Ok(Begun { thread: t.id, turn_id, user, prompt, session, downloads: attached.downloads })
     }
 
-    fn launch(&mut self, b: Begun) {
+    fn launch(&mut self, mut b: Begun) {
+        // Uploads from the website or phone come down first.
+        if !b.downloads.is_empty() {
+            let downloads = std::mem::take(&mut b.downloads);
+            let tx = self.tx.clone();
+            std::thread::spawn(move || {
+                let failed = downloads.iter().find_map(|(url, dest)| attachments::download(url, dest).err());
+                let _ = tx.send(Cmd::Downloaded { begun: Box::new(b), failed });
+            });
+            return;
+        }
         self.emit(Event::TurnStarted { thread_id: b.thread.clone(), turn_id: b.turn_id });
         self.start_agent(&b.thread, &b.prompt, b.session);
+    }
+
+    /// Where a chat's attachments are saved: beside the agents' database.
+    fn attachments_dir(&self, thread: &str) -> PathBuf {
+        self.cfg.db_path.parent().unwrap_or(Path::new(".")).join("agents-attachments").join(thread)
     }
 
     fn mcp_url(&self) -> Option<String> {
@@ -1233,9 +1309,10 @@ impl State {
                 Err(e) => return self.finish_turn(thread, TurnStatus::Failed, Some(format!("Claude Code didn't start ({e}).")), None),
             }
         }
+        let images = self.turns.get(thread).map(|t| t.images.clone()).unwrap_or_default();
         let sent = self.claude.get_mut(thread).map(|r| {
             r.idle_since = None;
-            r.session.send(prompt)
+            r.session.send(prompt, &images)
         });
         if let Some(Err(e)) = sent {
             self.finish_turn(thread, TurnStatus::Failed, Some(format!("Couldn't reach Claude Code ({e}).")), None);
@@ -1282,7 +1359,7 @@ impl State {
         let gen = c.gen;
         let loaded = c.loaded.get(thread).cloned();
         let resume = if loaded.is_none() { self.store.session(thread, codex::AGENT_ID).ok().flatten() } else { None };
-        let (model, effort, turn_id) = (turn.model.clone(), turn.effort.clone(), turn.id.clone());
+        let (model, effort, turn_id, images) = (turn.model.clone(), turn.effort.clone(), turn.id.clone(), turn.images.clone());
         let cwd = match self.work_dir(thread) {
             Ok(c) => c,
             Err(e) => return self.finish_turn(thread, TurnStatus::Failed, Some(e), None),
@@ -1309,7 +1386,7 @@ impl State {
                         ct
                     }
                 };
-                let started = peer.request("turn/start", codex::turn_params(&codex_thread, &prompt, &model, effort.as_deref()), codex::REQUEST_TIMEOUT)?;
+                let started = peer.request("turn/start", codex::turn_params(&codex_thread, &prompt, &model, effort.as_deref(), &images), codex::REQUEST_TIMEOUT)?;
                 Ok::<String, String>(started.pointer("/turn/id").and_then(Value::as_str).unwrap_or("").to_string())
             })();
             let _ = tx.send(Cmd::CodexTurn { thread: id, turn: turn_id, gen, result });
@@ -1468,6 +1545,7 @@ impl State {
             }
             // Only Claude Code reports these (its initialize answer).
             DriverEvent::Models(models, default) => self.models_reported(claude::AGENT_ID, models, default),
+            DriverEvent::Commands(list) => self.claude_commands = list,
             DriverEvent::McpStatus(list) => {
                 for (name, status) in list {
                     let error = (status == "failed").then(|| "It didn't start.".to_string());
@@ -2195,7 +2273,7 @@ impl State {
                     text.push(' ');
                     text.push_str(note);
                 }
-                if let Ok(begun) = self.begin_turn(TurnSendParams { thread_id: p.thread_id.clone(), text, agent: None, model: None, effort: None }) {
+                if let Ok(begun) = self.begin_turn(TurnSendParams { thread_id: p.thread_id.clone(), text, agent: None, model: None, effort: None, attachments: Vec::new() }) {
                     self.launch(begun);
                 }
             }
@@ -2304,7 +2382,7 @@ impl State {
             }
             let Some((_, worker, text)) = self.worker_queue.remove(pos) else { return };
             self.worker_ends.remove(&worker);
-            match self.begin_turn(TurnSendParams { thread_id: worker.clone(), text, agent: None, model: None, effort: None }) {
+            match self.begin_turn(TurnSendParams { thread_id: worker.clone(), text, agent: None, model: None, effort: None, attachments: Vec::new() }) {
                 Ok(begun) => self.launch(begun),
                 Err(e) => self.worker_failed(&worker, &e.message),
             }

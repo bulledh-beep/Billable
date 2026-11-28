@@ -119,6 +119,7 @@ Engine → screen, an **event** (any time, not tied to a request):
   };
   divider?: { from: { agent: string; model: string }; to: { agent: string; model: string } };
   decision?: Decision;           // kind "decision"
+  attachments?: Attachment[];    // kind "user": what came with the message (see "Attachments")
 }
 ```
 
@@ -155,7 +156,7 @@ Engine → screen, an **event** (any time, not tied to a request):
 
 | Method | Params | Result |
 | --- | --- | --- |
-| `hello` | `{ client: "billable" \| "web" \| "phone" }` | `{ engine: "mac" \| "cloud", engineVersion, protocol: 1, agents: Agent[], feedhq: { connected: boolean, account: string \| null }, device: string \| null, features?: string[] }` (`features` lists what this engine adds to v1: `"folders"` (cwd + system.pickFolder), `"orchestrator"`, `"bulk-delete"`, `"coordinator"`, `"decisions"`, `"memory"`, `"lookups"`, `"review"`, `"tools"`, `"computer"`; missing = none) |
+| `hello` | `{ client: "billable" \| "web" \| "phone" }` | `{ engine: "mac" \| "cloud", engineVersion, protocol: 1, agents: Agent[], feedhq: { connected: boolean, account: string \| null }, device: string \| null, features?: string[] }` (`features` lists what this engine adds to v1: `"folders"` (cwd + system.pickFolder), `"orchestrator"`, `"bulk-delete"`, `"coordinator"`, `"decisions"`, `"memory"`, `"lookups"`, `"review"`, `"tools"`, `"computer"`, `"attachments"`; missing = none) |
 | `threads.list` | `{ includeArchived?: boolean }` | `{ threads: Thread[] }` (newest `updatedAt` first) |
 | `thread.get` | `{ threadId }` | `{ thread: Thread, items: Item[], approvals: Approval[] }` (items oldest first) |
 | `thread.create` | `{ agent, model, effort?: string \| null, cwd?: string \| null, role?: "orchestrator" \| null, projectId?: string \| null }` | `{ thread: Thread }` |
@@ -163,7 +164,7 @@ Engine → screen, an **event** (any time, not tied to a request):
 | `thread.delete` | `{ threadId }` | `{}` (also deletes its workers) |
 | `threads.delete` | `{ threadIds: string[] }` | `{ deleted: string[] }` (at most 200; unknown ids are skipped; one `thread.deleted` event each) |
 | `thread.retitle` | `{ threadId }` | always `bad_request` "Rename it instead." (titles never use a model; rename with `thread.update`) |
-| `turn.send` | `{ threadId, text, agent?, model?, effort? }` | `{ turnId, userItem: Item }` |
+| `turn.send` | `{ threadId, text, agent?, model?, effort?, attachments?: AttachmentIn[] }` | `{ turnId, userItem: Item }` (`text` may be "" when something is attached) |
 | `turn.stop` | `{ threadId }` | `{}` |
 | `approval.answer` | `{ threadId, approvalId, decision: "allow" \| "allow_always" \| "deny" }` | `{}` |
 | `decision.answer` | `{ threadId, itemId, choice: number, text?: string, kept?: number[] }` | `{ item: Item }` (`not_found` once answered; a plan needs at least one kept job) |
@@ -178,6 +179,9 @@ Engine → screen, an **event** (any time, not tied to a request):
 | `tools.add` | `{ agents: ("claude" \| "codex")[], name, command?: string, url?: string, env?: Record<string,string>, scope?: "user" \| "local", cwd? }` | the same list |
 | `tools.remove` | `{ id, cwd? }` | the same list |
 | `tools.import` | `{ id, agents: ("claude" \| "codex")[] }` (an `app` server) | the same list |
+| `system.pickFiles` | `{}` | `{ paths: string[] }` (Mac engine, inside Billable only: files and folders, several at once; [] = cancelled) |
+| `files.search` | `{ threadId?, cwd?, query }` | `{ root, results: { path, rel, folder: boolean }[] }` (at most 30, best first; for `@`) |
+| `commands.list` | `{ threadId?, cwd? }` | `{ commands: { name, description }[] }` (for `/`) |
 | `computer.allow` | `{ which: "screen" \| "control" }` | `{ computer: ComputerAccess }` (asks macOS, and opens its settings pane) |
 
 `cwd` must be an existing folder (`bad_request` "That folder isn't on this Mac." otherwise). It's fixed when the thread is made; every turn of the thread, and every
@@ -334,6 +338,36 @@ needs Screen Recording and Accessibility.
   that chat until Billable quits; Don't allow fails the call.
 - Billable itself is never clicked or typed into.
 - Missing macOS access fails the call with a plain line, and asks macOS.
+
+## Attachments (Mac engine, `features` "attachments")
+
+```ts
+AttachmentIn = {
+  name: string;
+  kind?: "image" | "file" | "folder";   // worked out from the path when left out
+  path?: string;         // a file or folder on this Mac (Billable's picker, Finder drop, @)
+  data?: string;         // the bytes, base64 (inside Billable; at most 40 MB)
+  url?: string;          // a FeedHQ upload's signed link (website and phone; at most 100 MB)
+  thumb?: string;        // a data:image preview for the chat, at most 64 KB
+}
+Attachment = { name, kind: "image" | "file" | "folder", path: string, size?: number, thumb?: string }
+```
+
+- At most 20 a message. A path is used where it is; bytes and uploads are
+  saved in the engine's `agents-attachments/<threadId>/` folder first.
+- The agent gets the person's words, then `Attached:` and one path a line
+  (folders marked). Images also go in as the agents' own image inputs
+  (Claude Code: inline images up to 5 MB; Codex: `localImage`).
+- Website and phone uploads go to the private `agent-uploads` bucket under
+  `<user id>/`, and the page deletes them once `turn.started` arrives.
+- `files.search` lists the folder's files with git (tracked and untracked,
+  ignoring what `.gitignore` does), or walks it skipping build folders.
+  `@` puts the path in the message as an attachment.
+- `commands.list` is the folder's `.claude/commands` and `.claude/skills`,
+  then the person's, then whatever else Claude Code said it has. Picking one
+  writes `/<name> ` in the box; Claude Code runs it.
+- `cwd` is only taken from Billable itself; from the relay these use the
+  chat's own folder.
 
 ## Handoff when switching agents mid-chat
 

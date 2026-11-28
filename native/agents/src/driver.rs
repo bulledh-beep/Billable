@@ -29,6 +29,8 @@ pub enum DriverEvent {
     /// The MCP servers the agent started with and how each went (name,
     /// status word from servers::status_word).
     McpStatus(Vec<(String, String)>),
+    /// The slash commands the agent offers (Claude Code's init).
+    Commands(Vec<String>),
     /// A problem worth showing that doesn't end the turn by itself.
     Error(String),
     TurnDone { status: TurnStatus, error: Option<String>, usage: Option<Usage> },

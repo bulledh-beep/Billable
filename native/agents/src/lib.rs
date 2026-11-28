@@ -1,7 +1,9 @@
 //! Billable's agent engine.
 
+pub mod attachments;
 pub mod claude;
 pub mod codex;
+pub mod commands;
 pub mod computer;
 pub mod discovery;
 pub mod driver;
@@ -20,7 +22,7 @@ pub mod util;
 pub mod engine;
 pub mod remote;
 
-pub use engine::{Engine, EngineConfig, FolderAnswer, FolderPicker};
+pub use engine::{Engine, EngineConfig, FolderAnswer, FolderPicker, PickKind};
 pub use oauth::{CLIENT_ID, REDIRECT_URI};
 pub use remote::{RemoteEngine, RemoteLink, RemoteState};
 pub use secrets::{MemorySecrets, SecretStore, KEYCHAIN_SERVICE};

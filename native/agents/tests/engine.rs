@@ -346,7 +346,7 @@ fn id_of(v: &Value) -> String {
 fn folders_and_bulk_delete() {
     let Some(mut h) = setup("folders") else { return };
     let hello = h.ok("hello", json!({}));
-    assert_eq!(hello["features"], json!(["folders", "orchestrator", "bulk-delete", "coordinator", "decisions", "memory", "lookups", "review", "tools", "computer"]));
+    assert_eq!(hello["features"], json!(["folders", "orchestrator", "bulk-delete", "coordinator", "decisions", "memory", "lookups", "review", "tools", "computer", "attachments"]));
 
     // Tools: the list comes from the agents' own config; computer use says what macOS allows.
     let tools = h.ok("tools.list", json!({}));
