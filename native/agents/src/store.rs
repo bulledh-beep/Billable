@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::Context as _;
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::protocol::{Approval, Decision, Item, Thread, ThreadStatus};
+use crate::protocol::{Approval, Decision, Item, Thread, ThreadRole, ThreadStatus};
 
 /// Each entry moves the schema one version up (`PRAGMA user_version`).
 const MIGRATIONS: &[&str] = &[
@@ -58,6 +58,11 @@ const MIGRATIONS: &[&str] = &[
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
     );",
+    // 2: folders and orchestrators
+    "ALTER TABLE threads ADD COLUMN cwd TEXT;
+    ALTER TABLE threads ADD COLUMN role TEXT;
+    ALTER TABLE threads ADD COLUMN parent_id TEXT;
+    CREATE INDEX threads_parent ON threads(parent_id);",
 ];
 
 pub struct Store {
@@ -79,6 +84,9 @@ fn thread_from_row(r: &rusqlite::Row) -> rusqlite::Result<Thread> {
         created_at: r.get("created_at")?,
         updated_at: r.get("updated_at")?,
         preview: r.get("preview")?,
+        cwd: r.get("cwd")?,
+        role: r.get::<_, Option<String>>("role")?.as_deref().and_then(ThreadRole::parse),
+        parent_id: r.get("parent_id")?,
     })
 }
 
@@ -128,9 +136,25 @@ impl Store {
 
     pub fn insert_thread(&self, t: &Thread) -> anyhow::Result<()> {
         self.conn.execute(
-            "INSERT INTO threads (id, title, agent, model, effort, status, pinned, settled_at, archived_at, created_at, updated_at, preview)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            params![t.id, t.title, t.agent, t.model, t.effort, t.status.as_str(), t.pinned as i64, t.settled_at, t.archived_at, t.created_at, t.updated_at, t.preview],
+            "INSERT INTO threads (id, title, agent, model, effort, status, pinned, settled_at, archived_at, created_at, updated_at, preview, cwd, role, parent_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                t.id,
+                t.title,
+                t.agent,
+                t.model,
+                t.effort,
+                t.status.as_str(),
+                t.pinned as i64,
+                t.settled_at,
+                t.archived_at,
+                t.created_at,
+                t.updated_at,
+                t.preview,
+                t.cwd,
+                t.role.map(ThreadRole::as_str),
+                t.parent_id
+            ],
         )?;
         Ok(())
     }
@@ -157,6 +181,13 @@ impl Store {
         };
         let mut stmt = self.conn.prepare(sql)?;
         let rows = stmt.query_map([], thread_from_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// An orchestrator's workers, oldest first.
+    pub fn workers(&self, parent_id: &str) -> anyhow::Result<Vec<Thread>> {
+        let mut stmt = self.conn.prepare("SELECT * FROM threads WHERE parent_id = ?1 ORDER BY created_at, rowid")?;
+        let rows = stmt.query_map([parent_id], thread_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -298,6 +329,9 @@ mod tests {
             created_at: updated.into(),
             updated_at: updated.into(),
             preview: String::new(),
+            cwd: None,
+            role: None,
+            parent_id: None,
         }
     }
 
@@ -346,10 +380,24 @@ mod tests {
         assert_eq!(s.threads(true).unwrap().len(), 2);
         let back = s.thread("old").unwrap().unwrap();
         assert!(back.pinned && back.title == "Plans");
+        assert_eq!((back.cwd.as_deref(), back.role, back.parent_id.as_deref()), (None, None, None));
+
+        let mut boss = thread("boss", "2026-01-04T00:00:00.000Z");
+        boss.cwd = Some("/Users/me/site".into());
+        boss.role = Some(ThreadRole::Orchestrator);
+        s.insert_thread(&boss).unwrap();
+        let mut w = thread("w1", "2026-01-05T00:00:00.000Z");
+        w.role = Some(ThreadRole::Worker);
+        w.parent_id = Some("boss".into());
+        w.cwd = boss.cwd.clone();
+        s.insert_thread(&w).unwrap();
+        assert_eq!(s.thread("boss").unwrap().unwrap(), boss);
+        assert_eq!(s.workers("boss").unwrap(), vec![w]);
+        assert!(s.workers("new").unwrap().is_empty());
 
         s.insert_item(&item("i1", "new", ItemKind::User)).unwrap();
         let mut tool = item("i2", "new", ItemKind::Tool);
-        tool.tool = Some(ToolInfo { name: "Bash".into(), title: "Ran ls".into(), detail: None, status: ToolStatus::Running, output: None, feedhq: false });
+        tool.tool = Some(ToolInfo { name: "Bash".into(), title: "Ran ls".into(), detail: None, status: ToolStatus::Running, output: None, feedhq: false, threads: vec![] });
         s.insert_item(&tool).unwrap();
         tool.tool.as_mut().unwrap().status = ToolStatus::Done;
         s.save_item(&tool).unwrap();
@@ -378,6 +426,18 @@ mod tests {
         assert!(s.delete_thread("new").unwrap());
         assert!(s.items("new").unwrap().is_empty());
         assert!(!s.delete_thread("new").unwrap());
+    }
+
+    #[test]
+    fn upgrades_a_first_version_file() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0]).unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+        conn.execute("INSERT INTO threads (id, agent, model, created_at, updated_at) VALUES ('t', 'claude', 'opus', 'a', 'a')", []).unwrap();
+        let s = Store::init(conn).unwrap();
+        assert_eq!(s.schema_version().unwrap(), MIGRATIONS.len());
+        let t = s.thread("t").unwrap().unwrap();
+        assert_eq!((t.cwd, t.role, t.parent_id), (None, None, None));
     }
 
     #[test]

@@ -80,8 +80,35 @@ fn feedhq_title(tool: &str) -> String {
     }
 }
 
+/// "Started 3 agents", "Messaged an agent": the orchestrator's own tools.
+fn orchestrator_title(tool: &str, input: &Value) -> (String, Option<String>) {
+    let count = |key: &str| input.get(key).and_then(Value::as_array).map(Vec::len);
+    let agents = |n: usize| if n == 1 { "an agent".to_string() } else { format!("{n} agents") };
+    match tool {
+        "start_agents" => {
+            let titles: Vec<&str> = input.get("agents").and_then(Value::as_array).map(|a| a.iter().filter_map(|w| s(w, "title")).collect()).unwrap_or_default();
+            let title = match count("agents") {
+                Some(n) if n > 0 => format!("Started {}", agents(n)),
+                _ => "Started agents".into(),
+            };
+            (title, (!titles.is_empty()).then(|| one_line(&titles.join(", "), 200)))
+        }
+        "wait_for_agents" => match count("ids") {
+            Some(n) if n > 0 => (format!("Waited for {}", agents(n)), None),
+            _ => ("Waited for the agents".into(), None),
+        },
+        "message_agent" => ("Messaged an agent".into(), s(input, "text").map(|t| one_line(t, 200))),
+        "list_agents" => ("Checked on agents".into(), None),
+        "stop_agents" => ("Stopped agents".into(), None),
+        other => (format!("Used {}", words(other).join(" ")), None),
+    }
+}
+
 /// `(title, detail)` for a tool call.
 pub fn describe(name: &str, input: &Value) -> (String, Option<String>) {
+    if let Some(tool) = name.strip_prefix(crate::orchestrator::TOOL_PREFIX) {
+        return orchestrator_title(tool, input);
+    }
     if let Some(tool) = name.strip_prefix(FEEDHQ_PREFIX) {
         let detail = input.as_object().filter(|o| !o.is_empty()).map(|_| one_line(&input.to_string(), 200));
         return (feedhq_title(tool), detail);
@@ -138,6 +165,15 @@ pub fn approval(name: &str, input: &Value) -> (String, String) {
     if is_feedhq(name) {
         return ("Change FeedHQ".into(), format!("{}\n{}", feedhq_title(&name[FEEDHQ_PREFIX.len()..]), pretty()));
     }
+    if let Some(tool) = name.strip_prefix(crate::orchestrator::TOOL_PREFIX) {
+        let title = match tool {
+            "start_agents" => "Start helper agents",
+            "message_agent" => "Message a helper agent",
+            "stop_agents" => "Stop helper agents",
+            _ => "Check on helper agents",
+        };
+        return (title.into(), pretty());
+    }
     if let Some(rest) = name.strip_prefix("mcp__") {
         let tool = rest.split_once("__").map(|(_, t)| t).unwrap_or(rest);
         return (format!("Use {}", words(tool).join(" ")), pretty());
@@ -192,6 +228,15 @@ mod tests {
         assert_eq!(describe("mcp__github__create_issue", &json!({})).0, "Used create issue (github)");
         assert_eq!(describe("apply_patch", &json!({"changes":[{"path":"a.txt"},{"path":"b.txt"}]})).0, "Edited 2 files");
         assert_eq!(describe("Frobnicate", &json!({})), ("Used Frobnicate".into(), None));
+        let start = json!({"agents":[{"title":"Rename","task":"x"},{"title":"Fix test","task":"y"},{"title":"Design","task":"z"}]});
+        assert_eq!(describe("mcp__billable__start_agents", &start), ("Started 3 agents".into(), Some("Rename, Fix test, Design".into())));
+        assert_eq!(describe("mcp__billable__start_agents", &json!({"agents":[{"title":"A","task":"x"}]})).0, "Started an agent");
+        assert_eq!(describe("mcp__billable__wait_for_agents", &json!({"ids":["a","b"]})).0, "Waited for 2 agents");
+        assert_eq!(describe("mcp__billable__wait_for_agents", &json!({})).0, "Waited for the agents");
+        assert_eq!(describe("mcp__billable__message_agent", &json!({"id":"a","text":"And tests"})), ("Messaged an agent".into(), Some("And tests".into())));
+        assert_eq!(describe("mcp__billable__list_agents", &json!({})).0, "Checked on agents");
+        assert_eq!(describe("mcp__billable__stop_agents", &json!({})).0, "Stopped agents");
+        assert!(!is_feedhq("mcp__billable__start_agents"));
     }
 
     #[test]

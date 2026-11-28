@@ -11,6 +11,8 @@
 //!   own page is showing. Until the page says `hello` (again after each
 //!   load) they wait here, at most 500.
 //! - `billable://oauth?…` (FeedHQ sign-in finishing) goes to the engine.
+//! - `system.pickFolder` from the page shows the Mac's folder picker here,
+//!   on the main thread; the engine waits for the answer without blocking.
 //! - While phone sync is connected, a remote link relays the website's and
 //!   phone's requests through FeedHQ with phone sync's token.
 //! - At quit every agent process is stopped.
@@ -24,12 +26,15 @@
 use std::{
     cell::RefCell,
     collections::VecDeque,
-    sync::{mpsc::Receiver, Arc},
+    sync::{
+        mpsc::{self, Receiver},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 
-use billable_agents::{util::origin_of, Engine, EngineConfig, RemoteLink, RemoteState, SecretStore, KEYCHAIN_SERVICE};
-use gpui::{App, AsyncApp};
+use billable_agents::{util::origin_of, Engine, EngineConfig, FolderAnswer, RemoteLink, RemoteState, SecretStore, KEYCHAIN_SERVICE};
+use gpui::{App, AsyncApp, PathPromptOptions};
 
 use crate::shell::content_hq;
 
@@ -76,6 +81,8 @@ struct Bridge {
     started: bool,
     engine: Option<Engine>,
     output: Option<Receiver<String>>,
+    /// Folder picks the engine asked for (system.pickFolder), shown on the next tick.
+    picks: Option<Receiver<FolderAnswer>>,
     /// The engine couldn't start; said once, not retried every tick.
     failed: bool,
     /// Messages from the page, handled on the next tick.
@@ -145,12 +152,25 @@ fn ensure_engine(cx: &mut App) -> Option<Engine> {
     }
     let data = billable_core::profiles::user_data_dir();
     let secrets: Arc<dyn SecretStore> = Arc::new(KeychainSecrets { folder: data.display().to_string() });
-    let cfg = EngineConfig::new(data.join("agents.db"), data.join("agents-workspace"), &feedhq_origin(cx), secrets);
+    let mut cfg = EngineConfig::new(data.join("agents.db"), data.join("agents-workspace"), &feedhq_origin(cx), secrets);
+    // The engine thread asks; the picker shows on the main thread (tick).
+    let (pick_tx, pick_rx) = mpsc::channel::<FolderAnswer>();
+    let pick_tx = Mutex::new(pick_tx);
+    cfg.folder_picker = Some(Arc::new(move |answer: FolderAnswer| {
+        let unsent = match pick_tx.lock() {
+            Ok(tx) => tx.send(answer).err().map(|e| e.0),
+            Err(_) => Some(answer),
+        };
+        if let Some(answer) = unsent {
+            answer(None);
+        }
+    }));
     match Engine::new(cfg) {
         Ok((engine, output)) => {
             with(|b| {
                 b.engine = Some(engine.clone());
                 b.output = Some(output);
+                b.picks = Some(pick_rx);
             });
             Some(engine)
         }
@@ -180,6 +200,19 @@ fn page_is_home(cx: &App) -> bool {
     home.is_some() && content_hq::page_url().and_then(|u| origin_of(&u)) == home
 }
 
+/// Show the folder picker; its answer goes back to the engine.
+fn pick_folder(answer: FolderAnswer, cx: &mut App) {
+    let chosen = cx.prompt_for_paths(PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some("Choose".into()) });
+    cx.spawn(async move |_cx: &mut AsyncApp| {
+        let path = match chosen.await {
+            Ok(Ok(Some(paths))) => paths.into_iter().next(),
+            _ => None,
+        };
+        answer(path);
+    })
+    .detach();
+}
+
 fn tick(cx: &mut App) {
     // The page's messages
     let incoming = with(|b| std::mem::take(&mut b.incoming));
@@ -192,6 +225,11 @@ fn tick(cx: &mut App) {
                 engine.handle(&message);
             }
         }
+    }
+    // Folder pickers the page asked for
+    let picks: Vec<FolderAnswer> = with(|b| b.picks.as_ref().map(|rx| rx.try_iter().collect()).unwrap_or_default());
+    for answer in picks {
+        pick_folder(answer, cx);
     }
     // The engine's output
     let fresh: Vec<String> = with(|b| b.output.as_ref().map(|rx| rx.try_iter().collect()).unwrap_or_default());

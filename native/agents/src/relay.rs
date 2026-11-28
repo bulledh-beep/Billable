@@ -2,6 +2,10 @@
 //! and the relay forwards each POST to `<FeedHQ>/api/mcp` with a fresh
 //! access token, so no agent ever sees a FeedHQ token. Any other path is
 //! refused; GET and DELETE answer 405 like FeedHQ does.
+//!
+//! `/mcp/<secret>/orchestrate/<threadId>` is a second MCP server, `billable`,
+//! given only to orchestrator threads (orchestrator.rs): its tool calls go to
+//! the engine thread, nowhere else.
 
 use std::{
     io::BufReader,
@@ -18,8 +22,13 @@ use serde_json::{json, Value};
 use crate::{
     http::{read_request, write_response, HttpRequest},
     oauth::{FeedhqAuth, TokenError},
+    orchestrator,
     util::{b64url, random_bytes},
 };
+
+/// Hands an orchestrator's call (its thread id, the call) to the engine and
+/// waits for the answer. Runs on the relay's connection thread.
+pub type Orchestrate = Arc<dyn Fn(&str, orchestrator::Call) -> Result<Value, String> + Send + Sync>;
 
 /// Request headers passed on to FeedHQ.
 const FORWARD: &[&str] = &["content-type", "accept", "mcp-session-id", "mcp-protocol-version", "last-event-id"];
@@ -33,7 +42,7 @@ pub struct Relay {
 }
 
 impl Relay {
-    pub fn start(auth: Arc<FeedhqAuth>) -> std::io::Result<Relay> {
+    pub fn start(auth: Arc<FeedhqAuth>, orchestrate: Option<Orchestrate>) -> std::io::Result<Relay> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let addr = listener.local_addr()?;
         let path = format!("/mcp/{}", b64url(&random_bytes(32)));
@@ -46,8 +55,8 @@ impl Relay {
                     break;
                 }
                 let Ok(conn) = conn else { continue };
-                let (auth, path, stopping) = (auth.clone(), path.clone(), stopping.clone());
-                std::thread::spawn(move || serve(conn, &auth, &path, &stopping));
+                let (auth, path, stopping, orchestrate) = (auth.clone(), path.clone(), stopping.clone(), orchestrate.clone());
+                std::thread::spawn(move || serve(conn, &auth, &path, &stopping, orchestrate.as_ref()));
             }
         });
         Ok(Relay { url, addr, stop })
@@ -56,6 +65,11 @@ impl Relay {
     /// The URL agents are given.
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    /// The `billable` server's URL for one orchestrator thread.
+    pub fn orchestrate_url(&self, thread: &str) -> String {
+        format!("{}/orchestrate/{thread}", self.url)
     }
 
     pub fn stop(&self) {
@@ -72,7 +86,7 @@ impl Drop for Relay {
     }
 }
 
-fn serve(conn: TcpStream, auth: &FeedhqAuth, path: &str, stopping: &AtomicBool) {
+fn serve(conn: TcpStream, auth: &FeedhqAuth, path: &str, stopping: &AtomicBool, orchestrate: Option<&Orchestrate>) {
     let _ = conn.set_read_timeout(Some(Duration::from_secs(300)));
     let Ok(read_half) = conn.try_clone() else { return };
     let mut reader = BufReader::new(read_half);
@@ -90,7 +104,7 @@ fn serve(conn: TcpStream, auth: &FeedhqAuth, path: &str, stopping: &AtomicBool) 
             return;
         }
         let keep = req.keep_alive();
-        let (status, headers, body) = answer(&req, auth, path);
+        let (status, headers, body) = answer(&req, auth, path, orchestrate);
         let headers: Vec<(&str, &str)> = headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         if write_response(&mut writer, status, &headers, &body, keep).is_err() || !keep {
             return;
@@ -113,8 +127,9 @@ fn rpc_error(body: &[u8], message: &str) -> Answer {
     }
 }
 
-fn answer(req: &HttpRequest, auth: &FeedhqAuth, path: &str) -> Answer {
-    if req.path != path {
+fn answer(req: &HttpRequest, auth: &FeedhqAuth, path: &str, orchestrate: Option<&Orchestrate>) -> Answer {
+    let thread = req.path.strip_prefix(path).and_then(|rest| rest.strip_prefix("/orchestrate/")).filter(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
+    if req.path != path && thread.is_none() {
         return (404, vec![], Vec::new());
     }
     // Browsers send Origin; agents don't. A page must never reach FeedHQ through us.
@@ -123,6 +138,13 @@ fn answer(req: &HttpRequest, auth: &FeedhqAuth, path: &str) -> Answer {
     }
     if req.method != "POST" {
         return (405, vec![("Allow".into(), "POST".into())], Vec::new());
+    }
+    if let Some(thread) = thread {
+        let Some(orchestrate) = orchestrate else { return (404, vec![], Vec::new()) };
+        return match orchestrator::rpc(&req.body, &|call| orchestrate(thread, call)) {
+            Some(out) => (200, vec![("Content-Type".into(), "application/json".into())], out.to_string().into_bytes()),
+            None => (202, vec![], Vec::new()),
+        };
     }
     let token = match auth.access_token() {
         Ok(t) => t,
@@ -223,7 +245,7 @@ mod tests {
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
         secrets.set(&refresh_account(&origin), "fhq_rt_0").unwrap();
         let auth = Arc::new(FeedhqAuth::new(&origin, secrets.clone()));
-        let relay = Relay::start(auth).unwrap();
+        let relay = Relay::start(auth, None).unwrap();
         let url = relay.url().to_string();
         assert!(url.starts_with("http://127.0.0.1:") && url.contains("/mcp/"));
 
@@ -249,18 +271,46 @@ mod tests {
         assert_eq!(call(&url, "POST", Some("/mcp/wrong"), "{}", "").0, 404);
         assert_eq!(call(&url, "POST", Some("/api/mcp"), "{}", "").0, 404);
         assert_eq!(call(&url, "POST", None, "{}", "Origin: https://evil.example\r\n").0, 403);
+        // No orchestrator server without the engine's hook
+        assert_eq!(call(&relay.orchestrate_url("t_1"), "POST", None, "{}", "").0, 404);
         relay.stop();
     }
 
     #[test]
     fn not_connected_is_a_json_rpc_error() {
         let auth = Arc::new(FeedhqAuth::new("http://127.0.0.1:9", Arc::new(MemorySecrets::default())));
-        let relay = Relay::start(auth).unwrap();
+        let relay = Relay::start(auth, None).unwrap();
         let (status, body) = call(relay.url(), "POST", None, r#"{"jsonrpc":"2.0","id":"x","method":"initialize"}"#, "");
         assert_eq!(status, 200);
         let v: Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["id"], json!("x"));
         assert!(v["error"]["message"].as_str().unwrap().contains("isn't connected"));
         assert_eq!(call(relay.url(), "POST", None, r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, "").0, 202);
+    }
+
+    #[test]
+    fn serves_the_orchestrator_tools() {
+        let auth = Arc::new(FeedhqAuth::new("http://127.0.0.1:9", Arc::new(MemorySecrets::default())));
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let keep = seen.clone();
+        let hook: Orchestrate = Arc::new(move |thread, call| {
+            keep.lock().unwrap().push(format!("{thread} {call:?}"));
+            match call {
+                orchestrator::Call::Describe => Ok(json!("models")),
+                orchestrator::Call::Tool { .. } => Ok(json!({"ok": true})),
+            }
+        });
+        let relay = Relay::start(auth, Some(hook)).unwrap();
+        let url = relay.orchestrate_url("t_9");
+        let (status, body) = call(&url, "POST", None, r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_agents","arguments":{}}}"#, "");
+        assert_eq!(status, 200, "{body}");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["result"]["content"][0]["text"], r#"{"ok":true}"#);
+        assert_eq!(seen.lock().unwrap().clone(), vec![r#"t_9 Tool { name: "list_agents", args: Object {} }"#.to_string()]);
+        assert_eq!(call(&url, "POST", None, r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, "").0, 202);
+        assert_eq!(call(&url, "GET", None, "", "").0, 405);
+        assert_eq!(call(&url, "POST", None, "{}", "Origin: https://evil.example\r\n").0, 403);
+        assert_eq!(call(&format!("{}/orchestrate/a%2Fb", relay.url()), "POST", None, "{}", "").0, 404);
+        assert_eq!(call(&format!("{}/other/t_9", relay.url()), "POST", None, "{}", "").0, 404);
     }
 }

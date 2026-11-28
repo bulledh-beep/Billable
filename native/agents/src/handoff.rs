@@ -157,7 +157,7 @@ mod tests {
     fn tool(title: &str, output: &str) -> Item {
         let mut i = item(ItemKind::Tool, "");
         i.text = None;
-        i.tool = Some(ToolInfo { name: "Bash".into(), title: title.into(), detail: None, status: ToolStatus::Done, output: Some(output.into()), feedhq: false });
+        i.tool = Some(ToolInfo { name: "Bash".into(), title: title.into(), detail: None, status: ToolStatus::Done, output: Some(output.into()), feedhq: false, threads: vec![] });
         i
     }
 

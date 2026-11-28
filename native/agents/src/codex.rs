@@ -270,18 +270,26 @@ impl Drop for Server {
 /// Said to every Codex thread.
 pub const DEVELOPER_NOTE: &str = crate::claude::SYSTEM_NOTE;
 
-/// `thread/start` (or, with `resume`, `thread/resume`) params.
-pub fn thread_params(model: &str, cwd: &Path, mcp_url: Option<&str>, resume: Option<&str>) -> Value {
+/// `thread/start` (or, with `resume`, `thread/resume`) params. An
+/// orchestrator (`orchestrate_url`) also gets the `billable` server and the
+/// orchestration guidance.
+pub fn thread_params(model: &str, cwd: &Path, mcp_url: Option<&str>, orchestrate_url: Option<&str>, resume: Option<&str>) -> Value {
     let mut config = serde_json::Map::new();
     if let Some(url) = mcp_url {
         config.insert("mcp_servers.feedhq".into(), json!({"url": url, "tool_timeout_sec": 300}));
+    }
+    let mut developer = DEVELOPER_NOTE.to_string();
+    if let Some(url) = orchestrate_url {
+        // wait_for_agents can take up to 30 minutes.
+        config.insert(format!("mcp_servers.{}", crate::orchestrator::SERVER_NAME), json!({"url": url, "tool_timeout_sec": 1900}));
+        developer = format!("{developer}\n\n{}", crate::orchestrator::GUIDANCE);
     }
     let mut p = json!({
         "model": model,
         "cwd": cwd.to_string_lossy(),
         "approvalPolicy": "untrusted",
         "sandbox": "workspace-write",
-        "developerInstructions": DEVELOPER_NOTE,
+        "developerInstructions": developer,
         "config": Value::Object(config),
     });
     if let Some(id) = resume {
@@ -515,13 +523,19 @@ mod tests {
 
     #[test]
     fn params_and_discovery() {
-        let p = thread_params("gpt-6.1-sol", Path::new("/w"), Some("http://127.0.0.1:5/mcp/s"), Some("c1"));
+        let p = thread_params("gpt-6.1-sol", Path::new("/w"), Some("http://127.0.0.1:5/mcp/s"), None, Some("c1"));
         assert_eq!(p["config"]["mcp_servers.feedhq"]["url"], json!("http://127.0.0.1:5/mcp/s"));
         assert_eq!(p["threadId"], json!("c1"));
         assert_eq!(p["approvalPolicy"], json!("untrusted"));
-        let p = thread_params("m", Path::new("/w"), None, None);
+        assert!(p["config"].get("mcp_servers.billable").is_none());
+        assert_eq!(p["developerInstructions"], json!(DEVELOPER_NOTE));
+        let p = thread_params("m", Path::new("/w"), None, None, None);
         assert_eq!(p["config"], json!({}));
         assert!(p.get("threadId").is_none());
+        let p = thread_params("m", Path::new("/site"), None, Some("http://h/mcp/s/orchestrate/t_1"), None);
+        assert_eq!(p["config"]["mcp_servers.billable"]["url"], json!("http://h/mcp/s/orchestrate/t_1"));
+        assert_eq!(p["cwd"], json!("/site"));
+        assert!(p["developerInstructions"].as_str().unwrap().contains("wait_for_agents"));
         assert_eq!(turn_params("c1", "hi", "m", Some("high")), json!({"threadId":"c1","input":[{"type":"text","text":"hi"}],"model":"m","summary":"auto","effort":"high"}));
         assert_eq!(parse_version("codex-cli 0.172.0\n").as_deref(), Some("0.172.0"));
         let list = json!({"data":[

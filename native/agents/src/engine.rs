@@ -6,10 +6,17 @@
 //! the request came from; events go to both. Nothing here blocks the
 //! caller: anything slow (finding the CLIs, titles, sign-in) runs on a
 //! helper thread and reports back to the engine thread.
+//!
+//! An orchestrator thread's session also gets the relay's `billable` MCP
+//! server (orchestrator.rs). Its tool calls arrive as [`Cmd::Orchestrate`]
+//! and start workers: ordinary threads with a parent, at most
+//! [`orchestrator::MAX_RUNNING`] running at once per orchestrator, the rest
+//! queued. A wait_for_agents call is parked and answered when its workers
+//! finish, at its timeout, or when the orchestrator stops.
 
 use std::{
-    collections::HashMap,
-    path::PathBuf,
+    collections::{HashMap, VecDeque},
+    path::{Path, PathBuf},
     sync::{
         mpsc::{self, Receiver, RecvTimeoutError, Sender},
         Arc, Mutex,
@@ -25,8 +32,9 @@ use crate::{
     driver::DriverEvent,
     handoff,
     oauth::{self, FeedhqAuth},
+    orchestrator::{self, Call},
     protocol::*,
-    relay::Relay,
+    relay::{Orchestrate, Relay},
     remote::RemoteEngine,
     secrets::SecretStore,
     store::Store,
@@ -41,6 +49,18 @@ const IDLE_LIMIT: Duration = Duration::from_secs(15 * 60);
 const STOP_GRACE: Duration = Duration::from_secs(10);
 /// A sign-in started with feedhq.connect must finish within this.
 const SIGN_IN_LIMIT: Duration = Duration::from_secs(15 * 60);
+
+/// Answers a folder pick: the chosen folder, or `None` when cancelled.
+pub type FolderAnswer = Box<dyn FnOnce(Option<PathBuf>) + Send>;
+/// Shows the Mac's folder picker for `system.pickFolder`. It's called on
+/// the engine thread and must return at once, calling the answer later
+/// (from any thread).
+pub type FolderPicker = Arc<dyn Fn(FolderAnswer) + Send + Sync>;
+
+/// The `features` this engine adds to protocol v1.
+pub const FEATURES: &[&str] = &["folders", "orchestrator", "bulk-delete"];
+/// At most this many chats per threads.delete.
+const MAX_BULK_DELETE: usize = 200;
 
 pub struct EngineConfig {
     /// `<user data>/agents.db` (never billable.db).
@@ -61,6 +81,8 @@ pub struct EngineConfig {
     /// Ask FeedHQ for its OAuth issuer, which may differ from the
     /// configured address (e.g. a vercel.app alias of feedhq.app).
     pub discover_issuer: bool,
+    /// Billable's folder picker (`None`: system.pickFolder is refused).
+    pub folder_picker: Option<FolderPicker>,
 }
 
 impl EngineConfig {
@@ -76,6 +98,7 @@ impl EngineConfig {
             codex_bin: None,
             login_shell: true,
             discover_issuer: true,
+            folder_picker: None,
         }
     }
 }
@@ -101,6 +124,9 @@ enum Cmd {
     CodexModels { models: Vec<Model>, default: String },
     FeedhqChanged,
     SignInFailed(String),
+    /// An orchestrator's call through the relay's `billable` server.
+    Orchestrate { thread: String, call: Call, reply: Sender<Result<Value, String>> },
+    FolderPicked { to: ReplyTo, path: Option<PathBuf> },
     Shutdown(Sender<()>),
 }
 
@@ -132,7 +158,13 @@ impl Engine {
                     let _ = tx.send(Cmd::FeedhqChanged);
                 }));
             }
-            let relay = Relay::start(auth.clone()).map_err(|e| eprintln!("[agents] the FeedHQ relay didn't start: {e}")).ok();
+            let hook_tx = state_tx.clone();
+            let hook: Orchestrate = Arc::new(move |thread, call| {
+                let (reply, answer) = mpsc::channel();
+                hook_tx.send(Cmd::Orchestrate { thread: thread.to_string(), call, reply }).map_err(|_| "Billable's agents have stopped.".to_string())?;
+                answer.recv_timeout(Duration::from_secs(orchestrator::MAX_WAIT_SECS + 60)).unwrap_or_else(|_| Err("Billable didn't answer in time.".into()))
+            });
+            let relay = Relay::start(auth.clone(), Some(hook)).map_err(|e| eprintln!("[agents] the FeedHQ relay didn't start: {e}")).ok();
             let mut state = State::new(cfg, store, state_tx, out_tx, state_remote, auth, relay);
             state.run(rx)
         })?;
@@ -209,6 +241,25 @@ struct Turn {
     resumed: bool,
     /// Codex's id for this turn, once it's known.
     codex_turn: Option<String>,
+    /// A worker's orchestrator.
+    parent: Option<String>,
+}
+
+/// A wait_for_agents call, answered when its workers are done or at `until`.
+struct Wait {
+    orchestrator: String,
+    ids: Vec<String>,
+    until: Instant,
+    reply: Sender<Result<Value, String>>,
+}
+
+/// A turn ready to start (turn.send, or an orchestrator's worker).
+struct Begun {
+    thread: String,
+    turn_id: String,
+    user: Item,
+    prompt: String,
+    session: Option<String>,
 }
 
 struct OpenApproval {
@@ -255,6 +306,11 @@ struct State {
     next_gen: u64,
     sign_ins: HashMap<String, (String, Instant)>,
     stopping: bool,
+    /// Workers waiting for a free slot, oldest first: (orchestrator, worker, message).
+    worker_queue: VecDeque<(String, String, String)>,
+    /// How each worker's latest turn ended (this run).
+    worker_ends: HashMap<String, TurnStatus>,
+    waits: Vec<Wait>,
 }
 
 fn device_name() -> Option<String> {
@@ -344,6 +400,9 @@ impl State {
             next_gen: 0,
             sign_ins: HashMap::new(),
             stopping: false,
+            worker_queue: VecDeque::new(),
+            worker_ends: HashMap::new(),
+            waits: Vec::new(),
         }
     }
 
@@ -377,6 +436,16 @@ impl State {
             }
             Err(e) => eprintln!("[agents] recovery: {e:#}"),
         }
+        // Workers still waiting for a slot when Billable closed don't start
+        // on their own now: nothing runs that the person didn't just ask for.
+        if let Ok(threads) = self.store.threads(true) {
+            for mut t in threads.into_iter().filter(|t| t.role == Some(ThreadRole::Worker) && t.preview == orchestrator::WAITING_PREVIEW) {
+                if self.store.item_count(&t.id).unwrap_or(0) == 0 {
+                    t.preview = "Didn't start: Billable was closed.".into();
+                    let _ = self.store.save_thread(&t);
+                }
+            }
+        }
         if self.device.is_none() {
             self.device = device_name();
         }
@@ -393,6 +462,9 @@ impl State {
         self.stopping = true;
         for (_, mut run) in self.claude.drain() {
             run.session.stop();
+        }
+        for w in self.waits.drain(..) {
+            let _ = w.reply.send(Err("Billable is closing.".into()));
         }
         if let Some(mut c) = self.codex.take() {
             c.server.stop();
@@ -464,6 +536,8 @@ impl State {
                 eprintln!("[agents] FeedHQ sign-in failed: {message}");
                 self.emit(Event::FeedhqStatus { connected: self.auth.connected(), account: self.auth.account() });
             }
+            Cmd::Orchestrate { thread, call, reply } => self.orchestrate(&thread, call, reply),
+            Cmd::FolderPicked { to, path } => self.reply(&to, Ok(json!({ "path": path.map(|p| p.to_string_lossy().to_string()) }))),
             Cmd::Shutdown(_) => {}
         }
     }
@@ -486,6 +560,9 @@ impl State {
             }
         }
         self.sign_ins.retain(|_, (_, at)| now.duration_since(*at) < SIGN_IN_LIMIT);
+        if !self.waits.is_empty() {
+            self.check_waits();
+        }
     }
 
     fn request(&mut self, src: Source, json: &str) {
@@ -510,6 +587,7 @@ impl State {
             "thread.create" => params::<ThreadCreateParams>(p).and_then(|p| self.thread_create(p)),
             "thread.update" => params::<ThreadUpdateParams>(p).and_then(|p| self.thread_update(p)),
             "thread.delete" => params::<ThreadIdParams>(p).and_then(|p| self.thread_delete(&p.thread_id)),
+            "threads.delete" => params::<ThreadsDeleteParams>(p).and_then(|p| self.threads_delete(p.thread_ids)),
             // Titles never cost a model call; the person renames instead.
             "thread.retitle" => Err(ProtoError::bad_request("Rename it instead.")),
             "turn.send" => match params::<TurnSendParams>(p).and_then(|p| self.turn_send(p, &to)) {
@@ -529,6 +607,19 @@ impl State {
                 std::thread::spawn(move || auth.disconnect());
                 Ok(json!({}))
             }
+            "system.pickFolder" => match (src, self.cfg.folder_picker.clone()) {
+                (Source::Remote, _) => Err(ProtoError::bad_request("Pick the folder on your Mac.")),
+                (Source::Local, None) => Err(ProtoError::bad_request("Billable can't show a folder picker here.")),
+                (Source::Local, Some(picker)) => {
+                    // Answered when the person picks (or cancels); the engine
+                    // carries on meanwhile.
+                    let (tx, reply_to) = (self.tx.clone(), to.clone());
+                    picker(Box::new(move |path| {
+                        let _ = tx.send(Cmd::FolderPicked { to: reply_to, path });
+                    }));
+                    return;
+                }
+            },
             _ => Err(ProtoError::bad_request("Billable doesn't know that request.")),
         };
         self.reply(&to, result);
@@ -542,6 +633,7 @@ impl State {
             "agents": self.agents,
             "feedhq": { "connected": self.auth.connected(), "account": self.auth.account() },
             "device": self.device,
+            "features": FEATURES,
         })
     }
 
@@ -683,6 +775,16 @@ impl State {
 
     fn thread_create(&mut self, p: ThreadCreateParams) -> Result<Value, ProtoError> {
         self.check_agent(&p.agent)?;
+        let cwd = match p.cwd.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+            Some(c) if Path::new(c).is_absolute() && Path::new(c).is_dir() => Some(c.to_string()),
+            Some(_) => return Err(ProtoError::bad_request("That folder isn't on this Mac.")),
+            None => None,
+        };
+        let role = match p.role.as_deref().filter(|r| !r.is_empty()) {
+            None => None,
+            Some("orchestrator") => Some(ThreadRole::Orchestrator),
+            Some(_) => return Err(ProtoError::bad_request("A new chat can only be an orchestrator.")),
+        };
         let now = now_iso();
         let t = Thread {
             id: new_id("t"),
@@ -698,6 +800,9 @@ impl State {
             created_at: now.clone(),
             updated_at: now,
             preview: String::new(),
+            cwd,
+            role,
+            parent_id: None,
         };
         self.store.insert_thread(&t).map_err(store_err)?;
         self.emit(Event::ThreadUpdated { thread: t.clone() });
@@ -724,8 +829,51 @@ impl State {
     }
 
     fn thread_delete(&mut self, id: &str) -> Result<Value, ProtoError> {
-        self.thread(id)?;
-        self.turns.remove(id);
+        self.delete_tree(id)?;
+        self.check_waits();
+        Ok(json!({}))
+    }
+
+    fn threads_delete(&mut self, ids: Vec<String>) -> Result<Value, ProtoError> {
+        if ids.len() > MAX_BULK_DELETE {
+            return Err(ProtoError::bad_request(format!("Delete at most {MAX_BULK_DELETE} chats at once.")));
+        }
+        let mut deleted: Vec<String> = Vec::new();
+        for id in ids {
+            // Unknown ids (or workers already gone with their orchestrator) are skipped.
+            if deleted.contains(&id) || self.store.thread(&id).map_err(store_err)?.is_none() {
+                continue;
+            }
+            deleted.extend(self.delete_tree(&id)?);
+        }
+        self.check_waits();
+        Ok(json!({ "deleted": deleted }))
+    }
+
+    /// Delete a chat and, for an orchestrator, its workers. Returns the ids.
+    fn delete_tree(&mut self, id: &str) -> Result<Vec<String>, ProtoError> {
+        let t = self.thread(id)?;
+        let mut ids: Vec<String> = Vec::new();
+        // Its waiting workers mustn't take a freed slot on the way out.
+        self.worker_queue.retain(|(o, _, _)| o != id);
+        if t.role == Some(ThreadRole::Orchestrator) {
+            ids.extend(self.store.workers(id).map_err(store_err)?.into_iter().map(|w| w.id));
+        }
+        ids.push(id.to_string());
+        for one in &ids {
+            self.delete_one(one)?;
+        }
+        Ok(ids)
+    }
+
+    fn delete_one(&mut self, id: &str) -> Result<(), ProtoError> {
+        let mut freed = None;
+        if let Some(turn) = self.turns.remove(id) {
+            if let Some(ct) = turn.codex_turn {
+                self.interrupt_codex(id, &ct);
+            }
+            freed = turn.parent;
+        }
         self.approvals.retain(|_, a| a.thread != id);
         if let Some(mut run) = self.claude.remove(id) {
             run.session.stop();
@@ -733,9 +881,20 @@ impl State {
         if let Some(c) = self.codex.as_mut() {
             c.loaded.remove(id);
         }
+        self.worker_queue.retain(|(o, w, _)| o != id && w != id);
+        self.worker_ends.remove(id);
+        let (gone, keep): (Vec<Wait>, Vec<Wait>) = std::mem::take(&mut self.waits).into_iter().partition(|w| w.orchestrator == id);
+        self.waits = keep;
+        for w in gone {
+            let _ = w.reply.send(Err("This chat was deleted.".into()));
+        }
         self.store.delete_thread(id).map_err(store_err)?;
         self.emit(Event::ThreadDeleted { thread_id: id.to_string() });
-        Ok(json!({}))
+        // A running worker's slot goes to the next one waiting.
+        if let Some(parent) = freed {
+            self.pump_workers(&parent);
+        }
+        Ok(())
     }
 
     // ---------- Items ----------
@@ -776,6 +935,18 @@ impl State {
     // ---------- Turns ----------
 
     fn turn_send(&mut self, p: TurnSendParams, to: &ReplyTo) -> Result<(), ProtoError> {
+        if self.worker_queue.iter().any(|(_, w, _)| *w == p.thread_id) {
+            return Err(ProtoError::new(ErrorCode::Busy, "This helper is waiting to start. Stop it or wait for it to finish."));
+        }
+        let begun = self.begin_turn(p)?;
+        self.reply(to, Ok(json!({ "turnId": begun.turn_id, "userItem": begun.user })));
+        self.launch(begun);
+        Ok(())
+    }
+
+    /// Check and save a new turn (its user item, the thread's new state);
+    /// [`State::launch`] starts it.
+    fn begin_turn(&mut self, p: TurnSendParams) -> Result<Begun, ProtoError> {
         let mut t = self.thread(&p.thread_id)?;
         if self.turns.contains_key(&t.id) || matches!(t.status, ThreadStatus::Running | ThreadStatus::Waiting) {
             return Err(ProtoError::new(ErrorCode::Busy, "This chat is still working. Stop it or wait for it to finish."));
@@ -844,12 +1015,15 @@ impl State {
                 stop_at: None,
                 resumed: session.is_some(),
                 codex_turn: None,
+                parent: t.parent_id.clone(),
             },
         );
-        self.reply(to, Ok(json!({ "turnId": turn_id, "userItem": user })));
-        self.emit(Event::TurnStarted { thread_id: t.id.clone(), turn_id });
-        self.start_agent(&t.id, &prompt, session);
-        Ok(())
+        Ok(Begun { thread: t.id, turn_id, user, prompt, session })
+    }
+
+    fn launch(&mut self, b: Begun) {
+        self.emit(Event::TurnStarted { thread_id: b.thread.clone(), turn_id: b.turn_id });
+        self.start_agent(&b.thread, &b.prompt, b.session);
     }
 
     fn mcp_url(&self) -> Option<String> {
@@ -860,23 +1034,46 @@ impl State {
         }
     }
 
+    /// Where a thread's agent works: its own folder, else the engine's.
+    fn work_dir(&self, thread: &str) -> Result<PathBuf, String> {
+        match self.store.thread(thread).ok().flatten().and_then(|t| t.cwd) {
+            Some(c) if Path::new(&c).is_dir() => Ok(PathBuf::from(c)),
+            Some(_) => Err("This chat's folder isn't on this Mac any more.".into()),
+            None => Ok(self.cfg.work_dir.clone()),
+        }
+    }
+
+    /// The `billable` server's URL, for orchestrator threads only.
+    fn orchestrate_url(&self, thread: &str) -> Option<String> {
+        let t = self.store.thread(thread).ok().flatten()?;
+        if t.role != Some(ThreadRole::Orchestrator) {
+            return None;
+        }
+        self.relay.as_ref().map(|r| r.orchestrate_url(thread))
+    }
+
     fn start_agent(&mut self, thread: &str, prompt: &str, session: Option<String>) {
         let Some(turn) = self.turns.get(thread) else { return };
         let (agent, model, effort) = (turn.agent.clone(), turn.model.clone(), turn.effort.clone());
+        let cwd = match self.work_dir(thread) {
+            Ok(c) => c,
+            Err(e) => return self.finish_turn(thread, TurnStatus::Failed, Some(e), None),
+        };
         if agent == claude::AGENT_ID {
-            self.start_claude(thread, prompt, model, effort, session);
+            self.start_claude(thread, prompt, model, effort, session, &cwd);
         } else {
             self.start_codex(thread, prompt);
         }
     }
 
-    fn start_claude(&mut self, thread: &str, prompt: &str, model: String, effort: Option<String>, session: Option<String>) {
+    fn start_claude(&mut self, thread: &str, prompt: &str, model: String, effort: Option<String>, session: Option<String>, cwd: &Path) {
         let Some(bin) = self.bins.claude.clone() else {
             return self.finish_turn(thread, TurnStatus::Failed, Some("Claude Code isn't installed on this Mac.".into()), None);
         };
-        let launch = claude::Launch { model, effort, resume: session, mcp_url: self.mcp_url() };
+        let launch = claude::Launch { model, effort, resume: session, mcp_url: self.mcp_url(), orchestrate_url: self.orchestrate_url(thread) };
         let reuse = self.claude.get_mut(thread).is_some_and(|r| {
-            let same = r.session.launch.model == launch.model && r.session.launch.effort == launch.effort && r.session.launch.mcp_url == launch.mcp_url;
+            let l = &r.session.launch;
+            let same = l.model == launch.model && l.effort == launch.effort && l.mcp_url == launch.mcp_url && l.orchestrate_url == launch.orchestrate_url;
             same && r.session.alive()
         });
         if !reuse {
@@ -889,7 +1086,7 @@ impl State {
             let sink: claude::Sink = Arc::new(move |ev| {
                 let _ = tx.send(Cmd::Claude { thread: id.clone(), gen, ev });
             });
-            match claude::Session::start(&bin, &self.cfg.work_dir, launch, sink) {
+            match claude::Session::start(&bin, cwd, launch, sink) {
                 Ok(session) => {
                     self.claude.insert(thread.to_string(), ClaudeRun { session, gen, idle_since: None });
                 }
@@ -946,20 +1143,25 @@ impl State {
         let loaded = c.loaded.get(thread).cloned();
         let resume = if loaded.is_none() { self.store.session(thread, codex::AGENT_ID).ok().flatten() } else { None };
         let (model, effort, turn_id) = (turn.model.clone(), turn.effort.clone(), turn.id.clone());
-        let (tx, cwd, mcp, id, prompt) = (self.tx.clone(), self.cfg.work_dir.clone(), self.mcp_url(), thread.to_string(), prompt.to_string());
+        let cwd = match self.work_dir(thread) {
+            Ok(c) => c,
+            Err(e) => return self.finish_turn(thread, TurnStatus::Failed, Some(e), None),
+        };
+        let orchestrate = self.orchestrate_url(thread);
+        let (tx, mcp, id, prompt) = (self.tx.clone(), self.mcp_url(), thread.to_string(), prompt.to_string());
         std::thread::spawn(move || {
             let result = (|| {
                 let codex_thread = match loaded {
                     Some(ct) => ct,
                     None => {
                         let started = match &resume {
-                            Some(ct) => peer.request("thread/resume", codex::thread_params(&model, &cwd, mcp.as_deref(), Some(ct)), codex::REQUEST_TIMEOUT),
+                            Some(ct) => peer.request("thread/resume", codex::thread_params(&model, &cwd, mcp.as_deref(), orchestrate.as_deref(), Some(ct)), codex::REQUEST_TIMEOUT),
                             None => Err(String::new()),
                         };
                         let started = match started {
                             Ok(v) => v,
                             // Not resumable (or nothing to resume): a new thread
-                            Err(_) => peer.request("thread/start", codex::thread_params(&model, &cwd, mcp.as_deref(), None), codex::REQUEST_TIMEOUT)?,
+                            Err(_) => peer.request("thread/start", codex::thread_params(&model, &cwd, mcp.as_deref(), orchestrate.as_deref(), None), codex::REQUEST_TIMEOUT)?,
                         };
                         let ct = started.pointer("/thread/id").and_then(Value::as_str).ok_or("Codex didn't start a thread.")?.to_string();
                         let _ = tx.send(Cmd::CodexBound { thread: id.clone(), gen, codex_thread: ct.clone() });
@@ -1143,7 +1345,15 @@ impl State {
                 }
                 let status = item.tool.as_ref().map(|t| t.status).unwrap_or(ToolStatus::Running);
                 let output = item.tool.as_ref().and_then(|t| t.output.clone());
-                item.tool = Some(ToolInfo { feedhq: tools::is_feedhq(&name), name, title, detail, status, output });
+                let mut threads = item.tool.as_ref().map(|t| t.threads.clone()).unwrap_or_default();
+                if name.starts_with(orchestrator::TOOL_PREFIX) {
+                    for id in orchestrator::threads_of(&input, None) {
+                        if !threads.contains(&id) {
+                            threads.push(id);
+                        }
+                    }
+                }
+                item.tool = Some(ToolInfo { feedhq: tools::is_feedhq(&name), name, title, detail, status, output, threads });
                 self.update_item(&item);
             }
             DriverEvent::ToolFinished { key, output, failed, declined } => {
@@ -1158,6 +1368,13 @@ impl State {
                     } else {
                         ToolStatus::Done
                     };
+                    if tool.name.starts_with(orchestrator::TOOL_PREFIX) {
+                        for id in orchestrator::threads_of(&json!({}), output.as_deref()) {
+                            if !tool.threads.contains(&id) {
+                                tool.threads.push(id);
+                            }
+                        }
+                    }
                     tool.output = output.map(|o| cut(&o, 4000));
                 }
                 self.update_item(&item);
@@ -1265,7 +1482,12 @@ impl State {
     // ---------- Stop and finish ----------
 
     fn turn_stop(&mut self, thread: &str) -> Result<Value, ProtoError> {
-        self.thread(thread)?;
+        let t = self.thread(thread)?;
+        if t.role == Some(ThreadRole::Orchestrator) {
+            // Its workers stop with it, and its waits are answered now.
+            self.stop_workers(thread, None);
+            self.answer_waits_of(thread);
+        }
         let Some(turn) = self.turns.get_mut(thread) else { return Ok(json!({})) };
         if turn.stop_at.is_some() {
             return Ok(json!({}));
@@ -1342,6 +1564,295 @@ impl State {
         t.updated_at = now_iso();
         self.save_thread(&t);
         self.emit(Event::TurnFinished { thread_id: thread.to_string(), turn_id: turn.id.clone(), status, error, usage: usage.or(turn.usage) });
+        match &turn.parent {
+            // A worker's slot is free for the next one waiting.
+            Some(parent) => {
+                self.worker_ends.insert(thread.to_string(), status);
+                self.pump_workers(parent);
+            }
+            // An orchestrator whose turn ended can't hear answers any more.
+            None if t.role == Some(ThreadRole::Orchestrator) => self.answer_waits_of(thread),
+            None => {}
+        }
+        self.check_waits();
+    }
+
+    // ---------- Orchestrator (PROTOCOL.md) ----------
+
+    /// A call from an orchestrator's session. Everything but wait_for_agents
+    /// is answered at once; a wait is answered when its workers are done.
+    fn orchestrate(&mut self, thread: &str, call: Call, reply: Sender<Result<Value, String>>) {
+        let o = match self.store.thread(thread) {
+            Ok(Some(t)) if t.role == Some(ThreadRole::Orchestrator) => t,
+            _ => {
+                let _ = reply.send(Err("This chat isn't an orchestrator.".into()));
+                return;
+            }
+        };
+        let (name, args) = match call {
+            Call::Describe => {
+                let _ = reply.send(Ok(Value::String(self.describe_agents())));
+                return;
+            }
+            Call::Tool { name, args } => (name, args),
+        };
+        let result = match name.as_str() {
+            "start_agents" => self.start_agents(&o, &args),
+            "wait_for_agents" => match self.begin_wait(&o, &args) {
+                Ok(wait) => {
+                    self.waits.push(Wait { orchestrator: o.id.clone(), ids: wait.0, until: wait.1, reply });
+                    self.check_waits();
+                    return;
+                }
+                Err(e) => Err(e),
+            },
+            "message_agent" => self.message_agent(&o, &args),
+            "list_agents" => self.store.workers(&o.id).map_err(|e| format!("{e:#}")).map(|ws| {
+                Value::Array(ws.iter().map(|w| json!({"id": w.id, "title": w.title, "agent": w.agent, "model": w.model, "effort": w.effort, "status": self.worker_status(w)})).collect())
+            }),
+            "stop_agents" => self.worker_ids(&o.id, args.get("ids")).map(|ids| {
+                self.stop_workers(&o.id, Some(&ids));
+                self.check_waits();
+                json!({ "ok": true })
+            }),
+            other => Err(format!("Billable has no tool called {other}.")),
+        };
+        let _ = reply.send(result);
+    }
+
+    /// The agents and models a worker can use, for start_agents' description.
+    fn describe_agents(&self) -> String {
+        let mut out = String::from("Agents and models on this Mac:");
+        for a in self.agents.iter().filter(|a| a.installed && a.signed_in) {
+            let models: Vec<String> = a
+                .models
+                .iter()
+                .map(|m| if m.efforts.is_empty() { format!("{} ({})", m.id, m.name) } else { format!("{} ({}; effort {})", m.id, m.name, m.efforts.join(", ")) })
+                .collect();
+            out.push_str(&format!("\n- {} ({}), default model {}: {}", a.id, a.name, a.default_model, models.join("; ")));
+        }
+        out
+    }
+
+    /// The orchestrator is in a turn the person sent: workers start only then.
+    fn person_asked(&self, o: &Thread) -> Result<(), String> {
+        if self.turns.get(&o.id).is_some_and(|t| t.stop_at.is_none()) {
+            Ok(())
+        } else {
+            Err("Helpers start only while you're answering the person's message.".into())
+        }
+    }
+
+    fn start_agents(&mut self, o: &Thread, args: &Value) -> Result<Value, String> {
+        self.person_asked(o)?;
+        let specs = args.get("agents").and_then(Value::as_array).cloned().unwrap_or_default();
+        if specs.is_empty() || specs.len() > orchestrator::MAX_PER_CALL {
+            return Err(format!("Start 1 to {} helpers at a time.", orchestrator::MAX_PER_CALL));
+        }
+        let existing = self.store.workers(&o.id).map_err(|e| format!("{e:#}"))?.len();
+        if existing + specs.len() > orchestrator::MAX_WORKERS {
+            return Err(format!("A chat can have at most {} helpers; this one has {existing}.", orchestrator::MAX_WORKERS));
+        }
+        // Check every helper before starting any.
+        let mut plans = Vec::new();
+        for (n, spec) in specs.iter().enumerate() {
+            let text = |k: &str| spec.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
+            let task = text("task").ok_or_else(|| format!("Helper {} has no task.", n + 1))?;
+            let title = one_line(&text("title").unwrap_or_else(|| title_from(&task)), 120);
+            let agent = text("agent").unwrap_or_else(|| o.agent.clone());
+            self.check_agent(&agent).map_err(|e| e.message)?;
+            let a = self.agent(&agent).cloned().ok_or("That agent isn't on this Mac.")?;
+            let model = match text("model") {
+                Some(m) if !a.models.is_empty() && !a.models.iter().any(|x| x.id == m) => {
+                    let known: Vec<&str> = a.models.iter().map(|x| x.id.as_str()).collect();
+                    return Err(format!("{m} isn't one of {}'s models here. Choose one of: {}.", a.name, known.join(", ")));
+                }
+                Some(m) => m,
+                None => a.default_model.clone(),
+            };
+            // Left out (or not one the model takes): the model's default.
+            let effort = self.effort_for(&agent, &model, text("effort"));
+            plans.push((title, task, agent, model, effort));
+        }
+        let mut out = Vec::new();
+        for (title, task, agent, model, effort) in plans {
+            let now = now_iso();
+            let w = Thread {
+                id: new_id("t"),
+                engine: "mac".into(),
+                title,
+                agent,
+                model,
+                effort,
+                status: ThreadStatus::Idle,
+                pinned: false,
+                settled_at: None,
+                archived_at: None,
+                created_at: now.clone(),
+                updated_at: now,
+                preview: orchestrator::WAITING_PREVIEW.into(),
+                cwd: o.cwd.clone(),
+                role: Some(ThreadRole::Worker),
+                parent_id: Some(o.id.clone()),
+            };
+            self.store.insert_thread(&w).map_err(|e| format!("{e:#}"))?;
+            self.emit(Event::ThreadUpdated { thread: w.clone() });
+            out.push(json!({"id": w.id, "title": w.title, "agent": w.agent, "model": w.model, "effort": w.effort}));
+            self.worker_queue.push_back((o.id.clone(), w.id, task));
+        }
+        self.pump_workers(&o.id);
+        Ok(Value::Array(out))
+    }
+
+    /// The orchestrator's workers named in `ids` (all of them when absent).
+    fn worker_ids(&self, orchestrator: &str, ids: Option<&Value>) -> Result<Vec<String>, String> {
+        let all: Vec<String> = self.store.workers(orchestrator).map_err(|e| format!("{e:#}"))?.into_iter().map(|w| w.id).collect();
+        let Some(asked) = ids.and_then(Value::as_array) else { return Ok(all) };
+        let mut out = Vec::new();
+        for id in asked {
+            let id = id.as_str().unwrap_or("");
+            if !all.iter().any(|a| a == id) {
+                return Err(format!("This chat has no helper {id}."));
+            }
+            if !out.iter().any(|o: &String| o == id) {
+                out.push(id.to_string());
+            }
+        }
+        Ok(out)
+    }
+
+    fn begin_wait(&self, o: &Thread, args: &Value) -> Result<(Vec<String>, Instant), String> {
+        let ids = self.worker_ids(&o.id, args.get("ids"))?;
+        let secs = args.get("timeoutSeconds").and_then(Value::as_f64).map(|s| s.clamp(1.0, orchestrator::MAX_WAIT_SECS as f64)).unwrap_or(orchestrator::DEFAULT_WAIT_SECS as f64);
+        Ok((ids, Instant::now() + Duration::from_secs_f64(secs)))
+    }
+
+    fn message_agent(&mut self, o: &Thread, args: &Value) -> Result<Value, String> {
+        self.person_asked(o)?;
+        let id = args.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+        let text = args.get("text").and_then(Value::as_str).map(str::trim).unwrap_or("").to_string();
+        self.worker_ids(&o.id, Some(&json!([id])))?;
+        if text.is_empty() {
+            return Err("Write a message first.".into());
+        }
+        if self.worker_busy(&id) {
+            return Err("busy: That helper is still working. Wait for it first.".into());
+        }
+        self.worker_queue.push_back((o.id.clone(), id.clone(), text));
+        if self.running_workers(&o.id) >= orchestrator::MAX_RUNNING {
+            if let Ok(Some(mut w)) = self.store.thread(&id) {
+                w.preview = orchestrator::WAITING_PREVIEW.into();
+                self.save_thread(&w);
+            }
+        }
+        self.pump_workers(&o.id);
+        match self.worker_ends.get(&id) {
+            Some(TurnStatus::Failed) if !self.worker_busy(&id) => Err("That helper couldn't start.".into()),
+            _ => Ok(json!({ "ok": true })),
+        }
+    }
+
+    fn running_workers(&self, orchestrator: &str) -> usize {
+        self.turns.values().filter(|t| t.parent.as_deref() == Some(orchestrator)).count()
+    }
+
+    fn worker_busy(&self, id: &str) -> bool {
+        self.turns.contains_key(id) || self.worker_queue.iter().any(|(_, w, _)| w == id)
+    }
+
+    /// Start waiting workers while the orchestrator has free slots.
+    fn pump_workers(&mut self, orchestrator: &str) {
+        while self.running_workers(orchestrator) < orchestrator::MAX_RUNNING {
+            let Some(pos) = self.worker_queue.iter().position(|(o, _, _)| o == orchestrator) else { return };
+            let Some((_, worker, text)) = self.worker_queue.remove(pos) else { return };
+            self.worker_ends.remove(&worker);
+            match self.begin_turn(TurnSendParams { thread_id: worker.clone(), text, agent: None, model: None, effort: None }) {
+                Ok(begun) => self.launch(begun),
+                Err(e) => self.worker_failed(&worker, &e.message),
+            }
+        }
+    }
+
+    fn worker_failed(&mut self, worker: &str, message: &str) {
+        self.worker_ends.insert(worker.to_string(), TurnStatus::Failed);
+        self.add_item(worker, None, ItemKind::Error, Some(message.to_string()), |_| {});
+        if let Ok(Some(mut w)) = self.store.thread(worker) {
+            w.status = ThreadStatus::Failed;
+            w.preview = one_line(message, 140);
+            w.updated_at = now_iso();
+            self.save_thread(&w);
+        }
+    }
+
+    /// Stop an orchestrator's workers (`None`: all): running ones get Stop,
+    /// waiting ones never start.
+    fn stop_workers(&mut self, orchestrator: &str, ids: Option<&[String]>) {
+        let named = |w: &str| ids.is_none_or(|ids| ids.iter().any(|i| i == w));
+        let queued: Vec<String> = self.worker_queue.iter().filter(|(o, w, _)| o == orchestrator && named(w)).map(|(_, w, _)| w.clone()).collect();
+        self.worker_queue.retain(|(o, w, _)| !(o == orchestrator && named(w)));
+        for w in queued {
+            self.worker_ends.insert(w.clone(), TurnStatus::Stopped);
+            if let Ok(Some(mut t)) = self.store.thread(&w) {
+                if t.preview == orchestrator::WAITING_PREVIEW {
+                    t.preview = "Stopped before it started".into();
+                }
+                t.updated_at = now_iso();
+                self.save_thread(&t);
+            }
+        }
+        let running: Vec<String> = self.turns.iter().filter(|(id, t)| t.parent.as_deref() == Some(orchestrator) && named(id)).map(|(id, _)| id.clone()).collect();
+        for w in running {
+            let _ = self.turn_stop(&w);
+        }
+    }
+
+    /// "queued", "running", "waiting" (an approval is open), "done",
+    /// "stopped", "failed" or "not_started".
+    fn worker_status(&self, w: &Thread) -> &'static str {
+        if self.worker_queue.iter().any(|(_, id, _)| *id == w.id) {
+            return "queued";
+        }
+        if self.turns.contains_key(&w.id) {
+            return if self.approvals.values().any(|a| a.thread == w.id) { "waiting" } else { "running" };
+        }
+        match self.worker_ends.get(&w.id) {
+            Some(TurnStatus::Done) => "done",
+            Some(TurnStatus::Stopped) => "stopped",
+            Some(TurnStatus::Failed) => "failed",
+            None if w.status == ThreadStatus::Failed => "failed",
+            None if self.store.item_count(&w.id).unwrap_or(0) == 0 => "not_started",
+            None => "done",
+        }
+    }
+
+    fn wait_result(&self, ids: &[String]) -> Value {
+        let rows = ids.iter().map(|id| match self.store.thread(id).ok().flatten() {
+            Some(w) => {
+                let answer = self.store.items(id).ok().and_then(|items| items.into_iter().rev().find(|i| i.kind == ItemKind::Assistant).and_then(|i| i.text)).filter(|t| !t.trim().is_empty());
+                json!({"id": id, "title": w.title, "status": self.worker_status(&w), "answer": answer.map(|a| cut(&a, orchestrator::ANSWER_CHARS))})
+            }
+            None => json!({"id": id, "title": "", "status": "deleted", "answer": null}),
+        });
+        Value::Array(rows.collect())
+    }
+
+    /// Answer the waits whose workers are all done, or whose time is up.
+    fn check_waits(&mut self) {
+        let now = Instant::now();
+        let (ready, keep): (Vec<Wait>, Vec<Wait>) = std::mem::take(&mut self.waits).into_iter().partition(|w| now >= w.until || w.ids.iter().all(|id| !self.worker_busy(id)));
+        self.waits = keep;
+        for w in ready {
+            let _ = w.reply.send(Ok(self.wait_result(&w.ids)));
+        }
+    }
+
+    /// Answer an orchestrator's waits now, with where its workers are.
+    fn answer_waits_of(&mut self, orchestrator: &str) {
+        let (mine, keep): (Vec<Wait>, Vec<Wait>) = std::mem::take(&mut self.waits).into_iter().partition(|w| w.orchestrator == orchestrator);
+        self.waits = keep;
+        for w in mine {
+            let _ = w.reply.send(Ok(self.wait_result(&w.ids)));
+        }
     }
 
     // ---------- FeedHQ ----------
