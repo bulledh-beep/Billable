@@ -64,6 +64,9 @@ jobs:
             vtool -arch "$A" -show-build "$BIN" | grep -q 'minos 12.0'
           done
           codesign --verify --deep --strict --verbose=2 release/Billable.app
+          # Without these, WebKit refuses FeedHQ's dictation before macOS can ask.
+          plutil -extract NSMicrophoneUsageDescription raw release/Billable.app/Contents/Info.plist
+          plutil -extract NSSpeechRecognitionUsageDescription raw release/Billable.app/Contents/Info.plist
 
       - name: Launch the Apple Silicon slice
         run: scripts/smoke-test.sh release/Billable.app arm64
