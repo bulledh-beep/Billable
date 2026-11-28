@@ -3,19 +3,21 @@
 # release/Billable-<version>-universal.dmg. The app is universal, with one
 # binary that runs natively on both Apple Silicon (arm64) and Intel (x86_64).
 # Usage: scripts/bundle.sh [--no-dmg]
+# BILLABLE_SLICES=<dir> uses slices already built at <dir>/<target>/billable.
 # It never opens the app (the release build uses the real data folder).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)
-# Match LSMinimumSystemVersion below, for both slices and the C code they build.
-export MACOSX_DEPLOYMENT_TARGET=12.0
 TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
-rustup target add "${TARGETS[@]}" >/dev/null 2>&1 || true
 SLICES=()
 for T in "${TARGETS[@]}"; do
-  cargo build --release -p billable --target "$T"
-  SLICES+=("target/$T/release/billable")
+  if [[ -n "${BILLABLE_SLICES:-}" ]]; then
+    # CI builds each slice on its own Mac at the same time, then hands them here.
+    SLICES+=("$BILLABLE_SLICES/$T/billable")
+  else
+    SLICES+=("$(scripts/build-slice.sh "$T" "${BILLABLE_PROFILE:-release}")")
+  fi
 done
 
 OUT=release
@@ -23,6 +25,7 @@ APP="$OUT/Billable.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 lipo -create "${SLICES[@]}" -output "$APP/Contents/MacOS/billable"
+chmod +x "$APP/Contents/MacOS/billable"
 lipo "$APP/Contents/MacOS/billable" -verify_arch arm64 x86_64
 cp ../resources/icon.icns "$APP/Contents/Resources/icon.icns"
 cat > "$APP/Contents/Info.plist" <<PLIST
