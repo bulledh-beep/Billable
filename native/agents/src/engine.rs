@@ -32,7 +32,7 @@ use crate::{
     driver::DriverEvent,
     handoff,
     oauth::{self, FeedhqAuth},
-    orchestrator::{self, Call},
+    orchestrator::{self, Call, Seat},
     protocol::*,
     relay::{Orchestrate, Relay},
     remote::RemoteEngine,
@@ -58,7 +58,7 @@ pub type FolderAnswer = Box<dyn FnOnce(Option<PathBuf>) + Send>;
 pub type FolderPicker = Arc<dyn Fn(FolderAnswer) + Send + Sync>;
 
 /// The `features` this engine adds to protocol v1.
-pub const FEATURES: &[&str] = &["folders", "orchestrator", "bulk-delete"];
+pub const FEATURES: &[&str] = &["folders", "orchestrator", "bulk-delete", "coordinator", "decisions", "memory", "lookups", "review"];
 /// At most this many chats per threads.delete.
 const MAX_BULK_DELETE: usize = 200;
 
@@ -124,7 +124,7 @@ enum Cmd {
     CodexModels { models: Vec<Model>, default: String },
     FeedhqChanged,
     SignInFailed(String),
-    /// An orchestrator's call through the relay's `billable` server.
+    /// A chat's call through the relay's `billable` server.
     Orchestrate { thread: String, call: Call, reply: Sender<Result<Value, String>> },
     FolderPicked { to: ReplyTo, path: Option<PathBuf> },
     Shutdown(Sender<()>),
@@ -243,6 +243,17 @@ struct Turn {
     codex_turn: Option<String>,
     /// A worker's orchestrator.
     parent: Option<String>,
+    /// A lookup: read-only, its own slots, never asks the person.
+    lookup: bool,
+}
+
+/// An ask_person or propose_plan call, answered when the person picks on
+/// its card, or at `until` (the card stays open).
+struct Ask {
+    thread: String,
+    item: String,
+    until: Instant,
+    reply: Sender<Result<Value, String>>,
 }
 
 /// A wait_for_agents call, answered when its workers are done or at `until`.
@@ -311,6 +322,7 @@ struct State {
     /// How each worker's latest turn ended (this run).
     worker_ends: HashMap<String, TurnStatus>,
     waits: Vec<Wait>,
+    asks: Vec<Ask>,
 }
 
 fn device_name() -> Option<String> {
@@ -358,6 +370,34 @@ pub fn looks_signed_out(error: &str) -> bool {
     ["/login", "not logged in", "please log in", "please login", "codex login", "unauthorized", "authentication_error", "oauth token has expired"].iter().any(|m| e.contains(m))
 }
 
+/// A chat's seat; `None` for a lookup, which gets no Billable tools.
+fn seat_of(t: &Thread) -> Option<Seat> {
+    match (t.role, t.worker_kind) {
+        (Some(ThreadRole::Orchestrator), _) => Some(Seat::Coordinator),
+        (Some(ThreadRole::Worker), Some(WorkerKind::Lookup)) => None,
+        (Some(ThreadRole::Worker), _) => Some(Seat::Job),
+        (None, _) => Some(Seat::Chat),
+    }
+}
+
+fn kind_of(t: &Thread) -> &'static str {
+    t.worker_kind.unwrap_or(WorkerKind::Job).as_str()
+}
+
+/// How many of a kind run at once per coordinator.
+fn slots(lookup: bool) -> usize {
+    if lookup {
+        orchestrator::MAX_LOOKUPS_RUNNING
+    } else {
+        orchestrator::MAX_RUNNING
+    }
+}
+
+/// A FeedHQ project id as the screen sends it (a uuid, or any short id).
+fn clean_project(id: Option<&str>) -> Option<String> {
+    id.map(str::trim).filter(|p| !p.is_empty() && p.len() <= 80 && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')).map(str::to_string)
+}
+
 fn params<T: serde::de::DeserializeOwned>(v: &Value) -> Result<T, ProtoError> {
     serde_json::from_value(if v.is_null() { json!({}) } else { v.clone() }).map_err(|e| ProtoError::bad_request(format!("Those details aren't right ({e}).")))
 }
@@ -403,6 +443,7 @@ impl State {
             worker_queue: VecDeque::new(),
             worker_ends: HashMap::new(),
             waits: Vec::new(),
+            asks: Vec::new(),
         }
     }
 
@@ -446,6 +487,16 @@ impl State {
                 }
             }
         }
+        // A card still waiting for the person keeps its chat at Needs you.
+        if let Ok(open) = self.store.open_decisions(None) {
+            let mut seen: Vec<String> = Vec::new();
+            for item in open {
+                if !seen.contains(&item.thread_id) {
+                    seen.push(item.thread_id.clone());
+                    self.set_status(&item.thread_id);
+                }
+            }
+        }
         if self.device.is_none() {
             self.device = device_name();
         }
@@ -465,6 +516,9 @@ impl State {
         }
         for w in self.waits.drain(..) {
             let _ = w.reply.send(Err("Billable is closing.".into()));
+        }
+        for a in self.asks.drain(..) {
+            let _ = a.reply.send(Err("Billable is closing.".into()));
         }
         if let Some(mut c) = self.codex.take() {
             c.server.stop();
@@ -563,6 +617,13 @@ impl State {
         if !self.waits.is_empty() {
             self.check_waits();
         }
+        if !self.asks.is_empty() {
+            let (late, keep): (Vec<Ask>, Vec<Ask>) = std::mem::take(&mut self.asks).into_iter().partition(|a| now >= a.until);
+            self.asks = keep;
+            for a in late {
+                let _ = a.reply.send(Ok(json!({"answered": false, "note": "No answer yet. The card stays open: finish what you can without it, say what you're waiting on, and end your turn. Their answer will arrive as a new message."})));
+            }
+        }
     }
 
     fn request(&mut self, src: Source, json: &str) {
@@ -597,6 +658,9 @@ impl State {
             },
             "turn.stop" => params::<ThreadIdParams>(p).and_then(|p| self.turn_stop(&p.thread_id)),
             "approval.answer" => params::<ApprovalAnswerParams>(p).and_then(|p| self.approval_answer(p)),
+            "decision.answer" => params::<DecisionAnswerParams>(p).and_then(|p| self.decision_answer(p)),
+            "memory.get" => params::<MemoryGetParams>(p).and_then(|p| self.memory_get(&p.project_id)),
+            "memory.set" => params::<MemorySetParams>(p).and_then(|p| self.memory_set(&p.project_id, &p.text)),
             "agents.refresh" => {
                 self.refresh_agents(Some(to));
                 return;
@@ -803,6 +867,9 @@ impl State {
             cwd,
             role,
             parent_id: None,
+            project_id: clean_project(p.project_id.as_deref()),
+            worker_kind: None,
+            review_at: None,
         };
         self.store.insert_thread(&t).map_err(store_err)?;
         self.emit(Event::ThreadUpdated { thread: t.clone() });
@@ -820,6 +887,18 @@ impl State {
         }
         if let Some(settled) = p.settled {
             t.settled_at = if settled { t.settled_at.or(Some(now.clone())) } else { None };
+            // Marking a job done is approving its review.
+            if settled {
+                t.review_at = None;
+            }
+        }
+        if let Some(project) = p.project_id {
+            t.project_id = clean_project(project.as_deref());
+            // Its jobs follow it.
+            for mut w in self.store.workers(&t.id).map_err(store_err)? {
+                w.project_id = t.project_id.clone();
+                self.save_thread(&w);
+            }
         }
         if let Some(archived) = p.archived {
             t.archived_at = if archived { t.archived_at.or(Some(now)) } else { None };
@@ -888,6 +967,11 @@ impl State {
         for w in gone {
             let _ = w.reply.send(Err("This chat was deleted.".into()));
         }
+        let (gone, keep): (Vec<Ask>, Vec<Ask>) = std::mem::take(&mut self.asks).into_iter().partition(|a| a.thread == id);
+        self.asks = keep;
+        for a in gone {
+            let _ = a.reply.send(Err("This chat was deleted.".into()));
+        }
         self.store.delete_thread(id).map_err(store_err)?;
         self.emit(Event::ThreadDeleted { thread_id: id.to_string() });
         // A running worker's slot goes to the next one waiting.
@@ -912,6 +996,7 @@ impl State {
             model: None,
             tool: None,
             divider: None,
+            decision: None,
         };
         fill(&mut item);
         if let Err(e) = self.store.insert_item(&item) {
@@ -948,7 +1033,8 @@ impl State {
     /// [`State::launch`] starts it.
     fn begin_turn(&mut self, p: TurnSendParams) -> Result<Begun, ProtoError> {
         let mut t = self.thread(&p.thread_id)?;
-        if self.turns.contains_key(&t.id) || matches!(t.status, ThreadStatus::Running | ThreadStatus::Waiting) {
+        // An open decision card alone doesn't block a message.
+        if self.turns.contains_key(&t.id) || t.status == ThreadStatus::Running {
             return Err(ProtoError::new(ErrorCode::Busy, "This chat is still working. Stop it or wait for it to finish."));
         }
         let text = p.text.trim().to_string();
@@ -988,6 +1074,8 @@ impl State {
         t.agent = agent.clone();
         t.model = model.clone();
         t.effort = effort.clone();
+        // A new message reopens a job that was waiting for review.
+        t.review_at = None;
         t.status = ThreadStatus::Running;
         t.updated_at = now_iso();
         t.preview = one_line(&text, 140);
@@ -1016,6 +1104,7 @@ impl State {
                 resumed: session.is_some(),
                 codex_turn: None,
                 parent: t.parent_id.clone(),
+                lookup: t.worker_kind == Some(WorkerKind::Lookup),
             },
         );
         Ok(Begun { thread: t.id, turn_id, user, prompt, session })
@@ -1043,13 +1132,20 @@ impl State {
         }
     }
 
-    /// The `billable` server's URL, for orchestrator threads only.
+    /// The `billable` server's URL: every chat but a lookup.
     fn orchestrate_url(&self, thread: &str) -> Option<String> {
         let t = self.store.thread(thread).ok().flatten()?;
-        if t.role != Some(ThreadRole::Orchestrator) {
-            return None;
-        }
+        seat_of(&t)?;
         self.relay.as_ref().map(|r| r.orchestrate_url(thread))
+    }
+
+    /// What a chat's agent is told after the usual note, and whether it may
+    /// only read.
+    fn notes_for(&self, thread: &str) -> (String, bool) {
+        let Some(t) = self.store.thread(thread).ok().flatten() else { return (String::new(), false) };
+        let memory = t.project_id.as_deref().and_then(|p| self.store.memory(p).ok().flatten()).map(|(text, _)| text);
+        let seat = seat_of(&t);
+        (orchestrator::notes(seat, memory.as_deref()), seat.is_none())
     }
 
     fn start_agent(&mut self, thread: &str, prompt: &str, session: Option<String>) {
@@ -1070,10 +1166,12 @@ impl State {
         let Some(bin) = self.bins.claude.clone() else {
             return self.finish_turn(thread, TurnStatus::Failed, Some("Claude Code isn't installed on this Mac.".into()), None);
         };
-        let launch = claude::Launch { model, effort, resume: session, mcp_url: self.mcp_url(), orchestrate_url: self.orchestrate_url(thread) };
+        let (notes, read_only) = self.notes_for(thread);
+        let launch = claude::Launch { model, effort, resume: session, mcp_url: self.mcp_url(), orchestrate_url: self.orchestrate_url(thread), notes, read_only };
+        // A changed memory or seat starts a fresh process (the session resumes).
         let reuse = self.claude.get_mut(thread).is_some_and(|r| {
             let l = &r.session.launch;
-            let same = l.model == launch.model && l.effort == launch.effort && l.mcp_url == launch.mcp_url && l.orchestrate_url == launch.orchestrate_url;
+            let same = l.model == launch.model && l.effort == launch.effort && l.mcp_url == launch.mcp_url && l.orchestrate_url == launch.orchestrate_url && l.notes == launch.notes && l.read_only == launch.read_only;
             same && r.session.alive()
         });
         if !reuse {
@@ -1148,6 +1246,7 @@ impl State {
             Err(e) => return self.finish_turn(thread, TurnStatus::Failed, Some(e), None),
         };
         let orchestrate = self.orchestrate_url(thread);
+        let (notes, read_only) = self.notes_for(thread);
         let (tx, mcp, id, prompt) = (self.tx.clone(), self.mcp_url(), thread.to_string(), prompt.to_string());
         std::thread::spawn(move || {
             let result = (|| {
@@ -1155,13 +1254,13 @@ impl State {
                     Some(ct) => ct,
                     None => {
                         let started = match &resume {
-                            Some(ct) => peer.request("thread/resume", codex::thread_params(&model, &cwd, mcp.as_deref(), orchestrate.as_deref(), Some(ct)), codex::REQUEST_TIMEOUT),
+                            Some(ct) => peer.request("thread/resume", codex::thread_params(&model, &cwd, mcp.as_deref(), orchestrate.as_deref(), &notes, read_only, Some(ct)), codex::REQUEST_TIMEOUT),
                             None => Err(String::new()),
                         };
                         let started = match started {
                             Ok(v) => v,
                             // Not resumable (or nothing to resume): a new thread
-                            Err(_) => peer.request("thread/start", codex::thread_params(&model, &cwd, mcp.as_deref(), orchestrate.as_deref(), None), codex::REQUEST_TIMEOUT)?,
+                            Err(_) => peer.request("thread/start", codex::thread_params(&model, &cwd, mcp.as_deref(), orchestrate.as_deref(), &notes, read_only, None), codex::REQUEST_TIMEOUT)?,
                         };
                         let ct = started.pointer("/thread/id").and_then(Value::as_str).ok_or("Codex didn't start a thread.")?.to_string();
                         let _ = tx.send(Cmd::CodexBound { thread: id.clone(), gen, codex_thread: ct.clone() });
@@ -1413,6 +1512,15 @@ impl State {
     fn approval_requested(&mut self, thread: &str, native: String, tool_key: Option<String>, name: &str, input: &Value, options: Vec<Decision>) {
         let Some(turn) = self.turns.get(thread) else { return };
         let agent = turn.agent.clone();
+        // A lookup only reads: anything that would need the person is turned down.
+        if turn.lookup {
+            let item_id = tool_key.as_ref().and_then(|k| turn.keys.get(k)).cloned();
+            if let (Some(item), Some(t)) = (item_id.clone(), self.turns.get_mut(thread)) {
+                t.denied.push(item);
+            }
+            let a = OpenApproval { thread: thread.to_string(), native, agent, item_id };
+            return self.answer_agent(&a, Decision::Deny);
+        }
         let item_id = tool_key.as_ref().and_then(|k| turn.keys.get(k)).cloned();
         let (title, mut detail) = tools::approval(name, input);
         if detail.trim().is_empty() || detail.trim() == "{}" {
@@ -1429,15 +1537,23 @@ impl State {
         self.emit(Event::ApprovalRequested { approval });
     }
 
-    /// Running, or waiting while an approval is open.
+    fn needs_person(&self, thread: &str) -> bool {
+        self.approvals.values().any(|a| a.thread == thread) || self.store.open_decisions(Some(thread)).is_ok_and(|d| !d.is_empty())
+    }
+
+    /// Running; waiting while an approval or a decision card is open (a
+    /// card keeps a chat waiting after its turn, too); else as it was.
     fn set_status(&self, thread: &str) {
         let Ok(Some(mut t)) = self.store.thread(thread) else { return };
-        let status = if !self.turns.contains_key(thread) {
-            return;
-        } else if self.approvals.values().any(|a| a.thread == thread) {
+        let busy = self.turns.contains_key(thread);
+        let status = if self.needs_person(thread) {
             ThreadStatus::Waiting
-        } else {
+        } else if busy {
             ThreadStatus::Running
+        } else if t.status == ThreadStatus::Waiting {
+            ThreadStatus::Idle
+        } else {
+            return;
         };
         if t.status != status {
             t.status = status;
@@ -1487,6 +1603,12 @@ impl State {
             // Its workers stop with it, and its waits are answered now.
             self.stop_workers(thread, None);
             self.answer_waits_of(thread);
+        }
+        // A question it's waiting on lets go (its card stays open).
+        let (gone, keep): (Vec<Ask>, Vec<Ask>) = std::mem::take(&mut self.asks).into_iter().partition(|a| a.thread == thread);
+        self.asks = keep;
+        for a in gone {
+            let _ = a.reply.send(Err("The person stopped this turn.".into()));
         }
         let Some(turn) = self.turns.get_mut(thread) else { return Ok(json!({})) };
         if turn.stop_at.is_some() {
@@ -1560,9 +1682,22 @@ impl State {
             run.idle_since = Some(Instant::now());
         }
         let Ok(Some(mut t)) = self.store.thread(thread) else { return };
-        t.status = if status == TurnStatus::Failed { ThreadStatus::Failed } else { ThreadStatus::Idle };
+        let open_card = self.store.open_decisions(Some(thread)).is_ok_and(|d| !d.is_empty());
+        t.status = if status == TurnStatus::Failed {
+            ThreadStatus::Failed
+        } else if open_card {
+            ThreadStatus::Waiting
+        } else {
+            ThreadStatus::Idle
+        };
         t.updated_at = now_iso();
         self.save_thread(&t);
+        // A turn that ended can't hear an answer; the card stays open.
+        let (gone, keep): (Vec<Ask>, Vec<Ask>) = std::mem::take(&mut self.asks).into_iter().partition(|a| a.thread == thread);
+        self.asks = keep;
+        for a in gone {
+            let _ = a.reply.send(Err("The turn ended before the person answered.".into()));
+        }
         self.emit(Event::TurnFinished { thread_id: thread.to_string(), turn_id: turn.id.clone(), status, error, usage: usage.or(turn.usage) });
         match &turn.parent {
             // A worker's slot is free for the next one waiting.
@@ -1577,45 +1712,63 @@ impl State {
         self.check_waits();
     }
 
-    // ---------- Orchestrator (PROTOCOL.md) ----------
+    // ---------- Coordinator (PROTOCOL.md) ----------
 
-    /// A call from an orchestrator's session. Everything but wait_for_agents
-    /// is answered at once; a wait is answered when its workers are done.
+    /// A call from a chat's session through the `billable` server. Most are
+    /// answered at once; wait_for_agents, ask_person and propose_plan are
+    /// parked until their answer comes.
     fn orchestrate(&mut self, thread: &str, call: Call, reply: Sender<Result<Value, String>>) {
-        let o = match self.store.thread(thread) {
-            Ok(Some(t)) if t.role == Some(ThreadRole::Orchestrator) => t,
-            _ => {
-                let _ = reply.send(Err("This chat isn't an orchestrator.".into()));
-                return;
-            }
+        let Some((t, seat)) = self.store.thread(thread).ok().flatten().and_then(|t| seat_of(&t).map(|s| (t, s))) else {
+            let _ = reply.send(Err("This chat has no Billable tools.".into()));
+            return;
         };
         let (name, args) = match call {
-            Call::Describe => {
-                let _ = reply.send(Ok(Value::String(self.describe_agents())));
+            Call::List => {
+                let models = if seat == Seat::Coordinator { self.describe_agents() } else { String::new() };
+                let _ = reply.send(Ok(orchestrator::tools(seat, &models, t.project_id.is_some())));
                 return;
             }
             Call::Tool { name, args } => (name, args),
         };
+        let coordinator = |r: Result<Value, String>| if seat == Seat::Coordinator { r } else { Err(format!("Only a coordinator can use {name}.")) };
         let result = match name.as_str() {
-            "start_agents" => self.start_agents(&o, &args),
-            "wait_for_agents" => match self.begin_wait(&o, &args) {
+            "start_agents" => coordinator(Ok(Value::Null)).and_then(|_| {
+                self.person_asked(&t)?;
+                let jobs = self.plan_jobs(&t, args.get("agents"))?;
+                self.start_jobs(&t, jobs)
+            }),
+            "propose_plan" => match coordinator(Ok(Value::Null)).and_then(|_| self.propose_plan(&t, &args)) {
+                Ok(item) => return self.park_ask(thread, item, reply),
+                Err(e) => Err(e),
+            },
+            "wait_for_agents" => match coordinator(Ok(Value::Null)).and_then(|_| self.begin_wait(&t, &args)) {
                 Ok(wait) => {
-                    self.waits.push(Wait { orchestrator: o.id.clone(), ids: wait.0, until: wait.1, reply });
+                    self.waits.push(Wait { orchestrator: t.id.clone(), ids: wait.0, until: wait.1, reply });
                     self.check_waits();
                     return;
                 }
                 Err(e) => Err(e),
             },
-            "message_agent" => self.message_agent(&o, &args),
-            "list_agents" => self.store.workers(&o.id).map_err(|e| format!("{e:#}")).map(|ws| {
-                Value::Array(ws.iter().map(|w| json!({"id": w.id, "title": w.title, "agent": w.agent, "model": w.model, "effort": w.effort, "status": self.worker_status(w)})).collect())
+            "message_agent" => coordinator(Ok(Value::Null)).and_then(|_| self.message_agent(&t, &args)),
+            "list_agents" => coordinator(Ok(Value::Null)).and_then(|_| {
+                self.store.workers(&t.id).map_err(|e| format!("{e:#}")).map(|ws| {
+                    Value::Array(ws.iter().map(|w| json!({"id": w.id, "title": w.title, "kind": kind_of(w), "agent": w.agent, "model": w.model, "effort": w.effort, "status": self.worker_status(w)})).collect())
+                })
             }),
-            "stop_agents" => self.worker_ids(&o.id, args.get("ids")).map(|ids| {
-                self.stop_workers(&o.id, Some(&ids));
-                self.check_waits();
-                json!({ "ok": true })
+            "stop_agents" => coordinator(Ok(Value::Null)).and_then(|_| {
+                self.worker_ids(&t.id, args.get("ids")).map(|ids| {
+                    self.stop_workers(&t.id, Some(&ids));
+                    self.check_waits();
+                    json!({ "ok": true })
+                })
             }),
-            other => Err(format!("Billable has no tool called {other}.")),
+            "ask_person" => match self.ask_person(&t, &args) {
+                Ok(item) => return self.park_ask(thread, item, reply),
+                Err(e) => Err(e),
+            },
+            "ready_for_review" if seat == Seat::Job => self.ready_for_review(&t, &args),
+            "remember" if t.project_id.is_some() => self.remember(&t, &args),
+            other => Err(format!("Billable has no tool called {other} here.")),
         };
         let _ = reply.send(result);
     }
@@ -1634,31 +1787,36 @@ impl State {
         out
     }
 
-    /// The orchestrator is in a turn the person sent: workers start only then.
+    /// The coordinator is in a turn the person sent: jobs start only then
+    /// (or when the person approves a plan on its card).
     fn person_asked(&self, o: &Thread) -> Result<(), String> {
         if self.turns.get(&o.id).is_some_and(|t| t.stop_at.is_none()) {
             Ok(())
         } else {
-            Err("Helpers start only while you're answering the person's message.".into())
+            Err("Jobs start only while you're answering the person's message.".into())
         }
     }
 
-    fn start_agents(&mut self, o: &Thread, args: &Value) -> Result<Value, String> {
-        self.person_asked(o)?;
-        let specs = args.get("agents").and_then(Value::as_array).cloned().unwrap_or_default();
+    /// Check a start_agents (or propose_plan) list, every job before any starts.
+    fn plan_jobs(&self, o: &Thread, specs: Option<&Value>) -> Result<Vec<PlanJob>, String> {
+        let specs = specs.and_then(Value::as_array).cloned().unwrap_or_default();
         if specs.is_empty() || specs.len() > orchestrator::MAX_PER_CALL {
-            return Err(format!("Start 1 to {} helpers at a time.", orchestrator::MAX_PER_CALL));
+            return Err(format!("Start 1 to {} at a time.", orchestrator::MAX_PER_CALL));
         }
         let existing = self.store.workers(&o.id).map_err(|e| format!("{e:#}"))?.len();
         if existing + specs.len() > orchestrator::MAX_WORKERS {
-            return Err(format!("A chat can have at most {} helpers; this one has {existing}.", orchestrator::MAX_WORKERS));
+            return Err(format!("A chat can have at most {} jobs and lookups; this one has {existing}.", orchestrator::MAX_WORKERS));
         }
-        // Check every helper before starting any.
         let mut plans = Vec::new();
         for (n, spec) in specs.iter().enumerate() {
             let text = |k: &str| spec.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
-            let task = text("task").ok_or_else(|| format!("Helper {} has no task.", n + 1))?;
+            let task = text("task").ok_or_else(|| format!("Job {} has no task.", n + 1))?;
             let title = one_line(&text("title").unwrap_or_else(|| title_from(&task)), 120);
+            let kind = match text("kind").as_deref() {
+                None | Some("job") => WorkerKind::Job,
+                Some("lookup") => WorkerKind::Lookup,
+                Some(k) => return Err(format!("{k} isn't a kind; use job or lookup.")),
+            };
             let agent = text("agent").unwrap_or_else(|| o.agent.clone());
             self.check_agent(&agent).map_err(|e| e.message)?;
             let a = self.agent(&agent).cloned().ok_or("That agent isn't on this Mac.")?;
@@ -1672,18 +1830,24 @@ impl State {
             };
             // Left out (or not one the model takes): the model's default.
             let effort = self.effort_for(&agent, &model, text("effort"));
-            plans.push((title, task, agent, model, effort));
+            let reason = text("reason").map(|r| one_line(&r, 140));
+            plans.push(PlanJob { title, task, agent, model, effort, kind, reason });
         }
+        Ok(plans)
+    }
+
+    /// Make the jobs' chats and queue them; they start as slots free up.
+    fn start_jobs(&mut self, o: &Thread, jobs: Vec<PlanJob>) -> Result<Value, String> {
         let mut out = Vec::new();
-        for (title, task, agent, model, effort) in plans {
+        for job in jobs {
             let now = now_iso();
             let w = Thread {
                 id: new_id("t"),
                 engine: "mac".into(),
-                title,
-                agent,
-                model,
-                effort,
+                title: job.title,
+                agent: job.agent,
+                model: job.model,
+                effort: job.effort,
                 status: ThreadStatus::Idle,
                 pinned: false,
                 settled_at: None,
@@ -1694,15 +1858,181 @@ impl State {
                 cwd: o.cwd.clone(),
                 role: Some(ThreadRole::Worker),
                 parent_id: Some(o.id.clone()),
+                project_id: o.project_id.clone(),
+                worker_kind: Some(job.kind),
+                review_at: None,
             };
             self.store.insert_thread(&w).map_err(|e| format!("{e:#}"))?;
             self.emit(Event::ThreadUpdated { thread: w.clone() });
-            out.push(json!({"id": w.id, "title": w.title, "agent": w.agent, "model": w.model, "effort": w.effort}));
-            self.worker_queue.push_back((o.id.clone(), w.id, task));
+            out.push(json!({"id": w.id, "title": w.title, "kind": job.kind.as_str(), "agent": w.agent, "model": w.model, "effort": w.effort}));
+            self.worker_queue.push_back((o.id.clone(), w.id, job.task));
         }
         self.pump_workers(&o.id);
         Ok(Value::Array(out))
     }
+
+    /// Hold a call open until the person answers its card.
+    fn park_ask(&mut self, thread: &str, item: Item, reply: Sender<Result<Value, String>>) {
+        self.asks.push(Ask { thread: thread.to_string(), item: item.id, until: Instant::now() + Duration::from_secs(orchestrator::ASK_WAIT_SECS), reply });
+        self.set_status(thread);
+    }
+
+    /// A decision card in the chat, on the turn that's running.
+    fn add_card(&mut self, thread: &str, card: DecisionCard) -> Item {
+        let turn = self.turns.get(thread).map(|t| t.id.clone());
+        self.add_item(thread, turn.as_deref(), ItemKind::Decision, None, |i| i.decision = Some(card))
+    }
+
+    fn propose_plan(&mut self, o: &Thread, args: &Value) -> Result<Item, String> {
+        self.person_asked(o)?;
+        let jobs = self.plan_jobs(o, args.get("agents"))?;
+        let n = jobs.len();
+        let summary = args.get("summary").and_then(Value::as_str).map(|s| one_line(s, 200)).filter(|s| !s.is_empty());
+        let start = if n == 1 { "Start it".to_string() } else { format!("Start {n}") };
+        let card = DecisionCard {
+            question: summary.unwrap_or_else(|| if n == 1 { "Start this job?".into() } else { format!("Start these {n} jobs?") }),
+            detail: None,
+            options: vec![DecisionOption { label: start, detail: None }, DecisionOption { label: "Not now".into(), detail: None }],
+            recommended: Some(0),
+            plan: Some(jobs),
+            ..DecisionCard::default()
+        };
+        Ok(self.add_card(&o.id, card))
+    }
+
+    fn ask_person(&mut self, t: &Thread, args: &Value) -> Result<Item, String> {
+        if !self.turns.contains_key(&t.id) {
+            return Err("Ask while you're answering the person's message.".into());
+        }
+        let text = |v: &Value, k: &str, max: usize| v.get(k).and_then(Value::as_str).map(|s| one_line(s, max)).filter(|s| !s.is_empty());
+        let question = text(args, "question", 200).ok_or("Write the question first.")?;
+        let options: Vec<DecisionOption> = args
+            .get("options")
+            .and_then(Value::as_array)
+            .map(|o| o.iter().filter_map(|o| Some(DecisionOption { label: text(o, "label", 60)?, detail: text(o, "detail", 200) })).collect())
+            .unwrap_or_default();
+        if !(2..=4).contains(&options.len()) {
+            return Err("Give 2 to 4 options, each with a label.".into());
+        }
+        let recommended = args.get("recommended").and_then(Value::as_u64).map(|r| r as usize).filter(|r| *r < options.len());
+        let card = DecisionCard { question, detail: text(args, "detail", 400), options, recommended, ..DecisionCard::default() };
+        Ok(self.add_card(&t.id, card))
+    }
+
+    fn ready_for_review(&mut self, w: &Thread, args: &Value) -> Result<Value, String> {
+        let summary = args.get("summary").and_then(Value::as_str).map(|s| one_line(s, 140)).filter(|s| !s.is_empty()).ok_or("Write a one-line summary.")?;
+        let mut w = w.clone();
+        w.review_at = Some(now_iso());
+        w.preview = summary;
+        self.save_thread(&w);
+        Ok(json!({ "ok": true }))
+    }
+
+    fn remember(&mut self, t: &Thread, args: &Value) -> Result<Value, String> {
+        let project = t.project_id.clone().ok_or("This chat isn't in a project.")?;
+        let note = args.get("note").and_then(Value::as_str).map(|s| one_line(s, 300)).filter(|s| !s.is_empty()).ok_or("Write the note first.")?;
+        let note = note.trim_start_matches(['-', '*', ' ']).to_string();
+        let current = self.store.memory(&project).map_err(|e| format!("{e:#}"))?.map(|(t, _)| t).unwrap_or_default();
+        if current.lines().any(|l| l.trim_start_matches(['-', '*', ' ']).eq_ignore_ascii_case(&note)) {
+            return Ok(json!({ "memory": current }));
+        }
+        let text = if current.trim().is_empty() { format!("- {note}") } else { format!("{}\n- {note}", current.trim_end()) };
+        if text.chars().count() > orchestrator::MEMORY_CHARS {
+            return Err("The project's memory is full. Ask the person to tidy it in the project's settings.".into());
+        }
+        self.memory_set(&project, &text).map_err(|e| e.message)?;
+        Ok(json!({ "memory": text }))
+    }
+
+    // ---------- Decisions and memory (PROTOCOL.md) ----------
+
+    fn decision_answer(&mut self, p: DecisionAnswerParams) -> Result<Value, ProtoError> {
+        let mut item = self.saved_item(&p.thread_id, &p.item_id).filter(|i| i.kind == ItemKind::Decision).ok_or_else(|| ProtoError::new(ErrorCode::NotFound, "That card is gone."))?;
+        let Some(card) = item.decision.as_mut() else { return Err(ProtoError::not_found()) };
+        if card.answered_at.is_some() {
+            return Err(ProtoError::new(ErrorCode::NotFound, "That was already answered."));
+        }
+        if p.choice >= card.options.len() {
+            return Err(ProtoError::bad_request("That isn't one of the options."));
+        }
+        let plan = card.plan.clone();
+        let starting = plan.is_some() && p.choice == 0;
+        let kept: Option<Vec<usize>> = plan.as_ref().map(|jobs| match &p.kept {
+            Some(k) => {
+                let mut k: Vec<usize> = k.iter().copied().filter(|i| *i < jobs.len()).collect();
+                k.sort_unstable();
+                k.dedup();
+                k
+            }
+            None => (0..jobs.len()).collect(),
+        });
+        if starting && kept.as_ref().is_some_and(Vec::is_empty) {
+            return Err(ProtoError::bad_request("Keep at least one job, or choose Not now."));
+        }
+        card.chosen = Some(p.choice);
+        card.answer = p.text.as_deref().map(|t| one_line(t, 500)).filter(|t| !t.is_empty());
+        card.kept = if starting { kept.clone() } else { None };
+        card.answered_at = Some(now_iso());
+        let card = card.clone();
+        self.update_item(&item);
+
+        // A plan the person approved starts now, whether or not the
+        // coordinator is still waiting: the person asked for it.
+        let mut started = Value::Array(Vec::new());
+        if let (true, Some(jobs), Some(kept)) = (starting, plan, kept) {
+            let o = self.thread(&p.thread_id)?;
+            let chosen: Vec<PlanJob> = jobs.into_iter().enumerate().filter(|(i, _)| kept.contains(i)).map(|(_, j)| j).collect();
+            started = self.start_jobs(&o, chosen).map_err(ProtoError::failed)?;
+        }
+        let label = card.options[p.choice].label.clone();
+        let answer = if card.plan.is_some() {
+            json!({"approved": starting, "started": started, "note": card.answer})
+        } else {
+            json!({"choice": p.choice, "label": label, "note": card.answer})
+        };
+        match self.asks.iter().position(|a| a.item == item.id) {
+            Some(pos) => {
+                let ask = self.asks.remove(pos);
+                let _ = ask.reply.send(Ok(answer));
+            }
+            // The turn that asked is over: the answer is the person's next
+            // message (a plan they approved has already started).
+            None if card.plan.is_none() && !self.turns.contains_key(&p.thread_id) => {
+                let mut text = format!("My answer to \u{201c}{}\u{201d}: {label}.", card.question);
+                if let Some(note) = &card.answer {
+                    text.push(' ');
+                    text.push_str(note);
+                }
+                if let Ok(begun) = self.begin_turn(TurnSendParams { thread_id: p.thread_id.clone(), text, agent: None, model: None, effort: None }) {
+                    self.launch(begun);
+                }
+            }
+            None => {}
+        }
+        self.set_status(&p.thread_id);
+        Ok(json!({ "item": self.saved_item(&p.thread_id, &item.id) }))
+    }
+
+    fn memory_get(&self, project: &str) -> Result<Value, ProtoError> {
+        let project = clean_project(Some(project)).ok_or_else(|| ProtoError::bad_request("That isn't a project."))?;
+        let (text, updated_at) = self.store.memory(&project).map_err(store_err)?.map(|(t, at)| (t, Some(at))).unwrap_or_default();
+        Ok(json!({ "projectId": project, "text": text, "updatedAt": updated_at }))
+    }
+
+    fn memory_set(&mut self, project: &str, text: &str) -> Result<Value, ProtoError> {
+        let project = clean_project(Some(project)).ok_or_else(|| ProtoError::bad_request("That isn't a project."))?;
+        let text = text.trim().replace("\r\n", "\n");
+        if text.chars().count() > orchestrator::MEMORY_CHARS {
+            return Err(ProtoError::bad_request(format!("Keep the memory under {} characters.", orchestrator::MEMORY_CHARS)));
+        }
+        let at = now_iso();
+        self.store.set_memory(&project, &text, &at).map_err(store_err)?;
+        let updated_at = (!text.is_empty()).then_some(at);
+        self.emit(Event::MemoryUpdated { project_id: project.clone(), text: text.clone(), updated_at: updated_at.clone() });
+        Ok(json!({ "projectId": project, "text": text, "updatedAt": updated_at }))
+    }
+
+    // ---------- Jobs ----------
 
     /// The orchestrator's workers named in `ids` (all of them when absent).
     fn worker_ids(&self, orchestrator: &str, ids: Option<&Value>) -> Result<Vec<String>, String> {
@@ -1712,7 +2042,7 @@ impl State {
         for id in asked {
             let id = id.as_str().unwrap_or("");
             if !all.iter().any(|a| a == id) {
-                return Err(format!("This chat has no helper {id}."));
+                return Err(format!("This chat has no job {id}."));
             }
             if !out.iter().any(|o: &String| o == id) {
                 out.push(id.to_string());
@@ -1736,10 +2066,11 @@ impl State {
             return Err("Write a message first.".into());
         }
         if self.worker_busy(&id) {
-            return Err("busy: That helper is still working. Wait for it first.".into());
+            return Err("busy: That job is still working. Wait for it first.".into());
         }
+        let lookup = self.store.thread(&id).ok().flatten().is_some_and(|w| w.worker_kind == Some(WorkerKind::Lookup));
         self.worker_queue.push_back((o.id.clone(), id.clone(), text));
-        if self.running_workers(&o.id) >= orchestrator::MAX_RUNNING {
+        if self.running_workers(&o.id, lookup) >= slots(lookup) {
             if let Ok(Some(mut w)) = self.store.thread(&id) {
                 w.preview = orchestrator::WAITING_PREVIEW.into();
                 self.save_thread(&w);
@@ -1747,23 +2078,38 @@ impl State {
         }
         self.pump_workers(&o.id);
         match self.worker_ends.get(&id) {
-            Some(TurnStatus::Failed) if !self.worker_busy(&id) => Err("That helper couldn't start.".into()),
+            Some(TurnStatus::Failed) if !self.worker_busy(&id) => Err("That job couldn't start.".into()),
             _ => Ok(json!({ "ok": true })),
         }
     }
 
-    fn running_workers(&self, orchestrator: &str) -> usize {
-        self.turns.values().filter(|t| t.parent.as_deref() == Some(orchestrator)).count()
+    /// Running jobs (or lookups) of a coordinator.
+    fn running_workers(&self, orchestrator: &str, lookup: bool) -> usize {
+        self.turns.values().filter(|t| t.parent.as_deref() == Some(orchestrator) && t.lookup == lookup).count()
     }
 
     fn worker_busy(&self, id: &str) -> bool {
         self.turns.contains_key(id) || self.worker_queue.iter().any(|(_, w, _)| w == id)
     }
 
-    /// Start waiting workers while the orchestrator has free slots.
+    /// Start waiting jobs and lookups, oldest first, while their kind has a
+    /// free slot.
     fn pump_workers(&mut self, orchestrator: &str) {
-        while self.running_workers(orchestrator) < orchestrator::MAX_RUNNING {
-            let Some(pos) = self.worker_queue.iter().position(|(o, _, _)| o == orchestrator) else { return };
+        let mut pos = 0;
+        while pos < self.worker_queue.len() {
+            let (o, worker) = {
+                let (o, w, _) = &self.worker_queue[pos];
+                (o.clone(), w.clone())
+            };
+            if o != orchestrator {
+                pos += 1;
+                continue;
+            }
+            let lookup = self.store.thread(&worker).ok().flatten().is_some_and(|w| w.worker_kind == Some(WorkerKind::Lookup));
+            if self.running_workers(orchestrator, lookup) >= slots(lookup) {
+                pos += 1;
+                continue;
+            }
             let Some((_, worker, text)) = self.worker_queue.remove(pos) else { return };
             self.worker_ends.remove(&worker);
             match self.begin_turn(TurnSendParams { thread_id: worker.clone(), text, agent: None, model: None, effort: None }) {
@@ -1784,7 +2130,7 @@ impl State {
         }
     }
 
-    /// Stop an orchestrator's workers (`None`: all): running ones get Stop,
+    /// Stop a coordinator's jobs (`None`: all): running ones get Stop,
     /// waiting ones never start.
     fn stop_workers(&mut self, orchestrator: &str, ids: Option<&[String]>) {
         let named = |w: &str| ids.is_none_or(|ids| ids.iter().any(|i| i == w));
@@ -1806,14 +2152,20 @@ impl State {
         }
     }
 
-    /// "queued", "running", "waiting" (an approval is open), "done",
-    /// "stopped", "failed" or "not_started".
+    /// "queued", "running", "waiting" (an approval or a card is open),
+    /// "review", "done", "stopped", "failed" or "not_started".
     fn worker_status(&self, w: &Thread) -> &'static str {
         if self.worker_queue.iter().any(|(_, id, _)| *id == w.id) {
             return "queued";
         }
+        if self.needs_person(&w.id) {
+            return "waiting";
+        }
         if self.turns.contains_key(&w.id) {
-            return if self.approvals.values().any(|a| a.thread == w.id) { "waiting" } else { "running" };
+            return "running";
+        }
+        if w.review_at.is_some() {
+            return "review";
         }
         match self.worker_ends.get(&w.id) {
             Some(TurnStatus::Done) => "done",
@@ -1829,7 +2181,7 @@ impl State {
         let rows = ids.iter().map(|id| match self.store.thread(id).ok().flatten() {
             Some(w) => {
                 let answer = self.store.items(id).ok().and_then(|items| items.into_iter().rev().find(|i| i.kind == ItemKind::Assistant).and_then(|i| i.text)).filter(|t| !t.trim().is_empty());
-                json!({"id": id, "title": w.title, "status": self.worker_status(&w), "answer": answer.map(|a| cut(&a, orchestrator::ANSWER_CHARS))})
+                json!({"id": id, "title": w.title, "kind": kind_of(&w), "status": self.worker_status(&w), "answer": answer.map(|a| cut(&a, orchestrator::ANSWER_CHARS))})
             }
             None => json!({"id": id, "title": "", "status": "deleted", "answer": null}),
         });

@@ -80,7 +80,7 @@ Engine → screen, an **event** (any time, not tied to a request):
   agent: Agent["id"];            // the agent of the latest turn
   model: string;
   effort: string | null;
-  status: "idle" | "running" | "waiting" | "failed";  // waiting = an approval is open
+  status: "idle" | "running" | "waiting" | "failed";  // waiting = an approval or a decision card is open
   pinned: boolean;
   settledAt: string | null;      // set = in "Done"
   archivedAt: string | null;     // set = hidden from the list (Undo clears it)
@@ -90,6 +90,9 @@ Engine → screen, an **event** (any time, not tied to a request):
   cwd: string | null;            // Mac only: the folder the agent works in (null = the engine's default)
   role: "orchestrator" | "worker" | null;  // Mac only, see "Orchestrator"
   parentId: string | null;       // a worker's orchestrator thread
+  projectId?: string | null;     // Mac only: the FeedHQ project it's filed in (its memory applies)
+  workerKind?: "job" | "lookup" | null;  // workers only, see "Coordinator"
+  reviewAt?: string | null;      // a job handed its work back for the person to check
 }
 ```
 
@@ -100,7 +103,7 @@ Engine → screen, an **event** (any time, not tied to a request):
   id: string;
   threadId: string;
   turnId: string | null;
-  kind: "user" | "assistant" | "reasoning" | "tool" | "divider" | "error";
+  kind: "user" | "assistant" | "reasoning" | "tool" | "divider" | "error" | "decision";
   createdAt: string;
   text?: string;                 // user, assistant, reasoning (markdown), error (plain)
   agent?: Agent["id"];           // assistant / reasoning / tool: who wrote it
@@ -115,6 +118,7 @@ Engine → screen, an **event** (any time, not tied to a request):
     threads?: string[];          // orchestrator tools: the worker threads this call started or read
   };
   divider?: { from: { agent: string; model: string }; to: { agent: string; model: string } };
+  decision?: Decision;           // kind "decision"
 }
 ```
 
@@ -131,21 +135,40 @@ Engine → screen, an **event** (any time, not tied to a request):
 }
 ```
 
+**Decision** (a card an agent put to the person: a question, or a plan of jobs)
+
+```ts
+{
+  question: string;
+  detail?: string;
+  options: { label: string; detail?: string }[];   // 2 to 4; a plan: ["Start 3", "Not now"]
+  recommended?: number;          // index into options
+  plan?: { title, task, agent, model, effort?, kind: "job" | "lookup", reason? }[];  // a plan card: option 0 starts these
+  chosen?: number;               // set once answered
+  answer?: string;               // what the person wrote with their pick
+  kept?: number[];               // a started plan: the jobs the person kept
+  answeredAt?: string;           // unset = still open
+}
+```
+
 ## Methods
 
 | Method | Params | Result |
 | --- | --- | --- |
-| `hello` | `{ client: "billable" \| "web" \| "phone" }` | `{ engine: "mac" \| "cloud", engineVersion, protocol: 1, agents: Agent[], feedhq: { connected: boolean, account: string \| null }, device: string \| null, features?: string[] }` (`features` lists what this engine adds to v1: `"folders"` (cwd + system.pickFolder), `"orchestrator"`, `"bulk-delete"`; missing = none) |
+| `hello` | `{ client: "billable" \| "web" \| "phone" }` | `{ engine: "mac" \| "cloud", engineVersion, protocol: 1, agents: Agent[], feedhq: { connected: boolean, account: string \| null }, device: string \| null, features?: string[] }` (`features` lists what this engine adds to v1: `"folders"` (cwd + system.pickFolder), `"orchestrator"`, `"bulk-delete"`, `"coordinator"`, `"decisions"`, `"memory"`, `"lookups"`, `"review"`; missing = none) |
 | `threads.list` | `{ includeArchived?: boolean }` | `{ threads: Thread[] }` (newest `updatedAt` first) |
 | `thread.get` | `{ threadId }` | `{ thread: Thread, items: Item[], approvals: Approval[] }` (items oldest first) |
-| `thread.create` | `{ agent, model, effort?: string \| null, cwd?: string \| null, role?: "orchestrator" \| null }` | `{ thread: Thread }` |
-| `thread.update` | `{ threadId, title?, pinned?, settled?: boolean, archived?: boolean }` | `{ thread: Thread }` |
+| `thread.create` | `{ agent, model, effort?: string \| null, cwd?: string \| null, role?: "orchestrator" \| null, projectId?: string \| null }` | `{ thread: Thread }` |
+| `thread.update` | `{ threadId, title?, pinned?, settled?: boolean, archived?: boolean, projectId?: string \| null }` | `{ thread: Thread }` (`settled: true` also clears `reviewAt`; a coordinator's `projectId` carries to its jobs) |
 | `thread.delete` | `{ threadId }` | `{}` (also deletes its workers) |
 | `threads.delete` | `{ threadIds: string[] }` | `{ deleted: string[] }` (at most 200; unknown ids are skipped; one `thread.deleted` event each) |
 | `thread.retitle` | `{ threadId }` | always `bad_request` "Rename it instead." (titles never use a model; rename with `thread.update`) |
 | `turn.send` | `{ threadId, text, agent?, model?, effort? }` | `{ turnId, userItem: Item }` |
 | `turn.stop` | `{ threadId }` | `{}` |
 | `approval.answer` | `{ threadId, approvalId, decision: "allow" \| "allow_always" \| "deny" }` | `{}` |
+| `decision.answer` | `{ threadId, itemId, choice: number, text?: string, kept?: number[] }` | `{ item: Item }` (`not_found` once answered; a plan needs at least one kept job) |
+| `memory.get` | `{ projectId }` | `{ projectId, text, updatedAt: string \| null }` |
+| `memory.set` | `{ projectId, text }` | `{ projectId, text, updatedAt }` (at most 6,000 chars; "" clears it) |
 | `agents.refresh` | `{}` | `{ agents: Agent[] }` (re-detect installs and sign-ins) |
 | `feedhq.connect` | `{}` | `{ authorizeUrl: string }` (Mac engine only; the screen navigates there) |
 | `feedhq.disconnect` | `{}` | `{}` |
@@ -180,6 +203,7 @@ their next message starts fresh with a handoff).
 | `approval.resolved` | `threadId, approvalId, decision` |
 | `agents.changed` | `agents: Agent[]` |
 | `feedhq.status` | `connected: boolean, account: string \| null` |
+| `memory.updated` | `projectId, text, updatedAt: string \| null` |
 
 ## Orchestrator (Mac engine)
 
@@ -212,6 +236,43 @@ session a second MCP server, `billable` (same local relay, path
 - Nothing starts on its own: workers exist only because the person sent the
   orchestrator a message. `turn.stop` on the orchestrator stops its workers.
 - Deleting the orchestrator deletes its workers.
+
+## Coordinator (Mac engine, `features` "coordinator")
+
+An orchestrator is the chat's **coordinator**, in the way Claude Code
+projects work, and every Mac chat gets the `billable` server with the tools
+for its seat:
+
+| Seat | Tools |
+| --- | --- |
+| coordinator (`role: "orchestrator"`) | the five above, plus `propose_plan`, `ask_person`, and `remember` in a project |
+| job (`role: "worker"`, `workerKind: "job"`) | `ask_person`, `ready_for_review`, and `remember` in a project |
+| lookup (`workerKind: "lookup"`) | none: it reads, never changes anything (Claude Code: no Edit, Write or Bash; Codex: read-only sandbox, never asks), and anything that would need an approval is turned down |
+| any other chat | `ask_person`, and `remember` in a project |
+
+- `start_agents` items take `kind: "job" | "lookup"` (default job). Lookups
+  have their own 4 slots, so a quick read never waits behind jobs; 40 jobs
+  and lookups per coordinator in all. Results carry `kind`.
+- `propose_plan { summary?, agents: [... same items, plus reason?] }` shows a
+  plan card (a `decision` item with `plan`) and holds the call up to 25
+  minutes. `decision.answer` with choice 0 starts the kept jobs, whether or
+  not the coordinator is still waiting (the person asked for them); the call
+  answers `{ approved, started, note }`.
+- `ask_person { question, detail?, options: [{label, detail?}] (2 to 4),
+  recommended }` shows a decision card and holds the call up to 25 minutes;
+  it answers `{ choice, label, note }`, or `{ answered: false, note }` at the
+  timeout. Stop, or the turn ending, lets go of the call; the card stays open
+  and the chat stays `waiting`. Answered later, the answer is sent as the
+  person's next message: "My answer to “…”: Label." Sending a message while a
+  card is open is fine.
+- `ready_for_review { summary }` sets the job's `reviewAt` (wait_for_agents
+  and list_agents say `review`). A new message in the job or `settled: true`
+  clears it.
+- `remember { note }` appends "- note" to the project's memory (`memory.updated`).
+  Every chat in the project gets the memory after its guidance; a changed
+  memory starts a fresh agent process on the next turn (the session resumes).
+- Worker statuses: queued, running, waiting (an approval or a card is open),
+  review, done, stopped, failed, not_started, deleted.
 
 ## Handoff when switching agents mid-chat
 

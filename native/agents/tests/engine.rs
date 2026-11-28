@@ -204,7 +204,9 @@ fn chats_end_to_end_with_fake_agents() {
     assert_eq!(launches.len(), 1);
     let args: Vec<String> = serde_json::from_value(launches[0]["value"].clone()).unwrap();
     assert!(args.windows(2).any(|w| w == ["--model", "opus"]), "{args:?}");
-    assert!(!args.contains(&"--mcp-config".to_string()), "FeedHQ isn't connected yet");
+    // Only Billable's own server: FeedHQ isn't connected yet
+    let cfg: Value = serde_json::from_str(&args[args.iter().position(|x| x == "--mcp-config").unwrap() + 1]).unwrap();
+    assert!(cfg["mcpServers"].get("feedhq").is_none() && cfg["mcpServers"].get("billable").is_some(), "{cfg}");
 
     // An approval: the chat waits, then the tool runs
     let mark = h.events.len();
@@ -344,7 +346,7 @@ fn id_of(v: &Value) -> String {
 fn folders_and_bulk_delete() {
     let Some(mut h) = setup("folders") else { return };
     let hello = h.ok("hello", json!({}));
-    assert_eq!(hello["features"], json!(["folders", "orchestrator", "bulk-delete"]));
+    assert_eq!(hello["features"], json!(["folders", "orchestrator", "bulk-delete", "coordinator", "decisions", "memory", "lookups", "review"]));
     let site = h.dir.join("my site");
     std::fs::create_dir_all(&site).unwrap();
     let site_s = site.to_string_lossy().to_string();
@@ -375,7 +377,7 @@ fn folders_and_bulk_delete() {
     assert_eq!(h.finished(mark, &cx)["status"], "done");
     let start = h.log("codex").into_iter().find(|l| l["value"]["method"] == "thread/start").unwrap();
     assert_eq!(start["value"]["params"]["cwd"], json!(site_s));
-    assert!(start["value"]["params"]["config"].get("mcp_servers.billable").is_none(), "not an orchestrator");
+    assert!(!start["value"]["params"]["developerInstructions"].as_str().unwrap().contains("start_agents"), "not a coordinator");
 
     // Many at once: unknown ids are skipped, one event each
     let remote = h.engine.attach_remote();
@@ -434,7 +436,7 @@ fn orchestrator_runs_workers() {
 
     let rpcs: Vec<Value> = h.log("claude").into_iter().filter(|l| l["kind"] == "rpc").map(|l| l["value"].clone()).collect();
     let tools_list = rpcs.iter().find(|r| r["method"] == "tools/list").unwrap();
-    assert_eq!(tools_list["answer"]["result"]["tools"].as_array().unwrap().len(), 5);
+    assert_eq!(tools_list["answer"]["result"]["tools"].as_array().unwrap().len(), 7);
     let result_of = |name: &str| -> Value {
         let r = rpcs.iter().find(|r| r["method"] == "tools/call" && r["params"]["name"] == name).unwrap_or_else(|| panic!("no {name}"));
         assert_eq!(r["answer"]["result"]["isError"], false, "{r}");
@@ -483,12 +485,14 @@ fn orchestrator_runs_workers() {
     assert_eq!(start_row["tool"]["threads"], json!(ids));
     assert_eq!(items.iter().find(|i| i["tool"]["name"] == "mcp__billable__wait_for_agents").unwrap()["tool"]["threads"], json!(ids));
     assert!(items.last().unwrap()["text"].as_str().unwrap().starts_with("Summary: Slow 1 done"));
-    // Only the lead got the billable server; helpers ran in the folder
+    // The lead is told it coordinates and the jobs that they're jobs; all ran in the folder
     let launches: Vec<Vec<String>> = h.log("claude").into_iter().filter(|l| l["kind"] == "launch").map(|l| serde_json::from_value(l["value"].clone()).unwrap()).collect();
     assert_eq!(launches.len(), 6);
-    let with_billable: Vec<&Vec<String>> = launches.iter().filter(|a| a.iter().any(|x| x.contains("/orchestrate/"))).collect();
+    let prompt = |a: &Vec<String>| a[a.iter().position(|x| x == "--append-system-prompt").unwrap() + 1].clone();
+    let with_billable: Vec<&Vec<String>> = launches.iter().filter(|a| prompt(a).contains("You are this chat's coordinator")).collect();
     assert_eq!(with_billable.len(), 1);
-    assert!(with_billable[0].windows(2).any(|w| w == ["--allowedTools", "mcp__billable"]));
+    assert_eq!(launches.iter().filter(|a| prompt(a).contains("You are a job")).count(), 5);
+    assert!(launches.iter().all(|a| a.windows(2).any(|w| w == ["--allowedTools", "mcp__billable"])));
     let canon = std::fs::canonicalize(&site).unwrap().to_string_lossy().to_string();
     assert!(h.log("claude").iter().filter(|l| l["kind"] == "cwd").all(|l| l["value"] == json!(canon)));
 
@@ -499,7 +503,7 @@ fn orchestrator_runs_workers() {
     assert_eq!(r["result"]["isError"], true, "{r}");
     let r = mcp_call(&url, &json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_agents","arguments":{}}}));
     assert_eq!(serde_json::from_str::<Value>(r["result"]["content"][0]["text"].as_str().unwrap()).unwrap().as_array().unwrap().len(), 5);
-    // A thread that isn't an orchestrator gets nothing
+    // A job can't use the coordinator's tools
     let other = url.rsplit_once('/').unwrap().0.to_string() + "/" + &ids[0];
     assert_eq!(mcp_call(&other, &json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_agents","arguments":{}}}))["result"]["isError"], true);
 
@@ -528,6 +532,91 @@ fn orchestrator_runs_workers() {
     assert_eq!(h.events[mark..].iter().filter(|e| e["type"] == "thread.deleted").count(), 6);
     h.ok("thread.delete", json!({"threadId": lead2}));
     assert!(h.ok("threads.list", json!({}))["threads"].as_array().unwrap().is_empty());
+    h.engine.shutdown();
+    let _ = std::fs::remove_dir_all(&h.dir);
+}
+
+#[test]
+fn coordinator_plans_asks_and_remembers() {
+    let Some(mut h) = setup("coordinator") else { return };
+    h.ok("memory.set", json!({"projectId": "p_1", "text": "- Use British spelling"}));
+    assert_eq!(h.call("memory.set", json!({"projectId": "bad id!", "text": "x"}))["error"]["code"], "bad_request");
+    let lead = id_of(&h.ok("thread.create", json!({"agent": "claude", "model": "opus", "role": "orchestrator", "projectId": "p_1"})));
+    assert_eq!(h.ok("thread.get", json!({"threadId": lead}))["thread"]["projectId"], "p_1");
+
+    // A plan card: the person drops one job and starts the rest
+    let mark = h.events.len();
+    h.ok("turn.send", json!({"threadId": lead, "text": "Please coordinate with a plan"}));
+    let card = h.wait_event(mark, |e| e["type"] == "item.added" && e["item"]["kind"] == "decision")["item"].clone();
+    let d = &card["decision"];
+    assert_eq!(d["question"], "Build it in two parts");
+    assert_eq!(d["options"], json!([{"label": "Start 3"}, {"label": "Not now"}]));
+    assert_eq!(d["plan"].as_array().unwrap().len(), 3);
+    assert_eq!((d["plan"][0]["kind"].clone(), d["plan"][0]["effort"].clone(), d["plan"][0]["reason"].clone()), (json!("lookup"), json!("low"), json!("A quick read")));
+    assert_eq!(h.wait_event(mark, |e| e["type"] == "thread.updated" && e["thread"]["id"] == json!(lead) && e["thread"]["status"] == "waiting")["thread"]["status"], "waiting");
+    let card_id = card["id"].as_str().unwrap().to_string();
+    assert_eq!(h.call("decision.answer", json!({"threadId": lead, "itemId": card_id, "choice": 0, "kept": []}))["error"]["code"], "bad_request");
+    let answered = h.ok("decision.answer", json!({"threadId": lead, "itemId": card_id, "choice": 0, "kept": [0, 1]}));
+    assert_eq!(answered["item"]["decision"]["kept"], json!([0, 1]));
+    assert_eq!(h.call("decision.answer", json!({"threadId": lead, "itemId": card_id, "choice": 0}))["error"]["code"], "not_found");
+    let done = h.finished(mark, &lead);
+    assert_eq!(done["status"], "done", "{done}");
+    let last = h.items(&lead).last().unwrap()["text"].as_str().unwrap().to_string();
+    assert_eq!(last, "Plan: True; Find the files lookup done, Build part 1 job review");
+    let threads = h.ok("threads.list", json!({}))["threads"].as_array().unwrap().clone();
+    let jobs: Vec<&Value> = threads.iter().filter(|t| t["parentId"] == json!(lead)).collect();
+    assert_eq!(jobs.len(), 2);
+    let job = jobs.iter().find(|t| t["workerKind"] == "job").unwrap();
+    assert!(job["reviewAt"].is_string() && job["preview"] == "Built review task 1" && job["projectId"] == "p_1", "{job}");
+    // Seats: the lookup only reads and gets no Billable tools; everyone gets the memory
+    let launches: Vec<Vec<String>> = h.log("claude").into_iter().filter(|l| l["kind"] == "launch").map(|l| serde_json::from_value(l["value"].clone()).unwrap()).collect();
+    let prompt = |a: &Vec<String>| a[a.iter().position(|x| x == "--append-system-prompt").unwrap() + 1].clone();
+    let look = launches.iter().find(|a| prompt(a).contains("read-only lookup")).unwrap();
+    assert!(look.iter().any(|x| x == "--disallowedTools") && !look.iter().any(|x| x == "--mcp-config"), "{look:?}");
+    assert!(launches.iter().all(|a| prompt(a).ends_with("- Use British spelling")), "{launches:?}");
+    // Approving the review (marking it done) clears it
+    let job_id = job["id"].as_str().unwrap().to_string();
+    assert!(h.ok("thread.update", json!({"threadId": job_id, "settled": true}))["thread"]["reviewAt"].is_null());
+
+    // A question: the chat needs the person until they pick
+    let mark = h.events.len();
+    h.ok("turn.send", json!({"threadId": lead, "text": "ask me which"}));
+    let card = h.wait_event(mark, |e| e["type"] == "item.added" && e["item"]["kind"] == "decision")["item"].clone();
+    assert_eq!(card["decision"]["recommended"], 0);
+    assert_eq!(card["decision"]["options"][0], json!({"label": "Teal", "detail": "Calm"}));
+    assert_eq!(h.call("decision.answer", json!({"threadId": lead, "itemId": card["id"], "choice": 5}))["error"]["code"], "bad_request");
+    h.ok("decision.answer", json!({"threadId": lead, "itemId": card["id"], "choice": 1, "text": "brighter"}));
+    assert_eq!(h.finished(mark, &lead)["status"], "done");
+    assert_eq!(h.items(&lead).last().unwrap()["text"], "You chose Orange");
+    assert_eq!(h.ok("thread.get", json!({"threadId": lead}))["thread"]["status"], "idle");
+
+    // Stopped before answering: the card stays open and the answer becomes the next message
+    let mark = h.events.len();
+    h.ok("turn.send", json!({"threadId": lead, "text": "ask me again"}));
+    let card = h.wait_event(mark, |e| e["type"] == "item.added" && e["item"]["kind"] == "decision")["item"].clone();
+    h.ok("turn.stop", json!({"threadId": lead}));
+    h.finished(mark, &lead);
+    assert_eq!(h.ok("thread.get", json!({"threadId": lead}))["thread"]["status"], "waiting");
+    let mark = h.events.len();
+    h.ok("decision.answer", json!({"threadId": lead, "itemId": card["id"], "choice": 0}));
+    h.finished(mark, &lead);
+    let user = h.items(&lead).into_iter().rev().find(|i| i["kind"] == "user").unwrap();
+    assert_eq!(user["text"], "My answer to \u{201c}Pick a colour?\u{201d}: Teal.");
+
+    // Remember: a standing preference lands in the project's memory
+    let mark = h.events.len();
+    h.ok("turn.send", json!({"threadId": lead, "text": "remember this please"}));
+    let upd = h.wait_event(mark, |e| e["type"] == "memory.updated");
+    assert_eq!(upd["text"], "- Use British spelling\n- Keep posts under 200 words");
+    h.finished(mark, &lead);
+    assert_eq!(h.ok("memory.get", json!({"projectId": "p_1"}))["text"], "- Use British spelling\n- Keep posts under 200 words");
+    assert_eq!(h.ok("memory.get", json!({"projectId": "p_2"}))["text"], "");
+
+    // Moving the coordinator moves its jobs
+    h.ok("thread.update", json!({"threadId": lead, "projectId": "p_2"}));
+    assert_eq!(h.ok("thread.get", json!({"threadId": job_id}))["thread"]["projectId"], "p_2");
+    h.ok("thread.update", json!({"threadId": lead, "projectId": null}));
+    assert!(h.ok("thread.get", json!({"threadId": job_id}))["thread"]["projectId"].is_null());
     h.engine.shutdown();
     let _ = std::fs::remove_dir_all(&h.dir);
 }

@@ -296,7 +296,7 @@ mod tests {
         let hook: Orchestrate = Arc::new(move |thread, call| {
             keep.lock().unwrap().push(format!("{thread} {call:?}"));
             match call {
-                orchestrator::Call::Describe => Ok(json!("models")),
+                orchestrator::Call::List => Ok(json!([])),
                 orchestrator::Call::Tool { .. } => Ok(json!({"ok": true})),
             }
         });

@@ -209,6 +209,40 @@ pub struct Thread {
     /// A worker's orchestrator.
     #[serde(default)]
     pub parent_id: Option<String>,
+    /// The FeedHQ project the chat is filed in (its memory applies).
+    #[serde(default)]
+    pub project_id: Option<String>,
+    /// Workers only: a job (its own chat) or a quick read-only lookup.
+    #[serde(default)]
+    pub worker_kind: Option<WorkerKind>,
+    /// When a job handed its work back for the person to check.
+    #[serde(default)]
+    pub review_at: Option<String>,
+}
+
+/// PROTOCOL.md, "Coordinator".
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkerKind {
+    Job,
+    Lookup,
+}
+
+impl WorkerKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WorkerKind::Job => "job",
+            WorkerKind::Lookup => "lookup",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<WorkerKind> {
+        match s {
+            "job" => Some(WorkerKind::Job),
+            "lookup" => Some(WorkerKind::Lookup),
+            _ => None,
+        }
+    }
 }
 
 /// PROTOCOL.md, "Orchestrator".
@@ -245,6 +279,7 @@ pub enum ItemKind {
     Tool,
     Divider,
     Error,
+    Decision,
 }
 
 impl ItemKind {
@@ -256,6 +291,7 @@ impl ItemKind {
             ItemKind::Tool => "tool",
             ItemKind::Divider => "divider",
             ItemKind::Error => "error",
+            ItemKind::Decision => "decision",
         }
     }
 }
@@ -313,6 +349,57 @@ pub struct Item {
     pub tool: Option<ToolInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub divider: Option<Divider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<DecisionCard>,
+}
+
+/// A question an agent put to the person (ask_person), or a plan of jobs
+/// to approve (propose_plan). Open until `answeredAt` is set.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionCard {
+    pub question: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    pub options: Vec<DecisionOption>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended: Option<usize>,
+    /// A plan card: the jobs it would start (option 0 starts them).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<Vec<PlanJob>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chosen: Option<usize>,
+    /// What the person wrote with their choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
+    /// A plan card: the jobs the person kept (by index).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept: Option<Vec<usize>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answered_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionOption {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanJob {
+    pub title: String,
+    pub task: String,
+    pub agent: String,
+    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    pub kind: WorkerKind,
+    /// Why this model and effort, in a line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -394,6 +481,8 @@ pub enum Event {
     AgentsChanged { agents: Vec<Agent> },
     #[serde(rename = "feedhq.status")]
     FeedhqStatus { connected: bool, account: Option<String> },
+    #[serde(rename = "memory.updated")]
+    MemoryUpdated { project_id: String, text: String, updated_at: Option<String> },
 }
 
 // ---------- Method params ----------
@@ -430,6 +519,8 @@ pub struct ThreadCreateParams {
     /// Only "orchestrator" may be asked for; workers are made by orchestrators.
     #[serde(default)]
     pub role: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -450,6 +541,9 @@ pub struct ThreadUpdateParams {
     pub settled: Option<bool>,
     #[serde(default)]
     pub archived: Option<bool>,
+    /// Absent: keep. `null`: no project.
+    #[serde(default, deserialize_with = "present")]
+    pub project_id: Option<Option<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -477,6 +571,31 @@ pub struct ApprovalAnswerParams {
     pub thread_id: String,
     pub approval_id: String,
     pub decision: Decision,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionAnswerParams {
+    pub thread_id: String,
+    pub item_id: String,
+    pub choice: usize,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub kept: Option<Vec<usize>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryGetParams {
+    pub project_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemorySetParams {
+    pub project_id: String,
+    pub text: String,
 }
 
 #[cfg(test)]
@@ -517,6 +636,7 @@ mod tests {
             model: None,
             tool: Some(ToolInfo { name: "Bash".into(), title: "Ran ls".into(), detail: Some("ls".into()), status: ToolStatus::Running, output: None, feedhq: false, threads: vec![] }),
             divider: None,
+            decision: None,
         };
         assert_eq!(
             serde_json::to_value(&item).unwrap(),

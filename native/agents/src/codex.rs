@@ -270,25 +270,25 @@ impl Drop for Server {
 /// Said to every Codex thread.
 pub const DEVELOPER_NOTE: &str = crate::claude::SYSTEM_NOTE;
 
-/// `thread/start` (or, with `resume`, `thread/resume`) params. An
-/// orchestrator (`orchestrate_url`) also gets the `billable` server and the
-/// orchestration guidance.
-pub fn thread_params(model: &str, cwd: &Path, mcp_url: Option<&str>, orchestrate_url: Option<&str>, resume: Option<&str>) -> Value {
+/// `thread/start` (or, with `resume`, `thread/resume`) params. `notes`
+/// (the seat's guidance and project memory) follow the usual note; a chat
+/// with `orchestrate_url` gets the `billable` server; a `read_only` lookup
+/// runs in Codex's read-only sandbox and never asks.
+pub fn thread_params(model: &str, cwd: &Path, mcp_url: Option<&str>, orchestrate_url: Option<&str>, notes: &str, read_only: bool, resume: Option<&str>) -> Value {
     let mut config = serde_json::Map::new();
     if let Some(url) = mcp_url {
         config.insert("mcp_servers.feedhq".into(), json!({"url": url, "tool_timeout_sec": 300}));
     }
-    let mut developer = DEVELOPER_NOTE.to_string();
+    let developer = if notes.is_empty() { DEVELOPER_NOTE.to_string() } else { format!("{DEVELOPER_NOTE}\n\n{notes}") };
     if let Some(url) = orchestrate_url {
-        // wait_for_agents can take up to 30 minutes.
+        // wait_for_agents and ask_person can take up to 30 minutes.
         config.insert(format!("mcp_servers.{}", crate::orchestrator::SERVER_NAME), json!({"url": url, "tool_timeout_sec": 1900}));
-        developer = format!("{developer}\n\n{}", crate::orchestrator::GUIDANCE);
     }
     let mut p = json!({
         "model": model,
         "cwd": cwd.to_string_lossy(),
-        "approvalPolicy": "untrusted",
-        "sandbox": "workspace-write",
+        "approvalPolicy": if read_only { "never" } else { "untrusted" },
+        "sandbox": if read_only { "read-only" } else { "workspace-write" },
         "developerInstructions": developer,
         "config": Value::Object(config),
     });
@@ -523,16 +523,18 @@ mod tests {
 
     #[test]
     fn params_and_discovery() {
-        let p = thread_params("gpt-6.1-sol", Path::new("/w"), Some("http://127.0.0.1:5/mcp/s"), None, Some("c1"));
+        let p = thread_params("gpt-6.1-sol", Path::new("/w"), Some("http://127.0.0.1:5/mcp/s"), None, "", false, Some("c1"));
         assert_eq!(p["config"]["mcp_servers.feedhq"]["url"], json!("http://127.0.0.1:5/mcp/s"));
         assert_eq!(p["threadId"], json!("c1"));
         assert_eq!(p["approvalPolicy"], json!("untrusted"));
         assert!(p["config"].get("mcp_servers.billable").is_none());
         assert_eq!(p["developerInstructions"], json!(DEVELOPER_NOTE));
-        let p = thread_params("m", Path::new("/w"), None, None, None);
+        let p = thread_params("m", Path::new("/w"), None, None, crate::orchestrator::LOOKUP, true, None);
         assert_eq!(p["config"], json!({}));
         assert!(p.get("threadId").is_none());
-        let p = thread_params("m", Path::new("/site"), None, Some("http://h/mcp/s/orchestrate/t_1"), None);
+        assert_eq!((p["sandbox"].clone(), p["approvalPolicy"].clone()), (json!("read-only"), json!("never")));
+        let notes = crate::orchestrator::notes(Some(crate::orchestrator::Seat::Coordinator), None);
+        let p = thread_params("m", Path::new("/site"), None, Some("http://h/mcp/s/orchestrate/t_1"), &notes, false, None);
         assert_eq!(p["config"]["mcp_servers.billable"]["url"], json!("http://h/mcp/s/orchestrate/t_1"));
         assert_eq!(p["cwd"], json!("/site"));
         assert!(p["developerInstructions"].as_str().unwrap().contains("wait_for_agents"));
