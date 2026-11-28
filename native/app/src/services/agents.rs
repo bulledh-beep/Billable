@@ -48,31 +48,30 @@ const REMOTE_CHECK: Duration = Duration::from_secs(1);
 /// Messages per evaluate_script call.
 const PER_SCRIPT: usize = 64;
 
-/// The FeedHQ sign-in in the Keychain. Accounts carry the data folder, so a
-/// dev folder (BILLABLE_USER_DATA) never shares the real one's sign-in.
+/// The FeedHQ sign-in, in the data folder's private sign-ins file
+/// (platform/secrets.rs). Accounts carry the data folder, so a dev folder
+/// (BILLABLE_USER_DATA) never shares the real one's sign-in.
 struct KeychainSecrets {
-    folder: String,
+    folder: std::path::PathBuf,
 }
 
 impl KeychainSecrets {
     fn account(&self, key: &str) -> String {
-        format!("{} {key}", self.folder)
+        format!("{} {key}", self.folder.display())
     }
 }
 
 impl SecretStore for KeychainSecrets {
     fn get(&self, key: &str) -> Option<String> {
-        let bytes = security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, &self.account(key)).ok()?;
-        String::from_utf8(bytes).ok()
+        crate::platform::secrets::get(&self.folder, KEYCHAIN_SERVICE, &self.account(key))
     }
 
     fn set(&self, key: &str, secret: &str) -> anyhow::Result<()> {
-        security_framework::passwords::set_generic_password(KEYCHAIN_SERVICE, &self.account(key), secret.as_bytes())?;
-        Ok(())
+        crate::platform::secrets::set(&self.folder, &self.account(key), secret)
     }
 
     fn delete(&self, key: &str) {
-        let _ = security_framework::passwords::delete_generic_password(KEYCHAIN_SERVICE, &self.account(key));
+        crate::platform::secrets::delete(&self.folder, &self.account(key));
     }
 }
 
@@ -151,7 +150,7 @@ fn ensure_engine(cx: &mut App) -> Option<Engine> {
         return None;
     }
     let data = billable_core::profiles::user_data_dir();
-    let secrets: Arc<dyn SecretStore> = Arc::new(KeychainSecrets { folder: data.display().to_string() });
+    let secrets: Arc<dyn SecretStore> = Arc::new(KeychainSecrets { folder: data.clone() });
     let mut cfg = EngineConfig::new(data.join("agents.db"), data.join("agents-workspace"), &feedhq_origin(cx), secrets);
     // The engine thread asks; the picker shows on the main thread (tick).
     let (pick_tx, pick_rx) = mpsc::channel::<FolderAnswer>();

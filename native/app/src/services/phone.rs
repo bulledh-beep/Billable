@@ -9,8 +9,8 @@
 //!
 //! The connection belongs to the profile that was open when it was made and
 //! only ever talks to the Content HQ address that issued it. Its token lives
-//! in the macOS Keychain (service "Billable", one item per profile folder)
-//! and is never logged or shown. `<profile>/phone-sync.json` keeps the rest
+//! in the profile folder's private sign-ins file (platform/secrets.rs; the
+//! Keychain before 2.3.1) and is never logged or shown. `<profile>/phone-sync.json` keeps the rest
 //! (`version`, `origin`, `profileId`, `connectedAt`), as the Electron app did.
 //!
 //! Database work happens on the main thread (the `Store`'s connection);
@@ -233,8 +233,8 @@ fn token_ok(token: &str) -> bool {
         && token[4..].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-/// One Keychain item per profile folder, so a copied data folder (like
-/// "Billable Dev") never picks up the real folder's connection.
+/// One sign-in per profile folder, so a copied data folder (like "Billable
+/// Dev") never picks up the real folder's connection.
 fn keychain_account(dir: &Path) -> String {
     format!("phone-sync {}", dir.display())
 }
@@ -245,8 +245,7 @@ fn read_connection(profile_id: &str, dir: &Path) -> Option<Conn> {
         return None;
     }
     let origin = raw.get("origin").and_then(Value::as_str).filter(|o| !o.is_empty())?.to_string();
-    let token = security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, &keychain_account(dir)).ok()?;
-    let token = String::from_utf8(token).ok().filter(|t| token_ok(t))?;
+    let token = crate::platform::secrets::get(dir, KEYCHAIN_SERVICE, &keychain_account(dir)).filter(|t| token_ok(t))?;
     let connected_at = raw.get("connectedAt").and_then(Value::as_str).unwrap_or_default().to_string();
     Some(Conn { profile_id: profile_id.into(), dir: dir.into(), origin, token, connected_at })
 }
@@ -254,7 +253,7 @@ fn read_connection(profile_id: &str, dir: &Path) -> Option<Conn> {
 fn write_connection(c: &Conn) -> anyhow::Result<()> {
     use std::io::Write as _;
     use std::os::unix::fs::OpenOptionsExt as _;
-    security_framework::passwords::set_generic_password(KEYCHAIN_SERVICE, &keychain_account(&c.dir), c.token.as_bytes())?;
+    crate::platform::secrets::set(&c.dir, &keychain_account(&c.dir), &c.token)?;
     let stored = serde_json::json!({
         "version": 1,
         "origin": c.origin,
@@ -268,7 +267,7 @@ fn write_connection(c: &Conn) -> anyhow::Result<()> {
 
 fn forget_connection(dir: &Path) {
     let _ = std::fs::remove_file(dir.join(CONFIG_FILE));
-    let _ = security_framework::passwords::delete_generic_password(KEYCHAIN_SERVICE, &keychain_account(dir));
+    crate::platform::secrets::delete(dir, &keychain_account(dir));
 }
 
 // ---------- Origins ----------
@@ -871,7 +870,7 @@ pub fn confirm_connect(request_id: &str, accept: bool, cx: &mut App) -> Status {
         eprintln!("[phone] couldn't store the connection: {e}");
         set_status(cx, |s| {
             s.state = SyncState::Error;
-            s.message = Some("Billable couldn\u{2019}t use the Keychain to store the connection safely.".into());
+            s.message = Some("Billable couldn\u{2019}t save the connection.".into());
         });
         return status();
     }
