@@ -151,7 +151,7 @@ scripts/bundle.sh     # produces release/Billable.app and release/Billable-*-uni
 
 `bundle.sh` builds an Apple Silicon and an Intel binary and joins them into one universal app, so the same DMG works on any Mac. Building on either kind of Mac works.
 
-To check a build, `scripts/smoke-test.sh release/Billable.app` launches it against a throwaway data folder (pass `x86_64` or `arm64` to run one slice). Every push also runs the [macOS build](.github/workflows/macos.yml) check, which builds the universal DMG and launches it on both an Apple Silicon Mac and an Intel Mac.
+To check a build, `scripts/smoke-test.sh release/Billable.app` launches it against a throwaway data folder (pass `x86_64` or `arm64` to run one slice). Every push also runs the [macOS build](.github/workflows/macos.yml) check, which builds the universal DMG and launches it on both an Apple Silicon Mac and an Intel Mac. The two slices build on separate Macs at the same time, with compiled libraries cached between runs; pull requests skip fat LTO (the `ci` profile), and tags or Run workflow build exactly what ships.
 
 The older Electron app is still in `src/` (`npm install && npm run dev`).
 
