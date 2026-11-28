@@ -1115,9 +1115,23 @@ mod tests {
         std::thread::spawn(move || {
             for (status, body) in replies {
                 let (mut s, _) = listener.accept().unwrap();
+                // Read the whole request: the body can arrive in a later packet.
+                let mut got = Vec::new();
                 let mut buf = vec![0u8; 65536];
-                let n = s.read(&mut buf).unwrap();
-                let _ = tx.send(String::from_utf8_lossy(&buf[..n]).to_string());
+                loop {
+                    let n = s.read(&mut buf).unwrap();
+                    got.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&got).to_string();
+                    let Some(end) = text.find("\r\n\r\n") else {
+                        if n == 0 { break } else { continue }
+                    };
+                    let len = text[..end]
+                        .lines()
+                        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                        .unwrap_or(0);
+                    if n == 0 || got.len() >= end + 4 + len { break }
+                }
+                let _ = tx.send(String::from_utf8_lossy(&got).to_string());
                 let _ = write!(s, "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
             }
         });
