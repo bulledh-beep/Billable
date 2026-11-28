@@ -3,6 +3,7 @@
 
 pub mod menus;
 pub mod pdf;
+pub mod secrets;
 pub mod tray;
 
 use std::{cell::RefCell, time::Duration};
