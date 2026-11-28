@@ -226,6 +226,15 @@ fn chats_end_to_end_with_fake_agents() {
     // One process served both turns.
     assert_eq!(h.log("claude").iter().filter(|l| l["kind"] == "launch").count(), 1);
 
+    // Trusted: a safe command goes ahead without asking
+    assert_eq!(h.ok("thread.update", json!({"threadId": tid, "mode": "trusted"}))["thread"]["mode"], "trusted");
+    let mark = h.events.len();
+    h.ok("turn.send", json!({"threadId": tid, "text": "please use a tool again"}));
+    assert_eq!(h.finished(mark, &tid)["status"], "done");
+    assert!(!h.events[mark..].iter().any(|e| e["type"] == "approval.requested"));
+    assert_eq!(h.items(&tid).into_iter().filter(|i| i["kind"] == "tool" && i["tool"]["output"] == "a.txt").count(), 2);
+    h.ok("thread.update", json!({"threadId": tid, "mode": "ask"}));
+
     // A second message while one is running is refused; Stop ends the turn
     let mark = h.events.len();
     h.ok("turn.send", json!({"threadId": tid, "text": "wait forever"}));
@@ -344,9 +353,18 @@ fn id_of(v: &Value) -> String {
 
 #[test]
 fn folders_and_bulk_delete() {
-    let Some(mut h) = setup("folders") else { return };
+    let Some(mut h) = setup("folders") else {
+        return;
+    };
     let hello = h.ok("hello", json!({}));
-    assert_eq!(hello["features"], json!(["folders", "orchestrator", "bulk-delete", "coordinator", "decisions", "memory", "lookups", "review"]));
+    assert_eq!(hello["features"], json!(["folders", "orchestrator", "bulk-delete", "coordinator", "decisions", "memory", "lookups", "review", "tools", "computer", "attachments", "modes"]));
+
+    // Tools: the list comes from the agents' own config; computer use says what macOS allows.
+    let tools = h.ok("tools.list", json!({}));
+    assert!(tools["servers"].is_array(), "{tools}");
+    assert_eq!(tools["computer"]["supported"], json!(cfg!(target_os = "macos")));
+    let added = h.call("tools.add", json!({"agents": [], "name": "x", "command": "uvx x"}));
+    assert_eq!(added["ok"], false, "{added}");
     let site = h.dir.join("my site");
     std::fs::create_dir_all(&site).unwrap();
     let site_s = site.to_string_lossy().to_string();
@@ -420,7 +438,9 @@ fn mcp_call(url: &str, body: &Value) -> Value {
 
 #[test]
 fn orchestrator_runs_workers() {
-    let Some(mut h) = setup("orchestrator") else { return };
+    let Some(mut h) = setup("orchestrator") else {
+        return;
+    };
     let site = h.dir.join("site");
     std::fs::create_dir_all(&site).unwrap();
     let site_s = site.to_string_lossy().to_string();
@@ -436,7 +456,9 @@ fn orchestrator_runs_workers() {
 
     let rpcs: Vec<Value> = h.log("claude").into_iter().filter(|l| l["kind"] == "rpc").map(|l| l["value"].clone()).collect();
     let tools_list = rpcs.iter().find(|r| r["method"] == "tools/list").unwrap();
-    assert_eq!(tools_list["answer"]["result"]["tools"].as_array().unwrap().len(), 7);
+    let names: Vec<&str> = tools_list["answer"]["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+    assert_eq!(names.iter().filter(|n| !n.starts_with("computer_")).count(), 7, "{names:?}");
+    assert_eq!(names.iter().filter(|n| n.starts_with("computer_")).count(), 10);
     let result_of = |name: &str| -> Value {
         let r = rpcs.iter().find(|r| r["method"] == "tools/call" && r["params"]["name"] == name).unwrap_or_else(|| panic!("no {name}"));
         assert_eq!(r["answer"]["result"]["isError"], false, "{r}");
@@ -538,7 +560,9 @@ fn orchestrator_runs_workers() {
 
 #[test]
 fn coordinator_plans_asks_and_remembers() {
-    let Some(mut h) = setup("coordinator") else { return };
+    let Some(mut h) = setup("coordinator") else {
+        return;
+    };
     h.ok("memory.set", json!({"projectId": "p_1", "text": "- Use British spelling"}));
     assert_eq!(h.call("memory.set", json!({"projectId": "bad id!", "text": "x"}))["error"]["code"], "bad_request");
     let lead = id_of(&h.ok("thread.create", json!({"agent": "claude", "model": "opus", "role": "orchestrator", "projectId": "p_1"})));

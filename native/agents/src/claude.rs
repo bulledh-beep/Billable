@@ -64,7 +64,9 @@ pub fn models_from_initialize(response: &Value) -> Option<(Vec<Model>, String)> 
     let mut models = Vec::new();
     let mut default = None;
     for m in list {
-        let Some(id) = m.get("value").and_then(Value::as_str) else { continue };
+        let Some(id) = m.get("value").and_then(Value::as_str) else {
+            continue;
+        };
         // Aliases only ("opus", "sonnet"…): they follow the newest release.
         if id == "default" || id.starts_with("claude-") || id.contains('[') {
             continue;
@@ -113,6 +115,10 @@ pub fn signed_in(bin: &Path) -> Option<bool> {
 
 /// Tools a lookup never gets.
 pub const READ_ONLY_DENIED: &[&str] = &["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"];
+/// What a lookup may do without asking, beyond reading: look things up.
+pub const LOOKUP_ALLOWED: &[&str] = &["WebSearch", "WebFetch"];
+/// Claude Code's own helper tools, which a coordinator never gets.
+pub const COORDINATOR_DENIED: &[&str] = &["Task", "Agent"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Launch {
@@ -127,6 +133,8 @@ pub struct Launch {
     pub notes: String,
     /// A lookup: it may read but never change anything.
     pub read_only: bool,
+    /// A coordinator: its helpers are FeedHQ jobs, never Claude Code's own.
+    pub coordinator: bool,
 }
 
 /// The `--mcp-config` JSON: `feedhq` (the relay) and `billable`. `None`
@@ -180,9 +188,17 @@ pub fn launch_args(l: &Launch) -> Vec<String> {
         a.push(format!("mcp__{}", crate::orchestrator::SERVER_NAME));
     }
     if l.read_only {
-        // Anything else that would need an approval is turned down by the engine.
+        // A lookup may look things up on the web; anything else that would
+        // need an approval is turned down by the engine.
+        a.push("--allowedTools".into());
+        a.push(LOOKUP_ALLOWED.join(","));
         a.push("--disallowedTools".into());
         a.push(READ_ONLY_DENIED.join(","));
+    } else if l.coordinator {
+        // Hidden helpers die with the coordinator's turn and can't be seen
+        // or answered; its helpers are jobs (start_agents) instead.
+        a.push("--disallowedTools".into());
+        a.push(COORDINATOR_DENIED.join(","));
     }
     a
 }
@@ -236,7 +252,9 @@ impl Mapper {
 
     /// Events for one line, and lines to write back to the CLI.
     pub fn line(&mut self, line: &str) -> (Vec<DriverEvent>, Vec<String>) {
-        let Ok(v) = serde_json::from_str::<Value>(line) else { return (vec![], vec![]) };
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            return (vec![], vec![]);
+        };
         let mut out = Vec::new();
         let mut replies = Vec::new();
         let main = v.get("parent_tool_use_id").is_none_or(Value::is_null);
@@ -244,6 +262,16 @@ impl Mapper {
             "system" if v.get("subtype").and_then(Value::as_str) == Some("init") => {
                 if let Some(s) = v.get("session_id").and_then(Value::as_str) {
                     out.push(DriverEvent::Session(s.to_string()));
+                }
+                if let Some(list) = v.get("slash_commands").and_then(Value::as_array) {
+                    out.push(DriverEvent::Commands(list.iter().filter_map(Value::as_str).map(str::to_string).collect()));
+                }
+                if let Some(list) = v.get("mcp_servers").and_then(Value::as_array) {
+                    let servers = list
+                        .iter()
+                        .filter_map(|m| Some((m.get("name")?.as_str()?.to_string(), crate::servers::status_word(m.get("status").and_then(Value::as_str).unwrap_or("")).to_string())))
+                        .collect();
+                    out.push(DriverEvent::McpStatus(servers));
                 }
             }
             "stream_event" if main => self.stream_event(v.get("event").unwrap_or(&Value::Null), &mut out),
@@ -362,7 +390,9 @@ impl Mapper {
             }
             "content_block_delta" => {
                 let index = e.get("index").and_then(Value::as_u64).unwrap_or(0);
-                let Some((k, _)) = self.blocks.get(&index) else { return };
+                let Some((k, _)) = self.blocks.get(&index) else {
+                    return;
+                };
                 let d = e.get("delta").cloned().unwrap_or(Value::Null);
                 match d.get("type").and_then(Value::as_str) {
                     Some("text_delta") => {
@@ -386,7 +416,9 @@ impl Mapper {
 /// The control response for an approval.
 fn answer_line(request_id: &str, decision: Decision, pending: Option<&PendingTool>) -> String {
     let response = match decision {
-        Decision::Deny => json!({"behavior": "deny", "message": "The user declined this step in FeedHQ."}),
+        Decision::Deny => {
+            json!({"behavior": "deny", "message": "The user declined this step in FeedHQ."})
+        }
         Decision::Allow | Decision::AllowAlways => {
             let mut r = json!({"behavior": "allow", "updatedInput": pending.map(|p| p.input.clone()).unwrap_or(json!({}))});
             if decision == Decision::AllowAlways {
@@ -420,6 +452,14 @@ fn answer_line(request_id: &str, decision: Decision, pending: Option<&PendingToo
 
 pub fn user_message_line(text: &str) -> String {
     json!({"type": "user", "message": {"role": "user", "content": text}, "parent_tool_use_id": null, "session_id": ""}).to_string()
+}
+
+/// A message with images: text and image blocks.
+pub fn user_message_with_images(text: &str, images: &[std::path::PathBuf]) -> String {
+    if images.is_empty() {
+        return user_message_line(text);
+    }
+    json!({"type": "user", "message": {"role": "user", "content": crate::attachments::claude_content(text, images)}, "parent_tool_use_id": null, "session_id": ""}).to_string()
 }
 
 // ---------- The process ----------
@@ -479,8 +519,8 @@ impl Session {
         Ok(session)
     }
 
-    pub fn send(&mut self, text: &str) -> anyhow::Result<()> {
-        write_line(&self.stdin, &user_message_line(text))?;
+    pub fn send(&mut self, text: &str, images: &[std::path::PathBuf]) -> anyhow::Result<()> {
+        write_line(&self.stdin, &user_message_with_images(text, images))?;
         Ok(())
     }
 
@@ -522,7 +562,7 @@ mod tests {
 
     /// Recorded from Claude Code 2.1.332 (trimmed): a Bash call with an
     /// approval, then a text reply, streamed with partial messages.
-    const TRANSCRIPT: &str = r#"{"type":"system","subtype":"init","cwd":"/w","session_id":"s-1","tools":["Bash"],"mcp_servers":[],"model":"claude-haiku-5-5","permissionMode":"default"}
+    const TRANSCRIPT: &str = r#"{"type":"system","subtype":"init","cwd":"/w","session_id":"s-1","tools":["Bash"],"mcp_servers":[{"name":"resolve","status":"connected"},{"name":"linear","status":"needs-auth"}],"model":"claude-haiku-5-5","permissionMode":"default"}
 {"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[]}},"session_id":"s-1","parent_tool_use_id":null}
 {"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}},"session_id":"s-1","parent_tool_use_id":null}
 {"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Need to run it"}},"session_id":"s-1","parent_tool_use_id":null}
@@ -547,6 +587,7 @@ mod tests {
         let events = lines(&mut m, TRANSCRIPT);
         let expected = vec![
             DriverEvent::Session("s-1".into()),
+            DriverEvent::McpStatus(vec![("resolve".into(), "connected".into()), ("linear".into(), "needs_auth".into())]),
             DriverEvent::ReasoningDelta { key: "msg_1:r0".into(), text: "Need to run it".into() },
             DriverEvent::ToolStarted { key: "toolu_1".into(), name: "Bash".into(), input: json!({}) },
             DriverEvent::ReasoningDone { key: "msg_1:r0".into(), text: "Need to run it".into() },
@@ -610,7 +651,8 @@ mod tests {
 
     #[test]
     fn launch_flags() {
-        let a = launch_args(&Launch { model: "opus".into(), effort: Some("high".into()), resume: Some("s-1".into()), mcp_url: Some("http://127.0.0.1:9/mcp/x".into()), orchestrate_url: None, notes: String::new(), read_only: false });
+        let a =
+            launch_args(&Launch { model: "opus".into(), effort: Some("high".into()), resume: Some("s-1".into()), mcp_url: Some("http://127.0.0.1:9/mcp/x".into()), orchestrate_url: None, notes: String::new(), read_only: false, coordinator: false });
         let joined = a.join(" ");
         for f in ["-p", "--input-format stream-json", "--output-format stream-json", "--verbose", "--include-partial-messages", "--permission-prompt-tool stdio", "--model opus", "--effort high", "--resume s-1"] {
             assert!(joined.contains(f), "{f} missing from {joined}");
@@ -619,12 +661,14 @@ mod tests {
         let cfg: Value = serde_json::from_str(&a[i + 1]).unwrap();
         assert_eq!(cfg, json!({"mcpServers":{"feedhq":{"type":"http","url":"http://127.0.0.1:9/mcp/x"}}}));
         assert!(!a.iter().any(|x| x == "--allowedTools"));
-        let a = launch_args(&Launch { model: "haiku".into(), effort: None, resume: None, mcp_url: None, orchestrate_url: None, notes: String::new(), read_only: true });
+        let a = launch_args(&Launch { model: "haiku".into(), effort: None, resume: None, mcp_url: None, orchestrate_url: None, notes: String::new(), read_only: true, coordinator: false });
         assert!(!a.iter().any(|x| x == "--effort" || x == "--resume" || x == "--mcp-config"));
         // A lookup can't write or run commands
         assert!(a.windows(2).any(|w| w == ["--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash"]));
+        // ...but it can search the web and read pages
+        assert!(a.windows(2).any(|w| w == ["--allowedTools", "WebSearch,WebFetch"]));
         // An orchestrator: both servers, the guidance, its own tools allowed
-        let a = launch_args(&Launch { model: "opus".into(), effort: None, resume: None, mcp_url: Some("http://h/mcp/x".into()), orchestrate_url: Some("http://h/mcp/x/orchestrate/t_1".into()), notes: crate::orchestrator::notes(Some(crate::orchestrator::Seat::Coordinator), None), read_only: false });
+        let a = launch_args(&Launch { model: "opus".into(), effort: None, resume: None, mcp_url: Some("http://h/mcp/x".into()), orchestrate_url: Some("http://h/mcp/x/orchestrate/t_1".into()), notes: crate::orchestrator::notes(Some(crate::orchestrator::Seat::Coordinator), None), read_only: false, coordinator: true });
         let i = a.iter().position(|x| x == "--mcp-config").unwrap();
         let cfg: Value = serde_json::from_str(&a[i + 1]).unwrap();
         assert_eq!(cfg["mcpServers"]["billable"], json!({"type":"http","url":"http://h/mcp/x/orchestrate/t_1"}));
@@ -632,6 +676,8 @@ mod tests {
         let i = a.iter().position(|x| x == "--append-system-prompt").unwrap();
         assert!(a[i + 1].contains("start_agents") && a[i + 1].starts_with(SYSTEM_NOTE));
         assert!(a.windows(2).any(|w| w == ["--allowedTools", "mcp__billable"]));
+        // Its helpers are jobs, not Claude Code's hidden ones
+        assert!(a.windows(2).any(|w| w == ["--disallowedTools", "Task,Agent"]));
     }
 
     #[test]

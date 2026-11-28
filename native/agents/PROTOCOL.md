@@ -93,6 +93,7 @@ Engine → screen, an **event** (any time, not tied to a request):
   projectId?: string | null;     // Mac only: the FeedHQ project it's filed in (its memory applies)
   workerKind?: "job" | "lookup" | null;  // workers only, see "Coordinator"
   reviewAt?: string | null;      // a job handed its work back for the person to check
+  mode?: "ask" | "edits" | "trusted" | "auto" | null;  // Mac only, see "Modes" (null = ask)
 }
 ```
 
@@ -119,6 +120,7 @@ Engine → screen, an **event** (any time, not tied to a request):
   };
   divider?: { from: { agent: string; model: string }; to: { agent: string; model: string } };
   decision?: Decision;           // kind "decision"
+  attachments?: Attachment[];    // kind "user": what came with the message (see "Attachments")
 }
 ```
 
@@ -155,16 +157,16 @@ Engine → screen, an **event** (any time, not tied to a request):
 
 | Method | Params | Result |
 | --- | --- | --- |
-| `hello` | `{ client: "billable" \| "web" \| "phone" }` | `{ engine: "mac" \| "cloud", engineVersion, protocol: 1, agents: Agent[], feedhq: { connected: boolean, account: string \| null }, device: string \| null, features?: string[] }` (`features` lists what this engine adds to v1: `"folders"` (cwd + system.pickFolder), `"orchestrator"`, `"bulk-delete"`, `"coordinator"`, `"decisions"`, `"memory"`, `"lookups"`, `"review"`; missing = none) |
+| `hello` | `{ client: "billable" \| "web" \| "phone" }` | `{ engine: "mac" \| "cloud", engineVersion, protocol: 1, agents: Agent[], feedhq: { connected: boolean, account: string \| null }, device: string \| null, features?: string[] }` (`features` lists what this engine adds to v1: `"folders"` (cwd + system.pickFolder), `"orchestrator"`, `"bulk-delete"`, `"coordinator"`, `"decisions"`, `"memory"`, `"lookups"`, `"review"`, `"tools"`, `"computer"`, `"attachments"`, `"modes"`; missing = none) |
 | `threads.list` | `{ includeArchived?: boolean }` | `{ threads: Thread[] }` (newest `updatedAt` first) |
 | `thread.get` | `{ threadId }` | `{ thread: Thread, items: Item[], approvals: Approval[] }` (items oldest first) |
-| `thread.create` | `{ agent, model, effort?: string \| null, cwd?: string \| null, role?: "orchestrator" \| null, projectId?: string \| null }` | `{ thread: Thread }` |
-| `thread.update` | `{ threadId, title?, pinned?, settled?: boolean, archived?: boolean, projectId?: string \| null }` | `{ thread: Thread }` (`settled: true` also clears `reviewAt`; a coordinator's `projectId` carries to its jobs) |
+| `thread.create` | `{ agent, model, effort?: string \| null, cwd?: string \| null, role?: "orchestrator" \| null, projectId?: string \| null, mode?: Mode }` | `{ thread: Thread }` (`mode` left out: `trusted` for a coordinator, `ask` otherwise) |
+| `thread.update` | `{ threadId, title?, pinned?, settled?: boolean, archived?: boolean, projectId?: string \| null, mode?: Mode }` | `{ thread: Thread }` (`settled: true` also clears `reviewAt`; a coordinator's `projectId` and `mode` carry to its jobs) |
 | `thread.delete` | `{ threadId }` | `{}` (also deletes its workers) |
 | `threads.delete` | `{ threadIds: string[] }` | `{ deleted: string[] }` (at most 200; unknown ids are skipped; one `thread.deleted` event each) |
 | `thread.retitle` | `{ threadId }` | always `bad_request` "Rename it instead." (titles never use a model; rename with `thread.update`) |
-| `turn.send` | `{ threadId, text, agent?, model?, effort? }` | `{ turnId, userItem: Item }` |
-| `turn.stop` | `{ threadId }` | `{}` |
+| `turn.send` | `{ threadId, text, agent?, model?, effort?, attachments?: AttachmentIn[] }` | `{ turnId, userItem: Item }` (`text` may be "" when something is attached) |
+| `turn.stop` | `{ threadId, jobs?: boolean }` | `{}` (on a coordinator, `jobs: false` stops only its own turn and lets its jobs and lookups finish; default true) |
 | `approval.answer` | `{ threadId, approvalId, decision: "allow" \| "allow_always" \| "deny" }` | `{}` |
 | `decision.answer` | `{ threadId, itemId, choice: number, text?: string, kept?: number[] }` | `{ item: Item }` (`not_found` once answered; a plan needs at least one kept job) |
 | `memory.get` | `{ projectId }` | `{ projectId, text, updatedAt: string \| null }` |
@@ -173,6 +175,15 @@ Engine → screen, an **event** (any time, not tied to a request):
 | `feedhq.connect` | `{}` | `{ authorizeUrl: string }` (Mac engine only; the screen navigates there) |
 | `feedhq.disconnect` | `{}` | `{}` |
 | `system.pickFolder` | `{}` | `{ path: string \| null }` (Mac engine, inside Billable only: shows the Mac's folder picker; null = cancelled. From the relay: `bad_request` "Pick the folder on your Mac.") |
+| `tools.list` | `{ cwd?: string \| null }` | `{ servers: McpServer[], computer: ComputerAccess }` (see "Tools") |
+| `tools.check` | `{ cwd? }` | the same, after Claude Code started and checked each server |
+| `tools.add` | `{ agents: ("claude" \| "codex")[], name, command?: string, url?: string, env?: Record<string,string>, scope?: "user" \| "local", cwd? }` | the same list |
+| `tools.remove` | `{ id, cwd? }` | the same list |
+| `tools.import` | `{ id, agents: ("claude" \| "codex")[] }` (an `app` server) | the same list |
+| `system.pickFiles` | `{}` | `{ paths: string[] }` (Mac engine, inside Billable only: files and folders, several at once; [] = cancelled) |
+| `files.search` | `{ threadId?, cwd?, query }` | `{ root, results: { path, rel, folder: boolean }[] }` (at most 30, best first; for `@`) |
+| `commands.list` | `{ threadId?, cwd? }` | `{ commands: { name, description }[] }` (for `/`) |
+| `computer.allow` | `{ which: "screen" \| "control" }` | `{ computer: ComputerAccess }` (asks macOS, and opens its settings pane) |
 
 `cwd` must be an existing folder (`bad_request` "That folder isn't on this Mac." otherwise). It's fixed when the thread is made; every turn of the thread, and every
 worker it starts, runs there.
@@ -215,20 +226,27 @@ session a second MCP server, `billable` (same local relay, path
 
 | Tool | Input | Returns |
 | --- | --- | --- |
-| `start_agents` | `{ agents: [{ title, task, agent?: "claude" \| "codex", model?, effort? }] }` (1 to 8) | `[{ id, title, agent, model, effort }]` at once; the workers run in the background |
+| `start_agents` | `{ agents: [{ title, task, agent?: "claude" \| "codex", model?, effort? }] }` (1 to 6) | `[{ id, title, agent, model, effort }]` at once; the workers run in the background |
 | `wait_for_agents` | `{ ids?: string[], timeoutSeconds?: number }` (default all, 600 s, max 1,800) | `[{ id, title, status, answer }]`; `answer` = the worker's last assistant text, trimmed to 8,000 chars |
 | `message_agent` | `{ id, text }` | `{ ok }` (a follow-up turn in that worker; `busy` while it runs) |
 | `list_agents` | `{}` | `[{ id, title, agent, model, effort, status }]` |
 | `stop_agents` | `{ ids?: string[] }` | `{ ok }` |
 
-- The orchestrator is told (appended system prompt) to choose each worker's
-  model and effort for the job: low effort and the fastest model for lookups,
-  renames and mechanical edits; medium for everyday features and fixes; high
-  and the strongest model for hard debugging, design and anything risky. It
-  writes a one-line reason in each worker's `task`.
-- At most 4 workers run at once per orchestrator; the rest wait their turn
-  (status `idle` with preview "Waiting to start"). At most 24 workers per
-  orchestrator.
+- Every job spends the person's plan, so the orchestrator is told (appended
+  system prompt) to work alone first and start jobs only for pieces that truly
+  run in parallel, and to pick the smallest model that will do: haiku at low
+  effort for lookups, checks and mechanical edits; sonnet at medium for
+  everyday work (the usual choice); opus at high, rarely, for hard debugging,
+  design and anything risky. It writes a one-line reason in each `task`.
+- Jobs never run on Fable: `start_agents` and `propose_plan` refuse any model
+  id containing `fable`, and the model list they're shown leaves it out. A
+  model left out is `haiku` for a lookup (effort `low`) and `sonnet` for a job,
+  when the agent has them, else the agent's default.
+- At most 4 jobs run at once per orchestrator; the rest wait their turn
+  (status `idle` with preview "Waiting to start"). The coordinator itself
+  never gets Claude Code's built-in `Task`/`Agent` helpers
+  (`--disallowedTools`): those die with its turn, and the person can't see or
+  steer them.
 - Workers run in the orchestrator's `cwd`, with the FeedHQ connector, and ask
   for approval like any thread (their approvals show on the worker and as a
   badge on the orchestrator). A worker can't start workers.
@@ -251,8 +269,9 @@ for its seat:
 | any other chat | `ask_person`, and `remember` in a project |
 
 - `start_agents` items take `kind: "job" | "lookup"` (default job). Lookups
-  have their own 4 slots, so a quick read never waits behind jobs; 40 jobs
-  and lookups per coordinator in all. Results carry `kind`.
+  have their own 2 slots, so a quick read never waits behind jobs; 12 jobs
+  and lookups per coordinator in all. Results carry `kind`. Lookups may also
+  search and read the web (Claude Code: `WebSearch`, `WebFetch` allowed).
 - `propose_plan { summary?, agents: [... same items, plus reason?] }` shows a
   plan card (a `decision` item with `plan`) and holds the call up to 25
   minutes. `decision.answer` with choice 0 starts the kept jobs, whether or
@@ -273,6 +292,129 @@ for its seat:
   memory starts a fresh agent process on the next turn (the session resumes).
 - Worker statuses: queued, running, waiting (an approval or a card is open),
   review, done, stopped, failed, not_started, deleted.
+
+## Modes (Mac engine, `features` "modes")
+
+`Thread.mode` says what an agent may do without asking. Every approval still
+arrives as `approval.requested` unless the mode answers it first, in the
+engine, before anyone sees it:
+
+| Mode | Answered "allow" without asking |
+| --- | --- |
+| `ask` (default) | nothing |
+| `edits` | file edits inside the chat's folder (Claude Code `Edit`, `MultiEdit`, `Write`, `NotebookEdit`; Codex `fileChange`) |
+| `trusted` | `edits`, plus reading and searching (files and the web), and commands on the safe list below |
+| `auto` | everything except the hard stops below |
+
+- Anything not answered by the mode comes to the person as usual. The engine
+  only ever answers "allow"; a "no" is always the person's.
+- Outside `auto`, a command asks if it hides what runs (backticks, `$(`,
+  `<(`, `>(`, a newline), redirects outside the folder, or has any part
+  that isn't on the safe list. A path starting with `~` or using `$` is never
+  "inside the folder". MCP tools go ahead in `trusted` only when the name is a
+  read (`get`, `list`, `search`, `read`… with no `delete`, `send`, `post`,
+  `publish`, `create`, `update`, `run`…).
+- Hard stops, which ask even in `auto`: edits outside the folder; `sudo`,
+  `su`, `dd`, `mkfs`, `diskutil erase…`, `shutdown`, `launchctl`; force or
+  delete pushes; `git reset --hard`, `git clean -f`, `git filter-branch`;
+  `rm`, `chmod` or `chown` on anything outside the folder or on the folder
+  itself; piping into a shell or interpreter (`curl … | sh`); and MCP tools
+  whose names delete, remove, send, post, publish, pay, transfer or merge.
+- Safe commands (`trusted`): each part of a `;`, `|`, `&&`, `||` chain must be
+  one of: `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find` (no
+  `-delete`/`-exec`), `sed` (no `-i`), `pwd`, `echo`, `diff`; `git status`,
+  `diff`, `log`, `show`, `branch`, `add`, `commit`, `checkout -b`, `switch -c`,
+  `stash`; `npm`/`pnpm`/`yarn` test, run, install; `npx` tsc, eslint, vitest,
+  prettier, next; `cargo` build, test, check, fmt, clippy; `go` build, test;
+  `make`; `node`/`python` on a script inside the folder; `ffmpeg`/`ffprobe`
+  writing inside the folder.
+- A coordinator's `mode` carries to its jobs (new jobs copy it; changing it
+  changes theirs). Lookups never change anything, whatever the mode.
+
+## Tools (Mac engine, `features` "tools")
+
+The person's own MCP servers, as the agents load them. Billable never edits
+an agent's files itself: it reads `~/.claude.json` (user and this folder's
+local list), the folder's `.mcp.json` and `~/.codex/config.toml`, and changes
+them only when the person asks, with the agents' own `claude mcp add-json` /
+`mcp remove` and `codex mcp add` / `mcp remove`. Nothing here starts a model.
+
+```ts
+McpServer = {
+  id: string;            // "<agent>:<scope>:<name>"
+  name: string;
+  agent: "claude" | "codex" | "app";        // app = the Claude app, to copy over
+  scope: "user" | "local" | "project" | "app";
+  transport: "stdio" | "http" | "sse";
+  detail: string;        // the command line or address
+  status: "connected" | "failed" | "needs_auth" | "off" | "unknown";
+  error: string | null;
+  copiedTo?: ("claude" | "codex")[];        // app servers: already copied
+}
+ComputerAccess = { supported: boolean, screen: boolean, control: boolean }
+```
+
+- Claude Code's status comes from each chat's start (`system/init`'s
+  `mcp_servers`) and from `tools.check` (`claude mcp list`).
+- The Claude app's servers are its `claude_desktop_config.json` list and its
+  installed extensions (`Claude Extensions/*/manifest.json`, with the
+  person's settings filled in; turned-off ones are left out). `tools.import`
+  copies one under a cleaned name (`DaVinci Resolve Studio` →
+  `davinci-resolve-studio`), for every folder. An extension written for the
+  app's built-in Node runs on the Claude app itself
+  (`ELECTRON_RUN_AS_NODE=1`) when the Mac has no Node of its own.
+
+## Computer (Mac engine, `features` "computer")
+
+Every chat but a lookup has these on the `billable` server. Billable does the
+work itself, so it's the same for Claude Code and Codex, and only Billable
+needs Screen Recording and Accessibility.
+
+| Tool | Does |
+| --- | --- |
+| `computer_screenshot` | an image of the main display, at most 1280 px on its long side; coordinates for the rest are in its pixels |
+| `computer_click` | `{ x, y, button?, count?, modifiers? }` |
+| `computer_move`, `computer_drag`, `computer_scroll` | pointer |
+| `computer_type`, `computer_key` | keyboard (`"cmd+s"`, `"return"`) |
+| `computer_open_app` | `{ name }` |
+| `computer_cursor_position`, `computer_wait` | |
+
+- One chat at a time: the first to act holds the screen until its turn ends.
+- The first screenshot asks "Let this chat see your screen?", and acting in
+  an app asks "Let this chat use <App>?", as decision cards. Allow holds for
+  that chat until Billable quits; Don't allow fails the call.
+- Billable itself is never clicked or typed into.
+- Missing macOS access fails the call with a plain line, and asks macOS.
+
+## Attachments (Mac engine, `features` "attachments")
+
+```ts
+AttachmentIn = {
+  name: string;
+  kind?: "image" | "file" | "folder";   // worked out from the path when left out
+  path?: string;         // a file or folder on this Mac (Billable's picker, Finder drop, @)
+  data?: string;         // the bytes, base64 (inside Billable; at most 40 MB)
+  url?: string;          // a FeedHQ upload's signed link (website and phone; at most 100 MB)
+  thumb?: string;        // a data:image preview for the chat, at most 64 KB
+}
+Attachment = { name, kind: "image" | "file" | "folder", path: string, size?: number, thumb?: string }
+```
+
+- At most 20 a message. A path is used where it is; bytes and uploads are
+  saved in the engine's `agents-attachments/<threadId>/` folder first.
+- The agent gets the person's words, then `Attached:` and one path a line
+  (folders marked). Images also go in as the agents' own image inputs
+  (Claude Code: inline images up to 5 MB; Codex: `localImage`).
+- Website and phone uploads go to the private `agent-uploads` bucket under
+  `<user id>/`, and the page deletes them once `turn.started` arrives.
+- `files.search` lists the folder's files with git (tracked and untracked,
+  ignoring what `.gitignore` does), or walks it skipping build folders.
+  `@` puts the path in the message as an attachment.
+- `commands.list` is the folder's `.claude/commands` and `.claude/skills`,
+  then the person's, then whatever else Claude Code said it has. Picking one
+  writes `/<name> ` in the box; Claude Code runs it.
+- `cwd` is only taken from Billable itself; from the relay these use the
+  chat's own folder.
 
 ## Handoff when switching agents mid-chat
 

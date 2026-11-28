@@ -298,8 +298,10 @@ pub fn thread_params(model: &str, cwd: &Path, mcp_url: Option<&str>, orchestrate
     p
 }
 
-pub fn turn_params(codex_thread: &str, text: &str, model: &str, effort: Option<&str>) -> Value {
-    let mut p = json!({"threadId": codex_thread, "input": [{"type": "text", "text": text}], "model": model, "summary": "auto"});
+pub fn turn_params(codex_thread: &str, text: &str, model: &str, effort: Option<&str>, images: &[std::path::PathBuf]) -> Value {
+    let mut input = vec![json!({"type": "text", "text": text})];
+    input.extend(images.iter().map(|p| json!({"type": "localImage", "path": p.to_string_lossy()})));
+    let mut p = json!({"threadId": codex_thread, "input": input, "model": model, "summary": "auto"});
     if let Some(e) = effort {
         p["effort"] = json!(e);
     }
@@ -538,7 +540,9 @@ mod tests {
         assert_eq!(p["config"]["mcp_servers.billable"]["url"], json!("http://h/mcp/s/orchestrate/t_1"));
         assert_eq!(p["cwd"], json!("/site"));
         assert!(p["developerInstructions"].as_str().unwrap().contains("wait_for_agents"));
-        assert_eq!(turn_params("c1", "hi", "m", Some("high")), json!({"threadId":"c1","input":[{"type":"text","text":"hi"}],"model":"m","summary":"auto","effort":"high"}));
+        assert_eq!(turn_params("c1", "hi", "m", Some("high"), &[]), json!({"threadId":"c1","input":[{"type":"text","text":"hi"}],"model":"m","summary":"auto","effort":"high"}));
+        let with = turn_params("c1", "hi", "m", None, &[std::path::PathBuf::from("/a/shot.png")]);
+        assert_eq!(with["input"][1], json!({"type": "localImage", "path": "/a/shot.png"}));
         assert_eq!(parse_version("codex-cli 0.172.0\n").as_deref(), Some("0.172.0"));
         let list = json!({"data":[
             {"id":"a","model":"gpt-6.1-sol","displayName":"GPT-6.1 Sol","hidden":false,"isDefault":true,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low","description":""},{"reasoningEffort":"medium","description":""}],"description":""},

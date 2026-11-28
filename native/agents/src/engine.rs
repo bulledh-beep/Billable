@@ -15,7 +15,7 @@
 //! finish, at its timeout, or when the orchestrator stops.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::{
         mpsc::{self, Receiver, RecvTimeoutError, Sender},
@@ -27,16 +27,17 @@ use std::{
 use serde_json::{json, Value};
 
 use crate::{
-    claude, codex,
+    attachments, claude, codex, commands, computer,
     discovery::{self, Binaries},
     driver::DriverEvent,
-    handoff,
+    guard, handoff,
     oauth::{self, FeedhqAuth},
     orchestrator::{self, Call, Seat},
     protocol::*,
     relay::{Orchestrate, Relay},
     remote::RemoteEngine,
     secrets::SecretStore,
+    servers::{self, Places},
     store::Store,
     tools,
     util::{cut, first_words, new_id, now_iso, one_line},
@@ -50,15 +51,22 @@ const STOP_GRACE: Duration = Duration::from_secs(10);
 /// A sign-in started with feedhq.connect must finish within this.
 const SIGN_IN_LIMIT: Duration = Duration::from_secs(15 * 60);
 
-/// Answers a folder pick: the chosen folder, or `None` when cancelled.
-pub type FolderAnswer = Box<dyn FnOnce(Option<PathBuf>) + Send>;
-/// Shows the Mac's folder picker for `system.pickFolder`. It's called on
-/// the engine thread and must return at once, calling the answer later
-/// (from any thread).
-pub type FolderPicker = Arc<dyn Fn(FolderAnswer) + Send + Sync>;
+/// Answers a pick: what was chosen (empty when cancelled).
+pub type FolderAnswer = Box<dyn FnOnce(Vec<PathBuf>) + Send>;
+/// What the picker is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickKind {
+    /// One folder (`system.pickFolder`).
+    Folder,
+    /// Files and folders to attach, several at once (`system.pickFiles`).
+    Files,
+}
+/// Shows the Mac's picker. It's called on the engine thread and must return
+/// at once, calling the answer later (from any thread).
+pub type FolderPicker = Arc<dyn Fn(PickKind, FolderAnswer) + Send + Sync>;
 
 /// The `features` this engine adds to protocol v1.
-pub const FEATURES: &[&str] = &["folders", "orchestrator", "bulk-delete", "coordinator", "decisions", "memory", "lookups", "review"];
+pub const FEATURES: &[&str] = &["folders", "orchestrator", "bulk-delete", "coordinator", "decisions", "memory", "lookups", "review", "tools", "computer", "attachments", "modes"];
 /// At most this many chats per threads.delete.
 const MAX_BULK_DELETE: usize = 200;
 
@@ -127,6 +135,12 @@ enum Cmd {
     /// A chat's call through the relay's `billable` server.
     Orchestrate { thread: String, call: Call, reply: Sender<Result<Value, String>> },
     FolderPicked { to: ReplyTo, path: Option<PathBuf> },
+    /// A message's uploads came down (or one didn't).
+    Downloaded { begun: Box<Begun>, failed: Option<String> },
+    /// An answer worked out off the engine thread.
+    Answer { to: ReplyTo, result: Result<Value, ProtoError> },
+    /// A Tools change or check finished (servers.rs): the list is sent again.
+    ToolsDone { to: ReplyTo, cwd: Option<PathBuf>, result: Result<Option<servers::Statuses>, String> },
     Shutdown(Sender<()>),
 }
 
@@ -245,6 +259,8 @@ struct Turn {
     parent: Option<String>,
     /// A lookup: read-only, its own slots, never asks the person.
     lookup: bool,
+    /// The message's images, for the agent's own image inputs.
+    images: Vec<PathBuf>,
 }
 
 /// An ask_person or propose_plan call, answered when the person picks on
@@ -254,6 +270,8 @@ struct Ask {
     item: String,
     until: Instant,
     reply: Sender<Result<Value, String>>,
+    /// A computer tool waiting on the person's OK: (tool, args, grant).
+    computer: Option<(String, Value, String)>,
 }
 
 /// A wait_for_agents call, answered when its workers are done or at `until`.
@@ -271,6 +289,8 @@ struct Begun {
     user: Item,
     prompt: String,
     session: Option<String>,
+    /// Uploads to fetch before the agent starts (link → path).
+    downloads: Vec<(String, PathBuf)>,
 }
 
 struct OpenApproval {
@@ -323,6 +343,16 @@ struct State {
     worker_ends: HashMap<String, TurnStatus>,
     waits: Vec<Wait>,
     asks: Vec<Ask>,
+    /// Claude Code's MCP servers as they last came up: name → (status, error).
+    mcp_status: servers::Statuses,
+    /// Claude Code's slash commands, as its latest session listed them.
+    claude_commands: Vec<String>,
+    /// The chat using the screen (one at a time, until its turn ends).
+    screen_holder: Option<String>,
+    /// What the person allowed each chat on the screen: "screen", "app:<name>".
+    grants: HashMap<String, HashSet<String>>,
+    /// Open "Let this chat use …?" cards: item id → (thread, grant).
+    computer_cards: HashMap<String, (String, String)>,
 }
 
 fn device_name() -> Option<String> {
@@ -444,6 +474,11 @@ impl State {
             worker_ends: HashMap::new(),
             waits: Vec::new(),
             asks: Vec::new(),
+            mcp_status: servers::Statuses::new(),
+            screen_holder: None,
+            claude_commands: Vec::new(),
+            grants: HashMap::new(),
+            computer_cards: HashMap::new(),
         }
     }
 
@@ -592,6 +627,23 @@ impl State {
             }
             Cmd::Orchestrate { thread, call, reply } => self.orchestrate(&thread, call, reply),
             Cmd::FolderPicked { to, path } => self.reply(&to, Ok(json!({ "path": path.map(|p| p.to_string_lossy().to_string()) }))),
+            Cmd::Downloaded { begun, failed } => match failed {
+                None => self.launch(*begun),
+                Some(e) => {
+                    self.emit(Event::TurnStarted { thread_id: begun.thread.clone(), turn_id: begun.turn_id.clone() });
+                    self.finish_turn(&begun.thread, TurnStatus::Failed, Some(e), None);
+                }
+            },
+            Cmd::Answer { to, result } => self.reply(&to, result),
+            Cmd::ToolsDone { to, cwd, result } => {
+                let result = result.map_err(ProtoError::failed).map(|checked| {
+                    if let Some(checked) = checked {
+                        self.mcp_status.extend(checked);
+                    }
+                    self.tools_list(cwd.as_deref())
+                });
+                self.reply(&to, result);
+            }
             Cmd::Shutdown(_) => {}
         }
     }
@@ -627,8 +679,12 @@ impl State {
     }
 
     fn request(&mut self, src: Source, json: &str) {
-        let Ok(raw) = serde_json::from_str::<Value>(json) else { return };
-        let Some(id) = raw.get("id").and_then(Value::as_str).map(str::to_string) else { return };
+        let Ok(raw) = serde_json::from_str::<Value>(json) else {
+            return;
+        };
+        let Some(id) = raw.get("id").and_then(Value::as_str).map(str::to_string) else {
+            return;
+        };
         let to = (src, id);
         let req: Request = match serde_json::from_value(raw) {
             Ok(r) => r,
@@ -656,7 +712,7 @@ impl State {
                 Ok(()) => return,
                 Err(e) => Err(e),
             },
-            "turn.stop" => params::<ThreadIdParams>(p).and_then(|p| self.turn_stop(&p.thread_id)),
+            "turn.stop" => params::<TurnStopParams>(p).and_then(|p| self.turn_stop_with(&p.thread_id, p.jobs.unwrap_or(true))),
             "approval.answer" => params::<ApprovalAnswerParams>(p).and_then(|p| self.approval_answer(p)),
             "decision.answer" => params::<DecisionAnswerParams>(p).and_then(|p| self.decision_answer(p)),
             "memory.get" => params::<MemoryGetParams>(p).and_then(|p| self.memory_get(&p.project_id)),
@@ -678,12 +734,59 @@ impl State {
                     // Answered when the person picks (or cancels); the engine
                     // carries on meanwhile.
                     let (tx, reply_to) = (self.tx.clone(), to.clone());
-                    picker(Box::new(move |path| {
-                        let _ = tx.send(Cmd::FolderPicked { to: reply_to, path });
+                    picker(PickKind::Folder, Box::new(move |paths| {
+                        let _ = tx.send(Cmd::FolderPicked { to: reply_to, path: paths.into_iter().next() });
                     }));
                     return;
                 }
             },
+            "tools.list" => params::<ToolsParams>(p).map(|p| self.tools_list(self.tools_cwd(p.cwd.as_deref()).as_deref())),
+            "tools.check" | "tools.add" | "tools.remove" | "tools.import" => match params::<ToolsParams>(p) {
+                Ok(p) => {
+                    self.tools_change(req.method.as_str(), p, to);
+                    return;
+                }
+                Err(e) => Err(e),
+            },
+            "files.search" => {
+                let root = p.get("cwd").and_then(Value::as_str).filter(|_| src == Source::Local).map(PathBuf::from).filter(|c| c.is_dir()).or_else(|| p.get("threadId").and_then(Value::as_str).and_then(|t| self.work_dir(t).ok()));
+                let Some(root) = root else {
+                    return self.reply(&to, Err(ProtoError::bad_request("This chat has no folder.")));
+                };
+                let query = p.get("query").and_then(Value::as_str).unwrap_or("").to_string();
+                let tx = self.tx.clone();
+                std::thread::spawn(move || {
+                    let files = attachments::project_files(&root);
+                    let hits = attachments::search(&root, &files, &query, 30);
+                    let _ = tx.send(Cmd::Answer { to, result: Ok(json!({ "root": root.to_string_lossy(), "results": hits })) });
+                });
+                return;
+            }
+            "commands.list" => {
+                let cwd = p.get("cwd").and_then(Value::as_str).filter(|_| src == Source::Local).map(PathBuf::from).filter(|c| c.is_dir()).or_else(|| p.get("threadId").and_then(Value::as_str).and_then(|t| self.work_dir(t).ok()));
+                let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+                Ok(json!({ "commands": commands::list(&home, cwd.as_deref(), &self.claude_commands) }))
+            }
+            "system.pickFiles" => match (src, self.cfg.folder_picker.clone()) {
+                (Source::Remote, _) => Err(ProtoError::bad_request("Pick files on your Mac.")),
+                (Source::Local, None) => Err(ProtoError::bad_request("Billable can't show a file picker here.")),
+                (Source::Local, Some(picker)) => {
+                    let (tx, reply_to) = (self.tx.clone(), to.clone());
+                    picker(PickKind::Files, Box::new(move |paths| {
+                        let paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
+                        let _ = tx.send(Cmd::Answer { to: reply_to, result: Ok(json!({ "paths": paths })) });
+                    }));
+                    return;
+                }
+            },
+            "computer.allow" => {
+                match p.get("which").and_then(Value::as_str) {
+                    Some("screen") => computer::request_screen(),
+                    Some("control") => computer::request_control(),
+                    _ => {}
+                }
+                Ok(json!({ "computer": computer::access().to_json() }))
+            }
             _ => Err(ProtoError::bad_request("Billable doesn't know that request.")),
         };
         self.reply(&to, result);
@@ -749,7 +852,9 @@ impl State {
     /// An agent's models, as its CLI listed them in a session the user
     /// started (never asked for in the background).
     fn models_reported(&mut self, id: &str, models: Vec<Model>, default: String) {
-        let Some(a) = self.agents.iter_mut().find(|a| a.id == id) else { return };
+        let Some(a) = self.agents.iter_mut().find(|a| a.id == id) else {
+            return;
+        };
         if a.models == models && a.default_model == default {
             return;
         }
@@ -765,7 +870,9 @@ impl State {
         if !looks_signed_out(error) {
             return;
         }
-        let Some(a) = self.agents.iter_mut().find(|a| a.id == id) else { return };
+        let Some(a) = self.agents.iter_mut().find(|a| a.id == id) else {
+            return;
+        };
         if !a.signed_in {
             return;
         }
@@ -870,6 +977,8 @@ impl State {
             project_id: clean_project(p.project_id.as_deref()),
             worker_kind: None,
             review_at: None,
+            // A coordinator starts trusted (the person's pick, 2026-11-28).
+            mode: Some(p.mode.unwrap_or(if role == Some(ThreadRole::Orchestrator) { Mode::Trusted } else { Mode::Ask })),
         };
         self.store.insert_thread(&t).map_err(store_err)?;
         self.emit(Event::ThreadUpdated { thread: t.clone() });
@@ -902,6 +1011,14 @@ impl State {
         }
         if let Some(archived) = p.archived {
             t.archived_at = if archived { t.archived_at.or(Some(now)) } else { None };
+        }
+        if let Some(mode) = p.mode {
+            t.mode = Some(mode);
+            // Its jobs follow it; what's waiting is looked at again.
+            for mut w in self.store.workers(&t.id).map_err(store_err)? {
+                w.mode = Some(mode);
+                self.save_thread(&w);
+            }
         }
         self.save_thread(&t);
         Ok(json!({ "thread": t }))
@@ -997,6 +1114,7 @@ impl State {
             tool: None,
             divider: None,
             decision: None,
+            attachments: None,
         };
         fill(&mut item);
         if let Err(e) = self.store.insert_item(&item) {
@@ -1038,9 +1156,10 @@ impl State {
             return Err(ProtoError::new(ErrorCode::Busy, "This chat is still working. Stop it or wait for it to finish."));
         }
         let text = p.text.trim().to_string();
-        if text.is_empty() {
+        if text.is_empty() && p.attachments.is_empty() {
             return Err(ProtoError::bad_request("Write a message first."));
         }
+        let attached = attachments::prepare(&p.attachments, &self.attachments_dir(&t.id)).map_err(ProtoError::bad_request)?;
         let agent = p.agent.unwrap_or_else(|| t.agent.clone());
         self.check_agent(&agent)?;
         let model = p.model.filter(|m| !m.is_empty()).unwrap_or_else(|| if agent == t.agent { t.model.clone() } else { self.agent(&agent).map(|a| a.default_model.clone()).unwrap_or_default() });
@@ -1069,7 +1188,9 @@ impl State {
             }
         }
         let history = if had_items { self.store.items(&t.id).map_err(store_err)? } else { Vec::new() };
-        let user = self.add_item(&t.id, Some(&turn_id), ItemKind::User, Some(text.clone()), |_| {});
+        let shown = (!attached.shown.is_empty()).then(|| attached.shown.clone());
+        let user = self.add_item(&t.id, Some(&turn_id), ItemKind::User, Some(text.clone()), |i| i.attachments = shown);
+        let text = attachments::prompt_with(&text, &attached.shown);
 
         t.agent = agent.clone();
         t.model = model.clone();
@@ -1078,9 +1199,10 @@ impl State {
         t.review_at = None;
         t.status = ThreadStatus::Running;
         t.updated_at = now_iso();
-        t.preview = one_line(&text, 140);
+        let said = p.text.trim();
+        t.preview = one_line(if said.is_empty() { attached.shown.first().map(|a| a.name.as_str()).unwrap_or("") } else { said }, 140);
         if t.title.is_empty() {
-            t.title = title_from(&text);
+            t.title = title_from(if said.is_empty() { &t.preview } else { said });
         }
         self.save_thread(&t);
 
@@ -1105,14 +1227,30 @@ impl State {
                 codex_turn: None,
                 parent: t.parent_id.clone(),
                 lookup: t.worker_kind == Some(WorkerKind::Lookup),
+                images: attachments::images(&attached.shown),
             },
         );
-        Ok(Begun { thread: t.id, turn_id, user, prompt, session })
+        Ok(Begun { thread: t.id, turn_id, user, prompt, session, downloads: attached.downloads })
     }
 
-    fn launch(&mut self, b: Begun) {
+    fn launch(&mut self, mut b: Begun) {
+        // Uploads from the website or phone come down first.
+        if !b.downloads.is_empty() {
+            let downloads = std::mem::take(&mut b.downloads);
+            let tx = self.tx.clone();
+            std::thread::spawn(move || {
+                let failed = downloads.iter().find_map(|(url, dest)| attachments::download(url, dest).err());
+                let _ = tx.send(Cmd::Downloaded { begun: Box::new(b), failed });
+            });
+            return;
+        }
         self.emit(Event::TurnStarted { thread_id: b.thread.clone(), turn_id: b.turn_id });
         self.start_agent(&b.thread, &b.prompt, b.session);
+    }
+
+    /// Where a chat's attachments are saved: beside the agents' database.
+    fn attachments_dir(&self, thread: &str) -> PathBuf {
+        self.cfg.db_path.parent().unwrap_or(Path::new(".")).join("agents-attachments").join(thread)
     }
 
     fn mcp_url(&self) -> Option<String> {
@@ -1142,14 +1280,18 @@ impl State {
     /// What a chat's agent is told after the usual note, and whether it may
     /// only read.
     fn notes_for(&self, thread: &str) -> (String, bool) {
-        let Some(t) = self.store.thread(thread).ok().flatten() else { return (String::new(), false) };
+        let Some(t) = self.store.thread(thread).ok().flatten() else {
+            return (String::new(), false);
+        };
         let memory = t.project_id.as_deref().and_then(|p| self.store.memory(p).ok().flatten()).map(|(text, _)| text);
         let seat = seat_of(&t);
         (orchestrator::notes(seat, memory.as_deref()), seat.is_none())
     }
 
     fn start_agent(&mut self, thread: &str, prompt: &str, session: Option<String>) {
-        let Some(turn) = self.turns.get(thread) else { return };
+        let Some(turn) = self.turns.get(thread) else {
+            return;
+        };
         let (agent, model, effort) = (turn.agent.clone(), turn.model.clone(), turn.effort.clone());
         let cwd = match self.work_dir(thread) {
             Ok(c) => c,
@@ -1167,11 +1309,13 @@ impl State {
             return self.finish_turn(thread, TurnStatus::Failed, Some("Claude Code isn't installed on this Mac.".into()), None);
         };
         let (notes, read_only) = self.notes_for(thread);
-        let launch = claude::Launch { model, effort, resume: session, mcp_url: self.mcp_url(), orchestrate_url: self.orchestrate_url(thread), notes, read_only };
+        let coordinator = self.store.thread(thread).ok().flatten().is_some_and(|t| t.role == Some(ThreadRole::Orchestrator));
+        let launch = claude::Launch { model, effort, resume: session, mcp_url: self.mcp_url(), orchestrate_url: self.orchestrate_url(thread), notes, read_only, coordinator };
         // A changed memory or seat starts a fresh process (the session resumes).
         let reuse = self.claude.get_mut(thread).is_some_and(|r| {
             let l = &r.session.launch;
-            let same = l.model == launch.model && l.effort == launch.effort && l.mcp_url == launch.mcp_url && l.orchestrate_url == launch.orchestrate_url && l.notes == launch.notes && l.read_only == launch.read_only;
+            let same =
+                l.model == launch.model && l.effort == launch.effort && l.mcp_url == launch.mcp_url && l.orchestrate_url == launch.orchestrate_url && l.notes == launch.notes && l.read_only == launch.read_only && l.coordinator == launch.coordinator;
             same && r.session.alive()
         });
         if !reuse {
@@ -1191,9 +1335,10 @@ impl State {
                 Err(e) => return self.finish_turn(thread, TurnStatus::Failed, Some(format!("Claude Code didn't start ({e}).")), None),
             }
         }
+        let images = self.turns.get(thread).map(|t| t.images.clone()).unwrap_or_default();
         let sent = self.claude.get_mut(thread).map(|r| {
             r.idle_since = None;
-            r.session.send(prompt)
+            r.session.send(prompt, &images)
         });
         if let Some(Err(e)) = sent {
             self.finish_turn(thread, TurnStatus::Failed, Some(format!("Couldn't reach Claude Code ({e}).")), None);
@@ -1235,12 +1380,14 @@ impl State {
             return;
         }
         let Some(c) = self.codex.as_ref() else { return };
-        let Some(turn) = self.turns.get(thread) else { return };
+        let Some(turn) = self.turns.get(thread) else {
+            return;
+        };
         let peer = c.server.peer.clone();
         let gen = c.gen;
         let loaded = c.loaded.get(thread).cloned();
         let resume = if loaded.is_none() { self.store.session(thread, codex::AGENT_ID).ok().flatten() } else { None };
-        let (model, effort, turn_id) = (turn.model.clone(), turn.effort.clone(), turn.id.clone());
+        let (model, effort, turn_id, images) = (turn.model.clone(), turn.effort.clone(), turn.id.clone(), turn.images.clone());
         let cwd = match self.work_dir(thread) {
             Ok(c) => c,
             Err(e) => return self.finish_turn(thread, TurnStatus::Failed, Some(e), None),
@@ -1267,7 +1414,7 @@ impl State {
                         ct
                     }
                 };
-                let started = peer.request("turn/start", codex::turn_params(&codex_thread, &prompt, &model, effort.as_deref()), codex::REQUEST_TIMEOUT)?;
+                let started = peer.request("turn/start", codex::turn_params(&codex_thread, &prompt, &model, effort.as_deref(), &images), codex::REQUEST_TIMEOUT)?;
                 Ok::<String, String>(started.pointer("/turn/id").and_then(Value::as_str).unwrap_or("").to_string())
             })();
             let _ = tx.send(Cmd::CodexTurn { thread: id, turn: turn_id, gen, result });
@@ -1296,7 +1443,9 @@ impl State {
         if self.codex.as_ref().map(|c| c.gen) != Some(gen) {
             return;
         }
-        let Some(t) = self.turns.get_mut(thread).filter(|t| t.id == turn) else { return };
+        let Some(t) = self.turns.get_mut(thread).filter(|t| t.id == turn) else {
+            return;
+        };
         match result {
             Ok(codex_turn) => {
                 t.codex_turn = Some(codex_turn.clone());
@@ -1335,7 +1484,9 @@ impl State {
                     }
                     return;
                 }
-                let Some((ct, ev)) = codex::map_notification(&method, &params) else { return };
+                let Some((ct, ev)) = codex::map_notification(&method, &params) else {
+                    return;
+                };
                 if let Some(thread) = self.codex.as_ref().and_then(|c| thread_of(&ct, c)) {
                     self.driver_event(&thread, ev);
                 }
@@ -1368,7 +1519,9 @@ impl State {
         if let Some(id) = self.turns.get(thread).and_then(|t| t.keys.get(key)).cloned() {
             return (id, false);
         }
-        let Some(turn) = self.turns.get(thread) else { return (String::new(), false) };
+        let Some(turn) = self.turns.get(thread) else {
+            return (String::new(), false);
+        };
         let (turn_id, agent, model) = (turn.id.clone(), turn.agent.clone(), turn.model.clone());
         let text = matches!(kind, ItemKind::Assistant | ItemKind::Reasoning).then(String::new);
         let item = self.add_item(thread, Some(&turn_id), kind, text, |i| {
@@ -1387,7 +1540,9 @@ impl State {
 
     fn text_delta(&mut self, thread: &str, key: &str, kind: ItemKind, text: String) {
         let (id, _) = self.item_for(thread, key, kind);
-        let Some(t) = self.turns.get_mut(thread) else { return };
+        let Some(t) = self.turns.get_mut(thread) else {
+            return;
+        };
         if let Some(item) = t.live.get_mut(&id) {
             item.text.get_or_insert_with(String::new).push_str(&text);
             self.emit(Event::ItemDelta { thread_id: thread.to_string(), item_id: id, delta: text });
@@ -1399,8 +1554,12 @@ impl State {
             return;
         }
         let (id, _) = self.item_for(thread, key, kind);
-        let Some(t) = self.turns.get_mut(thread) else { return };
-        let Some(mut item) = t.live.remove(&id).or_else(|| self.saved_item(thread, &id)) else { return };
+        let Some(t) = self.turns.get_mut(thread) else {
+            return;
+        };
+        let Some(mut item) = t.live.remove(&id).or_else(|| self.saved_item(thread, &id)) else {
+            return;
+        };
         let changed = item.text.as_deref() != Some(text.as_str());
         item.text = Some(text);
         if changed {
@@ -1426,6 +1585,13 @@ impl State {
             }
             // Only Claude Code reports these (its initialize answer).
             DriverEvent::Models(models, default) => self.models_reported(claude::AGENT_ID, models, default),
+            DriverEvent::Commands(list) => self.claude_commands = list,
+            DriverEvent::McpStatus(list) => {
+                for (name, status) in list {
+                    let error = (status == "failed").then(|| "It didn't start.".to_string());
+                    self.mcp_status.insert(name, (status, error));
+                }
+            }
             _ if !self.turns.contains_key(thread) => {}
             DriverEvent::TextDelta { key, text } => self.text_delta(thread, &key, ItemKind::Assistant, text),
             DriverEvent::ReasoningDelta { key, text } => self.text_delta(thread, &key, ItemKind::Reasoning, text),
@@ -1456,9 +1622,13 @@ impl State {
                 self.update_item(&item);
             }
             DriverEvent::ToolFinished { key, output, failed, declined } => {
-                let Some(id) = self.turns.get(thread).and_then(|t| t.keys.get(&key)).cloned() else { return };
+                let Some(id) = self.turns.get(thread).and_then(|t| t.keys.get(&key)).cloned() else {
+                    return;
+                };
                 let denied = declined || self.turns.get(thread).is_some_and(|t| t.denied.contains(&id));
-                let Some(mut item) = self.saved_item(thread, &id) else { return };
+                let Some(mut item) = self.saved_item(thread, &id) else {
+                    return;
+                };
                 if let Some(tool) = item.tool.as_mut() {
                     tool.status = if denied {
                         ToolStatus::Denied
@@ -1510,7 +1680,9 @@ impl State {
     // ---------- Approvals ----------
 
     fn approval_requested(&mut self, thread: &str, native: String, tool_key: Option<String>, name: &str, input: &Value, options: Vec<Decision>) {
-        let Some(turn) = self.turns.get(thread) else { return };
+        let Some(turn) = self.turns.get(thread) else {
+            return;
+        };
         let agent = turn.agent.clone();
         // A lookup only reads: anything that would need the person is turned down.
         if turn.lookup {
@@ -1522,6 +1694,16 @@ impl State {
             return self.answer_agent(&a, Decision::Deny);
         }
         let item_id = tool_key.as_ref().and_then(|k| turn.keys.get(k)).cloned();
+        // The chat's mode may let it go ahead without the person.
+        let mode = self.store.thread(thread).ok().flatten().and_then(|t| t.mode).unwrap_or_default();
+        if mode != Mode::Ask {
+            if let Ok(cwd) = self.work_dir(thread) {
+                if guard::verdict(mode, name, input, &cwd) == guard::Verdict::Allow {
+                    let a = OpenApproval { thread: thread.to_string(), native, agent, item_id };
+                    return self.answer_agent(&a, Decision::Allow);
+                }
+            }
+        }
         let (title, mut detail) = tools::approval(name, input);
         if detail.trim().is_empty() || detail.trim() == "{}" {
             if let Some(d) = item_id.as_ref().and_then(|id| self.saved_item(thread, id)).and_then(|i| i.tool.and_then(|t| t.detail)) {
@@ -1544,7 +1726,9 @@ impl State {
     /// Running; waiting while an approval or a decision card is open (a
     /// card keeps a chat waiting after its turn, too); else as it was.
     fn set_status(&self, thread: &str) {
-        let Ok(Some(mut t)) = self.store.thread(thread) else { return };
+        let Ok(Some(mut t)) = self.store.thread(thread) else {
+            return;
+        };
         let busy = self.turns.contains_key(thread);
         let status = if self.needs_person(thread) {
             ThreadStatus::Waiting
@@ -1598,10 +1782,18 @@ impl State {
     // ---------- Stop and finish ----------
 
     fn turn_stop(&mut self, thread: &str) -> Result<Value, ProtoError> {
+        self.turn_stop_with(thread, true)
+    }
+
+    /// `jobs`: a coordinator's jobs and lookups stop with it.
+    fn turn_stop_with(&mut self, thread: &str, jobs: bool) -> Result<Value, ProtoError> {
         let t = self.thread(thread)?;
         if t.role == Some(ThreadRole::Orchestrator) {
-            // Its workers stop with it, and its waits are answered now.
-            self.stop_workers(thread, None);
+            // Its workers stop with it (unless the person kept them), and
+            // its waits are answered now.
+            if jobs {
+                self.stop_workers(thread, None);
+            }
             self.answer_waits_of(thread);
         }
         // A question it's waiting on lets go (its card stays open).
@@ -1610,7 +1802,9 @@ impl State {
         for a in gone {
             let _ = a.reply.send(Err("The person stopped this turn.".into()));
         }
-        let Some(turn) = self.turns.get_mut(thread) else { return Ok(json!({})) };
+        let Some(turn) = self.turns.get_mut(thread) else {
+            return Ok(json!({}));
+        };
         if turn.stop_at.is_some() {
             return Ok(json!({}));
         }
@@ -1639,7 +1833,9 @@ impl State {
     }
 
     fn finish_turn(&mut self, thread: &str, status: TurnStatus, error: Option<String>, usage: Option<Usage>) {
-        let Some(turn) = self.turns.get(thread) else { return };
+        let Some(turn) = self.turns.get(thread) else {
+            return;
+        };
         let stopped = turn.stop_at.is_some();
         // A resumed session that failed straight away (e.g. its transcript is
         // gone) is forgotten, so the person's next message starts fresh with a
@@ -1654,7 +1850,12 @@ impl State {
                 c.loaded.remove(thread);
             }
         }
-        let Some(mut turn) = self.turns.remove(thread) else { return };
+        let Some(mut turn) = self.turns.remove(thread) else {
+            return;
+        };
+        if self.screen_holder.as_deref() == Some(thread) {
+            self.screen_holder = None;
+        }
         let status = if stopped { TurnStatus::Stopped } else { status };
         // Whatever was still streaming is saved as it stands.
         for (_, item) in turn.live.drain() {
@@ -1681,7 +1882,9 @@ impl State {
         if let Some(run) = self.claude.get_mut(thread) {
             run.idle_since = Some(Instant::now());
         }
-        let Ok(Some(mut t)) = self.store.thread(thread) else { return };
+        let Ok(Some(mut t)) = self.store.thread(thread) else {
+            return;
+        };
         let open_card = self.store.open_decisions(Some(thread)).is_ok_and(|d| !d.is_empty());
         t.status = if status == TurnStatus::Failed {
             ThreadStatus::Failed
@@ -1725,12 +1928,25 @@ impl State {
         let (name, args) = match call {
             Call::List => {
                 let models = if seat == Seat::Coordinator { self.describe_agents() } else { String::new() };
-                let _ = reply.send(Ok(orchestrator::tools(seat, &models, t.project_id.is_some())));
+                let mut tools = orchestrator::tools(seat, &models, t.project_id.is_some());
+                if let Value::Array(list) = &mut tools {
+                    list.extend(computer::tools());
+                }
+                let _ = reply.send(Ok(tools));
                 return;
             }
             Call::Tool { name, args } => (name, args),
         };
-        let coordinator = |r: Result<Value, String>| if seat == Seat::Coordinator { r } else { Err(format!("Only a coordinator can use {name}.")) };
+        if name.starts_with(computer::PREFIX) {
+            return self.computer_call(&t, &name, args, reply);
+        }
+        let coordinator = |r: Result<Value, String>| {
+            if seat == Seat::Coordinator {
+                r
+            } else {
+                Err(format!("Only a coordinator can use {name}."))
+            }
+        };
         let result = match name.as_str() {
             "start_agents" => coordinator(Ok(Value::Null)).and_then(|_| {
                 self.person_asked(&t)?;
@@ -1780,9 +1996,10 @@ impl State {
             let models: Vec<String> = a
                 .models
                 .iter()
+                .filter(|m| !orchestrator::refused_for_jobs(&m.id))
                 .map(|m| if m.efforts.is_empty() { format!("{} ({})", m.id, m.name) } else { format!("{} ({}; effort {})", m.id, m.name, m.efforts.join(", ")) })
                 .collect();
-            out.push_str(&format!("\n- {} ({}), default model {}: {}", a.id, a.name, a.default_model, models.join("; ")));
+            out.push_str(&format!("\n- {} ({}): {}", a.id, a.name, models.join("; ")));
         }
         out
     }
@@ -1820,16 +2037,31 @@ impl State {
             let agent = text("agent").unwrap_or_else(|| o.agent.clone());
             self.check_agent(&agent).map_err(|e| e.message)?;
             let a = self.agent(&agent).cloned().ok_or("That agent isn't on this Mac.")?;
+            let allowed: Vec<&str> = a.models.iter().map(|x| x.id.as_str()).filter(|m| !orchestrator::refused_for_jobs(m)).collect();
             let model = match text("model") {
+                Some(m) if orchestrator::refused_for_jobs(&m) => {
+                    return Err(format!("Jobs never run on {m}: it uses too much of the person's plan. Choose one of: {}.", allowed.join(", ")));
+                }
                 Some(m) if !a.models.is_empty() && !a.models.iter().any(|x| x.id == m) => {
-                    let known: Vec<&str> = a.models.iter().map(|x| x.id.as_str()).collect();
-                    return Err(format!("{m} isn't one of {}'s models here. Choose one of: {}.", a.name, known.join(", ")));
+                    return Err(format!("{m} isn't one of {}'s models here. Choose one of: {}.", a.name, allowed.join(", ")));
                 }
                 Some(m) => m,
-                None => a.default_model.clone(),
+                // Left out: the cheapest that fits, then the agent's default
+                // (never a refused one).
+                None => {
+                    let cheap = orchestrator::default_job_model(kind == WorkerKind::Lookup);
+                    if a.models.iter().any(|x| x.id == cheap) {
+                        cheap.to_string()
+                    } else if !orchestrator::refused_for_jobs(&a.default_model) {
+                        a.default_model.clone()
+                    } else {
+                        allowed.first().map(|m| m.to_string()).ok_or("This agent has no model a job can use.")?
+                    }
+                }
             };
             // Left out (or not one the model takes): the model's default.
-            let effort = self.effort_for(&agent, &model, text("effort"));
+            // A lookup left to itself runs at low effort.
+            let effort = self.effort_for(&agent, &model, text("effort").or_else(|| (kind == WorkerKind::Lookup).then(|| "low".to_string())));
             let reason = text("reason").map(|r| one_line(&r, 140));
             plans.push(PlanJob { title, task, agent, model, effort, kind, reason });
         }
@@ -1861,6 +2093,8 @@ impl State {
                 project_id: o.project_id.clone(),
                 worker_kind: Some(job.kind),
                 review_at: None,
+                // A job may do what its coordinator may.
+                mode: o.mode,
             };
             self.store.insert_thread(&w).map_err(|e| format!("{e:#}"))?;
             self.emit(Event::ThreadUpdated { thread: w.clone() });
@@ -1873,7 +2107,7 @@ impl State {
 
     /// Hold a call open until the person answers its card.
     fn park_ask(&mut self, thread: &str, item: Item, reply: Sender<Result<Value, String>>) {
-        self.asks.push(Ask { thread: thread.to_string(), item: item.id, until: Instant::now() + Duration::from_secs(orchestrator::ASK_WAIT_SECS), reply });
+        self.asks.push(Ask { thread: thread.to_string(), item: item.id, until: Instant::now() + Duration::from_secs(orchestrator::ASK_WAIT_SECS), reply, computer: None });
         self.set_status(thread);
     }
 
@@ -1944,11 +2178,136 @@ impl State {
         Ok(json!({ "memory": text }))
     }
 
+    // ---------- Computer (PROTOCOL.md) ----------
+
+    /// A computer tool: one chat at a time, and only what the person
+    /// allowed this chat (a card asks the first time).
+    fn computer_call(&mut self, t: &Thread, name: &str, args: Value, reply: Sender<Result<Value, String>>) {
+        let refuse = |m: &str| {
+            let _ = reply.send(Err(m.to_string()));
+        };
+        if !self.turns.contains_key(&t.id) {
+            return refuse("Use the screen while you're answering the person's message.");
+        }
+        if let Some(holder) = self.screen_holder.as_deref().filter(|h| *h != t.id && self.turns.contains_key(*h)) {
+            let other = self.store.thread(holder).ok().flatten().map(|o| o.title).filter(|s| !s.is_empty()).unwrap_or_else(|| "Another chat".into());
+            return refuse(&format!("{other} is using the screen right now. Try again when it's finished."));
+        }
+        let access = computer::access();
+        if !access.supported {
+            return refuse("Computer use needs a Mac.");
+        }
+        let (grant, label) = match computer::needs(name, &args) {
+            computer::Needs::Nothing => (None, String::new()),
+            computer::Needs::Screen => {
+                if !access.screen {
+                    computer::request_screen();
+                    return refuse("Billable needs Screen Recording to see the screen. The person can turn it on in Agents → Tools. Tell them, then stop.");
+                }
+                (Some("screen".to_string()), "see your screen".to_string())
+            }
+            computer::Needs::App(app) => (Some(format!("app:{}", app.to_lowercase())), format!("use {app}")),
+            computer::Needs::FrontApp => {
+                if !access.control {
+                    computer::request_control();
+                    return refuse("Billable needs Accessibility to click and type. The person can turn it on in Agents → Tools. Tell them, then stop.");
+                }
+                match computer::front_app() {
+                    Some(app) if app.eq_ignore_ascii_case("billable") => {
+                        return refuse("Billable is in front. Open the app you need with computer_open_app first; Billable itself is off limits.");
+                    }
+                    Some(app) => (Some(format!("app:{}", app.to_lowercase())), format!("use {app}")),
+                    None => return refuse("Couldn't tell which app is in front. Take a screenshot and try again."),
+                }
+            }
+        };
+        let granted = |s: &Self, g: &str| s.grants.get(&t.id).is_some_and(|set| set.contains(g));
+        // Acting in an app means seeing it too.
+        let grant = grant.filter(|g| !granted(self, g));
+        let Some(grant) = grant else {
+            return self.computer_run(&t.id, name.to_string(), args, reply);
+        };
+        let card = DecisionCard {
+            question: format!("Let this chat {label}?"),
+            detail: None,
+            options: vec![DecisionOption { label: "Allow".into(), detail: None }, DecisionOption { label: "Don't allow".into(), detail: None }],
+            recommended: None,
+            ..DecisionCard::default()
+        };
+        let item = self.add_card(&t.id, card);
+        self.computer_cards.insert(item.id.clone(), (t.id.clone(), grant.clone()));
+        self.asks.push(Ask { thread: t.id.clone(), item: item.id, until: Instant::now() + Duration::from_secs(orchestrator::ASK_WAIT_SECS), reply, computer: Some((name.to_string(), args, grant)) });
+        self.set_status(&t.id);
+    }
+
+    /// Do it, off the engine thread (a screenshot takes a moment).
+    fn computer_run(&mut self, thread: &str, tool: String, args: Value, reply: Sender<Result<Value, String>>) {
+        if !self.turns.contains_key(thread) {
+            let _ = reply.send(Err("The turn ended before the person answered.".into()));
+            return;
+        }
+        self.screen_holder = Some(thread.to_string());
+        if tool == "computer_screenshot" || tool == "computer_cursor_position" {
+            self.grants.entry(thread.to_string()).or_default().insert("screen".into());
+        }
+        std::thread::spawn(move || {
+            let result = computer::perform(&tool, &args).map(|content| json!({ orchestrator::CONTENT: content }));
+            let _ = reply.send(result);
+        });
+    }
+
+    // ---------- Tools (PROTOCOL.md) ----------
+
+    fn places(&self) -> Places {
+        Places::from_env(self.bins.claude.clone(), self.bins.codex.clone())
+    }
+
+    /// The folder a Tools request is about: the one asked, if it's here.
+    fn tools_cwd(&self, cwd: Option<&str>) -> Option<PathBuf> {
+        cwd.map(str::trim).filter(|c| !c.is_empty()).map(PathBuf::from).filter(|p| p.is_dir())
+    }
+
+    fn tools_list(&self, cwd: Option<&Path>) -> Value {
+        json!({
+            "servers": servers::list(&self.places(), cwd, &self.mcp_status),
+            "computer": computer::access().to_json(),
+        })
+    }
+
+    /// Checks and changes run the agents' own commands, off the engine thread.
+    fn tools_change(&mut self, method: &str, p: ToolsParams, to: ReplyTo) {
+        let places = self.places();
+        let cwd = self.tools_cwd(p.cwd.as_deref());
+        let run_in = cwd.clone().unwrap_or_else(|| self.cfg.work_dir.clone());
+        let method = method.to_string();
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let result = match method.as_str() {
+                "tools.check" => servers::check_claude(&places, &run_in).map(Some),
+                "tools.remove" => servers::remove(&places, p.id.as_deref().unwrap_or(""), &run_in).map(|_| None),
+                "tools.import" => {
+                    let node = std::env::split_paths(&crate::process::child_path(None)).any(|d| d.join("node").is_file());
+                    servers::import(&places, p.id.as_deref().unwrap_or(""), &p.agents, &run_in, node).map(|_| None)
+                }
+                _ => servers::spec_from_input(p.command.as_deref(), p.url.as_deref(), &p.env).and_then(|spec| {
+                    if p.agents.is_empty() {
+                        return Err("Pick Claude Code, Codex or both.".into());
+                    }
+                    let scope = if p.scope.as_deref() == Some("local") && cwd.is_some() { "local" } else { "user" };
+                    p.agents.iter().try_for_each(|a| servers::add(&places, a, p.name.as_deref().unwrap_or(""), &spec, scope, &run_in)).map(|_| None)
+                }),
+            };
+            let _ = tx.send(Cmd::ToolsDone { to, cwd, result });
+        });
+    }
+
     // ---------- Decisions and memory (PROTOCOL.md) ----------
 
     fn decision_answer(&mut self, p: DecisionAnswerParams) -> Result<Value, ProtoError> {
         let mut item = self.saved_item(&p.thread_id, &p.item_id).filter(|i| i.kind == ItemKind::Decision).ok_or_else(|| ProtoError::new(ErrorCode::NotFound, "That card is gone."))?;
-        let Some(card) = item.decision.as_mut() else { return Err(ProtoError::not_found()) };
+        let Some(card) = item.decision.as_mut() else {
+            return Err(ProtoError::not_found());
+        };
         if card.answered_at.is_some() {
             return Err(ProtoError::new(ErrorCode::NotFound, "That was already answered."));
         }
@@ -1990,10 +2349,23 @@ impl State {
         } else {
             json!({"choice": p.choice, "label": label, "note": card.answer})
         };
+        if let Some((thread, grant)) = self.computer_cards.remove(&item.id) {
+            if p.choice == 0 {
+                self.grants.entry(thread).or_default().insert(grant);
+            }
+        }
         match self.asks.iter().position(|a| a.item == item.id) {
             Some(pos) => {
                 let ask = self.asks.remove(pos);
-                let _ = ask.reply.send(Ok(answer));
+                match ask.computer {
+                    Some((tool, args, _)) if p.choice == 0 => self.computer_run(&ask.thread, tool, args, ask.reply),
+                    Some(_) => {
+                        let _ = ask.reply.send(Err("The person said no. Don't try it again unless they ask.".into()));
+                    }
+                    None => {
+                        let _ = ask.reply.send(Ok(answer));
+                    }
+                }
             }
             // The turn that asked is over: the answer is the person's next
             // message (a plan they approved has already started).
@@ -2003,7 +2375,7 @@ impl State {
                     text.push(' ');
                     text.push_str(note);
                 }
-                if let Ok(begun) = self.begin_turn(TurnSendParams { thread_id: p.thread_id.clone(), text, agent: None, model: None, effort: None }) {
+                if let Ok(begun) = self.begin_turn(TurnSendParams { thread_id: p.thread_id.clone(), text, agent: None, model: None, effort: None, attachments: Vec::new() }) {
                     self.launch(begun);
                 }
             }
@@ -2037,7 +2409,9 @@ impl State {
     /// The orchestrator's workers named in `ids` (all of them when absent).
     fn worker_ids(&self, orchestrator: &str, ids: Option<&Value>) -> Result<Vec<String>, String> {
         let all: Vec<String> = self.store.workers(orchestrator).map_err(|e| format!("{e:#}"))?.into_iter().map(|w| w.id).collect();
-        let Some(asked) = ids.and_then(Value::as_array) else { return Ok(all) };
+        let Some(asked) = ids.and_then(Value::as_array) else {
+            return Ok(all);
+        };
         let mut out = Vec::new();
         for id in asked {
             let id = id.as_str().unwrap_or("");
@@ -2110,9 +2484,11 @@ impl State {
                 pos += 1;
                 continue;
             }
-            let Some((_, worker, text)) = self.worker_queue.remove(pos) else { return };
+            let Some((_, worker, text)) = self.worker_queue.remove(pos) else {
+                return;
+            };
             self.worker_ends.remove(&worker);
-            match self.begin_turn(TurnSendParams { thread_id: worker.clone(), text, agent: None, model: None, effort: None }) {
+            match self.begin_turn(TurnSendParams { thread_id: worker.clone(), text, agent: None, model: None, effort: None, attachments: Vec::new() }) {
                 Ok(begun) => self.launch(begun),
                 Err(e) => self.worker_failed(&worker, &e.message),
             }
@@ -2218,7 +2594,9 @@ impl State {
     }
 
     fn oauth_redirect(&mut self, url: &str) {
-        let Some(r) = oauth::parse_redirect(url) else { return };
+        let Some(r) = oauth::parse_redirect(url) else {
+            return;
+        };
         let Some((verifier, _)) = r.state.as_ref().and_then(|s| self.sign_ins.remove(s)) else {
             eprintln!("[agents] a FeedHQ sign-in came back that Billable didn't start");
             return;

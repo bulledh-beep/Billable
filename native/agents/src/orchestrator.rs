@@ -15,15 +15,37 @@ use serde_json::{json, Value};
 /// The MCP server's name in the agent's config (tools are `mcp__billable__*`).
 pub const SERVER_NAME: &str = "billable";
 pub const TOOL_PREFIX: &str = "mcp__billable__";
+/// A tool answer `{ "__content": [...] }` is sent as that MCP content.
+pub const CONTENT: &str = "__content";
 
-/// At most this many jobs run at once per coordinator.
+/// At most this many jobs run at once per coordinator. With the lookups'
+/// slots that's six at once: the person's plan pays for every one.
 pub const MAX_RUNNING: usize = 4;
 /// Lookups have their own slots, so a quick read never waits behind a job.
-pub const MAX_LOOKUPS_RUNNING: usize = 4;
+pub const MAX_LOOKUPS_RUNNING: usize = 2;
 /// At most this many jobs and lookups per coordinator, ever.
-pub const MAX_WORKERS: usize = 40;
+pub const MAX_WORKERS: usize = 12;
 /// At most this many per start_agents (or propose_plan) call.
-pub const MAX_PER_CALL: usize = 8;
+pub const MAX_PER_CALL: usize = 6;
+/// Models a job or lookup never runs on: they spend too much of the
+/// person's plan. (They stay available to chats the person starts.)
+pub const JOB_MODELS_REFUSED: &[&str] = &["fable"];
+
+/// A model id a job may not use (`fable`, `claude-fable-5-2`…).
+pub fn refused_for_jobs(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    JOB_MODELS_REFUSED.iter().any(|r| m.contains(r))
+}
+
+/// The cheapest fitting model when a job leaves it out: Haiku for a
+/// lookup, Sonnet for a job, if the agent has them.
+pub fn default_job_model(lookup: bool) -> &'static str {
+    if lookup {
+        "haiku"
+    } else {
+        "sonnet"
+    }
+}
 pub const DEFAULT_WAIT_SECS: u64 = 600;
 pub const MAX_WAIT_SECS: u64 = 1800;
 /// How long ask_person and propose_plan hold the call open for an answer.
@@ -45,22 +67,29 @@ pub enum Seat {
 }
 
 /// Said to a coordinator's agent after the usual note.
-pub const COORDINATOR: &str = "You are this chat's coordinator. The person talks to you; jobs do the heavy work. \
-Your tools are mcp__billable__*.\n\
-- Do quick things yourself: answer questions, make a small edit, read a file or two.\n\
-- Send bigger work to jobs with start_agents. A job is its own chat that the person can open and steer. It can't see this chat, \
-so give it a complete, self-contained task. Run independent pieces as parallel jobs, and never give two jobs the same files.\n\
-- For quick read-only research (where is X, what does this file do, check a fact), start a lookup (kind \"lookup\"). \
-It can read but never change anything, and never needs the person.\n\
-- Choose each one's model and effort: low effort and the fastest model for lookups, renames and mechanical edits; \
-medium for everyday features and fixes; high effort and the strongest model for hard debugging, design and anything risky. \
-Start each task with a one-line reason for your choice.\n\
-- Before a bigger push (more than three jobs, or any high-effort job), call propose_plan instead, so the person can check \
-the plan; it starts the jobs they keep.\n\
+pub const COORDINATOR: &str = "You are this chat's coordinator. The person talks to you. Your tools are mcp__billable__*. \
+Every job you start spends the person's plan, so spend it the way a careful lead would.\n\
+Work alone first:\n\
+- Do it yourself when one chat can finish it: answers, a fix in a few files, a read of a file or two, a single change in FeedHQ. \
+Most messages need no jobs at all.\n\
+- Start jobs (start_agents) only for pieces that truly run in parallel and are each worth a chat of their own, or for work \
+that would bury this chat. Never split one change across jobs, never give two jobs the same files, and never start a job \
+to check another job's work when you can read it yourself.\n\
+- For a quick read-only question (where is X, what does this file do, check a fact on the web), start a lookup \
+(kind \"lookup\"). It can read and search the web but never change anything, and never needs the person.\n\
+Pick the smallest model that will do it well:\n\
+- haiku, effort low: lookups, fact checks, renames, mechanical or repetitive edits, tidying text.\n\
+- sonnet, effort medium: everyday features, fixes, writing and edits that need judgment. This is the usual choice.\n\
+- opus, effort high: hard debugging, design, architecture, and anything risky or hard to undo. Use it rarely.\n\
+- Never use fable for a job or lookup; Billable refuses it.\n\
+Start each task with a one-line reason for the model and effort.\n\
+- A job can't see this chat, so give it a complete, self-contained task: the goal, the files, what done looks like.\n\
+- Before a bigger push (more than two jobs, or any opus job), call propose_plan instead, so the person sees what it will \
+cost before it starts; it starts the jobs they keep.\n\
 - When a choice changes what the person gets, or a step can't be undone, call ask_person with 2 to 4 options and your \
 recommendation instead of guessing or asking in prose.\n\
-- Then call wait_for_agents. Check what comes back, follow up with message_agent when something is missing or wrong, \
-and finish with one short update: what's done, what's ready for the person to review, and anything that needs them.\n\
+- Then call wait_for_agents. Check what comes back yourself, follow up with message_agent when something is missing or \
+wrong, and finish with one short update: what's done, what's ready for the person to review, and anything that needs them.\n\
 - When the person states a standing preference (always, never, how they like things), save it with remember.";
 
 /// Said to a job's agent.
@@ -76,8 +105,9 @@ pub const CHAT: &str = "If you reach a choice only the person can make, call mcp
 and your recommendation instead of asking in prose.";
 
 /// Said to a lookup's agent (it gets no billable server).
-pub const LOOKUP: &str = "You are a quick read-only lookup for a coordinator. Read, search and answer; never change a file \
-or anything in FeedHQ, and don't ask the person anything. Answer in a few short lines.";
+pub const LOOKUP: &str = "You are a quick read-only lookup for a coordinator. Read files, search them and the web, and answer; \
+never change a file or anything in FeedHQ, and don't ask the person anything. Answer in a few short lines, and name the \
+file or page each fact came from.";
 
 /// A chat's instructions after the usual note: its seat's guidance and
 /// the project's memory.
@@ -109,7 +139,7 @@ fn job_items(with_reason: bool) -> Value {
         "task": {"type": "string", "description": "The complete task. Start with a one-line reason for the model and effort."},
         "kind": {"type": "string", "enum": ["job", "lookup"], "description": "job (default): its own chat, can change things. lookup: quick and read-only."},
         "agent": {"type": "string", "enum": ["claude", "codex"]},
-        "model": {"type": "string", "description": "A model id from the list above."},
+        "model": {"type": "string", "description": "A model id from the list above. Left out: haiku for a lookup, sonnet for a job."},
         "effort": {"type": "string", "description": "An effort level the model allows, e.g. low, medium, high."}
     });
     if with_reason {
@@ -233,7 +263,7 @@ fn one(msg: &Value, engine: &dyn Fn(Call) -> Result<Value, String>) -> Option<Va
                 "protocolVersion": version,
                 "capabilities": {"tools": {"listChanged": false}},
                 "serverInfo": {"name": SERVER_NAME, "title": "Billable", "version": env!("CARGO_PKG_VERSION")},
-                "instructions": "Coordinate jobs, ask the person and keep the project's memory, in Billable."
+                "instructions": "Coordinate jobs, ask the person, keep the project's memory and use the Mac's screen, in Billable."
             }))
         }
         "ping" => ok(json!({})),
@@ -241,11 +271,12 @@ fn one(msg: &Value, engine: &dyn Fn(Call) -> Result<Value, String>) -> Option<Va
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("").to_string();
             let args = params.get("arguments").cloned().filter(|a| a.is_object()).unwrap_or(json!({}));
-            let (text, is_error) = match engine(Call::Tool { name, args }) {
-                Ok(v) => (v.to_string(), false),
-                Err(e) => (e, true),
-            };
-            ok(json!({"content": [{"type": "text", "text": text}], "isError": is_error}))
+            match engine(Call::Tool { name, args }) {
+                // Content of its own (a screenshot): passed on as it is.
+                Ok(Value::Object(mut o)) if o.get(CONTENT).is_some_and(Value::is_array) => ok(json!({"content": o.remove(CONTENT).unwrap_or_default(), "isError": false})),
+                Ok(v) => ok(json!({"content": [{"type": "text", "text": v.to_string()}], "isError": false})),
+                Err(e) => ok(json!({"content": [{"type": "text", "text": e}], "isError": true})),
+            }
         }
         _ => Some(json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": format!("Billable doesn't know {method}.")}})),
     }
@@ -324,6 +355,18 @@ mod tests {
         assert!(n.ends_with("follow them):\n- Always use British spelling"));
         assert!(!notes(Some(Seat::Job), Some("  ")).contains("memory"));
         assert!(notes(None, None).contains("read-only"));
+    }
+
+    #[test]
+    fn jobs_never_run_on_fable() {
+        assert!(refused_for_jobs("fable"));
+        assert!(refused_for_jobs("claude-fable-5-2"));
+        assert!(!refused_for_jobs("sonnet"));
+        assert!(!refused_for_jobs("gpt-5.5-codex"));
+        assert_eq!(default_job_model(true), "haiku");
+        assert_eq!(default_job_model(false), "sonnet");
+        let n = notes(Some(Seat::Coordinator), None);
+        assert!(n.contains("Work alone first") && n.contains("Never use fable"));
     }
 
     #[test]

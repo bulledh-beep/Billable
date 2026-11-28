@@ -218,6 +218,45 @@ pub struct Thread {
     /// When a job handed its work back for the person to check.
     #[serde(default)]
     pub review_at: Option<String>,
+    /// How much it may do without asking (PROTOCOL.md, "Modes"); `None`: ask.
+    #[serde(default)]
+    pub mode: Option<Mode>,
+}
+
+/// How much a chat's agent may do without asking the person.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    /// Reading and searching only; everything else asks.
+    #[default]
+    Ask,
+    /// Plus file edits inside the chat's folder.
+    Edits,
+    /// Plus the web, safe commands, read-only tools and jobs; risky steps ask.
+    Trusted,
+    /// Nothing asks.
+    Auto,
+}
+
+impl Mode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Mode::Ask => "ask",
+            Mode::Edits => "edits",
+            Mode::Trusted => "trusted",
+            Mode::Auto => "auto",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Mode> {
+        match s {
+            "ask" => Some(Mode::Ask),
+            "edits" => Some(Mode::Edits),
+            "trusted" => Some(Mode::Trusted),
+            "auto" => Some(Mode::Auto),
+            _ => None,
+        }
+    }
 }
 
 /// PROTOCOL.md, "Coordinator".
@@ -351,6 +390,9 @@ pub struct Item {
     pub divider: Option<Divider>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<DecisionCard>,
+    /// A user item's attachments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<crate::attachments::Attachment>>,
 }
 
 /// A question an agent put to the person (ask_person), or a plan of jobs
@@ -501,10 +543,43 @@ pub struct ThreadsListParams {
     pub include_archived: bool,
 }
 
+/// tools.list, tools.check, tools.add, tools.remove and tools.import.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolsParams {
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub agents: Vec<String>,
+    /// "user" (default) or "local" (this folder only; Claude Code).
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadIdParams {
     pub thread_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnStopParams {
+    pub thread_id: String,
+    /// On a coordinator: stop its jobs and lookups too (the default), or
+    /// false to stop only the coordinator's own turn and let them finish.
+    #[serde(default)]
+    pub jobs: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -521,6 +596,9 @@ pub struct ThreadCreateParams {
     pub role: Option<String>,
     #[serde(default)]
     pub project_id: Option<String>,
+    /// Absent: a coordinator starts trusted, anything else asks.
+    #[serde(default)]
+    pub mode: Option<Mode>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -544,6 +622,8 @@ pub struct ThreadUpdateParams {
     /// Absent: keep. `null`: no project.
     #[serde(default, deserialize_with = "present")]
     pub project_id: Option<Option<String>>,
+    #[serde(default)]
+    pub mode: Option<Mode>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -558,6 +638,8 @@ pub struct TurnSendParams {
     /// Absent: keep the thread's effort. `null`: no effort.
     #[serde(default, deserialize_with = "present")]
     pub effort: Option<Option<String>>,
+    #[serde(default)]
+    pub attachments: Vec<crate::attachments::AttachmentIn>,
 }
 
 /// Tells an absent field (`None`) from an explicit `null` (`Some(None)`).
@@ -637,6 +719,7 @@ mod tests {
             tool: Some(ToolInfo { name: "Bash".into(), title: "Ran ls".into(), detail: Some("ls".into()), status: ToolStatus::Running, output: None, feedhq: false, threads: vec![] }),
             divider: None,
             decision: None,
+            attachments: None,
         };
         assert_eq!(
             serde_json::to_value(&item).unwrap(),
