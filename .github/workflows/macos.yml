@@ -155,7 +155,8 @@ jobs:
 
   release:
     name: Publish the release
-    if: startsWith(github.ref, 'refs/tags/v')
+    # A v* tag, or Run workflow on main (the tag is then made from the version).
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     needs: [universal, intel]
     runs-on: ubuntu-latest
     permissions:
@@ -166,14 +167,19 @@ jobs:
         with:
           name: Billable-universal-dmg
           path: dist
-      - name: Check the version matches the tag
+      - name: Work out the tag from the version
+        id: version
         run: |
           V=$(sed -n 's/^version *= *"\(.*\)"/\1/p' native/Cargo.toml | head -1)
-          test "v$V" = "${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then test "v$V" = "$GITHUB_REF_NAME"; fi
           ls dist/Billable-$V-universal.dmg
+          test -f "native/release-notes/v$V.md"
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@v2
         with:
-          name: Billable ${{ github.ref_name }}
-          body_path: native/release-notes/${{ github.ref_name }}.md
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Billable ${{ steps.version.outputs.tag }}
+          body_path: native/release-notes/${{ steps.version.outputs.tag }}.md
           files: dist/*.dmg
           fail_on_unmatched_files: true
