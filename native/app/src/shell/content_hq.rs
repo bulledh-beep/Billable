@@ -4,6 +4,10 @@
 //! its Supabase backend, and sends Google sign-in to the Mac's browser (Google
 //! refuses embedded browsers); Content HQ hands the finished sign-in back as
 //! a `billable://signin` link.
+//!
+//! The page also talks to the agents engine (FeedHQ's Agents screen) over
+//! `window.ipc.postMessage`; only messages from Content HQ's own origin are
+//! passed on (services/agents.rs).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -126,7 +130,12 @@ pub fn hide() {
     });
 }
 
-fn script(js: &str) {
+/// The address the view is showing.
+pub fn page_url() -> Option<String> {
+    VIEW.with(|v| v.borrow().as_ref().and_then(|view| view.url().ok()))
+}
+
+pub(crate) fn script(js: &str) {
     VIEW.with(|v| {
         if let Some(view) = v.borrow().as_ref() {
             let _ = view.evaluate_script(js);
@@ -162,6 +171,7 @@ impl ContentHq {
         }
         let home = home_url(cx);
         let nav_home = home.clone();
+        let ipc_origin = billable_agents::util::origin_of(&home);
         let origin = home.trim_end_matches('/').to_string();
         // Tell Content HQ it's inside Billable (the billable_shell cookie),
         // so it shows its switch back to Billable.
@@ -175,9 +185,16 @@ impl ContentHq {
             .with_user_agent(SAFARI_UA)
             .with_data_store_identifier(DATA_STORE)
             .with_initialization_script(cookie)
-            .with_on_page_load_handler(|event, _| {
-                if matches!(event, PageLoadEvent::Finished) {
-                    LOADED.with(|l| l.set(true));
+            .with_on_page_load_handler(|event, _| match event {
+                PageLoadEvent::Started => crate::services::agents::page_loading(),
+                PageLoadEvent::Finished => LOADED.with(|l| l.set(true)),
+            })
+            .with_ipc_handler(move |request| {
+                // The frame that sent it must be Content HQ itself: never its
+                // Supabase pages, an iframe from elsewhere, or about:blank.
+                let from = billable_agents::util::origin_of(&request.uri().to_string());
+                if from.is_some() && from == ipc_origin {
+                    crate::services::agents::from_page(request.into_body());
                 }
             })
             .with_navigation_handler(move |url| {
@@ -323,7 +340,8 @@ impl Render for ContentHq {
 }
 
 /// Handle `billable://` links the page tried to open: connect (phone sync,
-/// only from Content HQ's own origin), switch, signin.
+/// only from Content HQ's own origin), oauth (FeedHQ's sign-in for the
+/// agents), switch, signin.
 pub fn handle_view_links(cx: &mut App) {
     for url in take_view_links() {
         let Some(rest) = url.strip_prefix("billable://") else { continue };
@@ -338,6 +356,9 @@ pub fn handle_view_links(cx: &mut App) {
                         crate::platform::phone_connect_from_view(token, cx);
                     }
                 }
+            }
+            "oauth" => {
+                crate::services::agents::handle_oauth_link(&url, cx);
             }
             _ => crate::platform::queue_link(url),
         }

@@ -1,0 +1,19 @@
+[package]
+name = "billable-agents"
+description = "Billable's agent engine: Claude Code and Codex for FeedHQ's Agents screen, the FeedHQ MCP relay and the remote link"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+# FeedHQ: token exchange, the MCP relay's upstream, the remote link (same client as the app)
+ureq = { version = "3.5", default-features = false, features = ["rustls"] }
+# PKCE (S256) and random secrets
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.3"

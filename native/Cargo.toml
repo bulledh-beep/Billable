@@ -1,14 +1,15 @@
 [workspace]
-members = ["core", "app"]
+members = ["core", "app", "agents"]
 resolver = "2"
 
 [workspace.package]
-version = "2.0.2"
+version = "2.1.0"
 edition = "2021"
 publish = false
 
 [workspace.dependencies]
 billable-core = { path = "core" }
+billable-agents = { path = "agents" }
 rusqlite = { version = "0.37", features = ["bundled"] }
 chrono = "0.4"
 serde = { version = "1", features = ["derive"] }
