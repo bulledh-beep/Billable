@@ -87,6 +87,9 @@ Engine → screen, an **event** (any time, not tied to a request):
   createdAt: string;
   updatedAt: string;             // last activity, sorts the list
   preview: string;               // last assistant or user text, at most 140 chars, one line
+  cwd: string | null;            // Mac only: the folder the agent works in (null = the engine's default)
+  role: "orchestrator" | "worker" | null;  // Mac only, see "Orchestrator"
+  parentId: string | null;       // a worker's orchestrator thread
 }
 ```
 
@@ -109,6 +112,7 @@ Engine → screen, an **event** (any time, not tied to a request):
     status: "running" | "done" | "failed" | "denied";
     output: string | null;       // trimmed to 4,000 chars
     feedhq: boolean;             // true when it's a FeedHQ connector tool
+    threads?: string[];          // orchestrator tools: the worker threads this call started or read
   };
   divider?: { from: { agent: string; model: string }; to: { agent: string; model: string } };
 }
@@ -131,12 +135,13 @@ Engine → screen, an **event** (any time, not tied to a request):
 
 | Method | Params | Result |
 | --- | --- | --- |
-| `hello` | `{ client: "billable" \| "web" \| "phone" }` | `{ engine: "mac" \| "cloud", engineVersion, protocol: 1, agents: Agent[], feedhq: { connected: boolean, account: string \| null }, device: string \| null }` |
+| `hello` | `{ client: "billable" \| "web" \| "phone" }` | `{ engine: "mac" \| "cloud", engineVersion, protocol: 1, agents: Agent[], feedhq: { connected: boolean, account: string \| null }, device: string \| null, features?: string[] }` (`features` lists what this engine adds to v1: `"folders"` (cwd + system.pickFolder), `"orchestrator"`, `"bulk-delete"`; missing = none) |
 | `threads.list` | `{ includeArchived?: boolean }` | `{ threads: Thread[] }` (newest `updatedAt` first) |
 | `thread.get` | `{ threadId }` | `{ thread: Thread, items: Item[], approvals: Approval[] }` (items oldest first) |
-| `thread.create` | `{ agent, model, effort?: string \| null }` | `{ thread: Thread }` |
+| `thread.create` | `{ agent, model, effort?: string \| null, cwd?: string \| null, role?: "orchestrator" \| null }` | `{ thread: Thread }` |
 | `thread.update` | `{ threadId, title?, pinned?, settled?: boolean, archived?: boolean }` | `{ thread: Thread }` |
-| `thread.delete` | `{ threadId }` | `{}` |
+| `thread.delete` | `{ threadId }` | `{}` (also deletes its workers) |
+| `threads.delete` | `{ threadIds: string[] }` | `{ deleted: string[] }` (at most 200; unknown ids are skipped; one `thread.deleted` event each) |
 | `thread.retitle` | `{ threadId }` | always `bad_request` "Rename it instead." (titles never use a model; rename with `thread.update`) |
 | `turn.send` | `{ threadId, text, agent?, model?, effort? }` | `{ turnId, userItem: Item }` |
 | `turn.stop` | `{ threadId }` | `{}` |
@@ -144,6 +149,10 @@ Engine → screen, an **event** (any time, not tied to a request):
 | `agents.refresh` | `{}` | `{ agents: Agent[] }` (re-detect installs and sign-ins) |
 | `feedhq.connect` | `{}` | `{ authorizeUrl: string }` (Mac engine only; the screen navigates there) |
 | `feedhq.disconnect` | `{}` | `{}` |
+| `system.pickFolder` | `{}` | `{ path: string \| null }` (Mac engine, inside Billable only: shows the Mac's folder picker; null = cancelled. From the relay: `bad_request` "Pick the folder on your Mac.") |
+
+`cwd` must be an existing folder (`bad_request` "That folder isn't on this Mac." otherwise). It's fixed when the thread is made; every turn of the thread, and every
+worker it starts, runs there.
 
 `turn.send` with an `agent`/`model` different from the thread's switches the
 thread: the engine adds a `divider` item first, then starts the new agent with
@@ -171,6 +180,38 @@ their next message starts fresh with a handoff).
 | `approval.resolved` | `threadId, approvalId, decision` |
 | `agents.changed` | `agents: Agent[]` |
 | `feedhq.status` | `connected: boolean, account: string \| null` |
+
+## Orchestrator (Mac engine)
+
+A thread made with `role: "orchestrator"` runs Claude Code or Codex as a lead
+that splits work across **workers**: ordinary threads with `role: "worker"`
+and `parentId` set to the orchestrator. The engine gives the orchestrator's
+session a second MCP server, `billable` (same local relay, path
+`/mcp/<secret>/orchestrate/<threadId>`), with these tools:
+
+| Tool | Input | Returns |
+| --- | --- | --- |
+| `start_agents` | `{ agents: [{ title, task, agent?: "claude" \| "codex", model?, effort? }] }` (1 to 8) | `[{ id, title, agent, model, effort }]` at once; the workers run in the background |
+| `wait_for_agents` | `{ ids?: string[], timeoutSeconds?: number }` (default all, 600 s, max 1,800) | `[{ id, title, status, answer }]`; `answer` = the worker's last assistant text, trimmed to 8,000 chars |
+| `message_agent` | `{ id, text }` | `{ ok }` (a follow-up turn in that worker; `busy` while it runs) |
+| `list_agents` | `{}` | `[{ id, title, agent, model, effort, status }]` |
+| `stop_agents` | `{ ids?: string[] }` | `{ ok }` |
+
+- The orchestrator is told (appended system prompt) to choose each worker's
+  model and effort for the job: low effort and the fastest model for lookups,
+  renames and mechanical edits; medium for everyday features and fixes; high
+  and the strongest model for hard debugging, design and anything risky. It
+  writes a one-line reason in each worker's `task`.
+- At most 4 workers run at once per orchestrator; the rest wait their turn
+  (status `idle` with preview "Waiting to start"). At most 24 workers per
+  orchestrator.
+- Workers run in the orchestrator's `cwd`, with the FeedHQ connector, and ask
+  for approval like any thread (their approvals show on the worker and as a
+  badge on the orchestrator). A worker can't start workers.
+- Tool items for these calls carry `tool.threads` with the worker ids.
+- Nothing starts on its own: workers exist only because the person sent the
+  orchestrator a message. `turn.stop` on the orchestrator stops its workers.
+- Deleting the orchestrator deletes its workers.
 
 ## Handoff when switching agents mid-chat
 

@@ -321,3 +321,213 @@ fn chats_end_to_end_with_fake_agents() {
     h.engine.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn setup(name: &str) -> Option<Harness> {
+    if !python_available() {
+        eprintln!("python3 isn't available; skipping");
+        return None;
+    }
+    let dir = temp_dir(name);
+    install_fake(&dir, "claude");
+    install_fake(&dir, "codex");
+    let origin = fake_feedhq();
+    let mut h = Harness::new(dir, &origin, Arc::new(MemorySecrets::default()));
+    h.ok("hello", json!({}));
+    Some(h)
+}
+
+fn id_of(v: &Value) -> String {
+    v["thread"]["id"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn folders_and_bulk_delete() {
+    let Some(mut h) = setup("folders") else { return };
+    let hello = h.ok("hello", json!({}));
+    assert_eq!(hello["features"], json!(["folders", "orchestrator", "bulk-delete"]));
+    let site = h.dir.join("my site");
+    std::fs::create_dir_all(&site).unwrap();
+    let site_s = site.to_string_lossy().to_string();
+
+    // The folder must be one on this Mac
+    for bad in [h.dir.join("missing").to_string_lossy().to_string(), "relative/path".to_string()] {
+        let r = h.call("thread.create", json!({"agent": "claude", "model": "opus", "cwd": bad}));
+        assert_eq!(r["error"], json!({"code": "bad_request", "message": "That folder isn't on this Mac."}), "{r}");
+    }
+    assert_eq!(h.call("thread.create", json!({"agent": "claude", "model": "opus", "role": "worker"}))["error"]["code"], "bad_request");
+    // No folder picker in tests, and never from the relay
+    assert_eq!(h.call("system.pickFolder", json!({}))["error"]["code"], "bad_request");
+
+    // Claude Code and Codex both work in the chat's folder
+    let plain = h.ok("thread.create", json!({"agent": "claude", "model": "opus"}));
+    assert_eq!((plain["thread"]["cwd"].clone(), plain["thread"]["role"].clone(), plain["thread"]["parentId"].clone()), (Value::Null, Value::Null, Value::Null));
+    let made = h.ok("thread.create", json!({"agent": "claude", "model": "opus", "cwd": site_s}));
+    assert_eq!(made["thread"]["cwd"], json!(site_s));
+    let cl = id_of(&made);
+    let mark = h.events.len();
+    h.ok("turn.send", json!({"threadId": cl, "text": "hello"}));
+    assert_eq!(h.finished(mark, &cl)["status"], "done");
+    let cwds: Vec<String> = h.log("claude").into_iter().filter(|l| l["kind"] == "cwd").map(|l| l["value"].as_str().unwrap().to_string()).collect();
+    assert_eq!(cwds, vec![std::fs::canonicalize(&site).unwrap().to_string_lossy().to_string()]);
+    let cx = id_of(&h.ok("thread.create", json!({"agent": "codex", "model": "gpt-6.1-sol", "cwd": site_s})));
+    let mark = h.events.len();
+    h.ok("turn.send", json!({"threadId": cx, "text": "hello"}));
+    assert_eq!(h.finished(mark, &cx)["status"], "done");
+    let start = h.log("codex").into_iter().find(|l| l["value"]["method"] == "thread/start").unwrap();
+    assert_eq!(start["value"]["params"]["cwd"], json!(site_s));
+    assert!(start["value"]["params"]["config"].get("mcp_servers.billable").is_none(), "not an orchestrator");
+
+    // Many at once: unknown ids are skipped, one event each
+    let remote = h.engine.attach_remote();
+    h.engine.handle_remote(&json!({"v":1,"type":"request","id":"pick","method":"system.pickFolder","params":{}}).to_string());
+    let until = Instant::now() + WAIT;
+    let reply = loop {
+        let v: Value = serde_json::from_str(&remote.recv_timeout(until.saturating_duration_since(Instant::now())).unwrap()).unwrap();
+        if v["type"] == "reply" {
+            break v;
+        }
+    };
+    assert_eq!(reply["error"], json!({"code": "bad_request", "message": "Pick the folder on your Mac."}));
+    h.engine.detach_remote();
+    let too_many: Vec<String> = (0..201).map(|n| format!("t_{n}")).collect();
+    assert_eq!(h.call("threads.delete", json!({"threadIds": too_many}))["error"]["code"], "bad_request");
+    let pid = id_of(&plain);
+    let mark = h.events.len();
+    let r = h.ok("threads.delete", json!({"threadIds": [pid, "t_unknown", cx, pid]}));
+    assert_eq!(r["deleted"], json!([pid, cx]));
+    let gone: Vec<Value> = h.events[mark..].iter().filter(|e| e["type"] == "thread.deleted").map(|e| e["threadId"].clone()).collect();
+    assert_eq!(gone, vec![json!(pid), json!(cx)]);
+    let left = h.ok("threads.list", json!({}))["threads"].as_array().unwrap().clone();
+    assert_eq!(left.iter().map(|t| t["id"].as_str().unwrap()).collect::<Vec<_>>(), vec![cl.as_str()]);
+    h.engine.shutdown();
+    let _ = std::fs::remove_dir_all(&h.dir);
+}
+
+/// One MCP call over HTTP to the relay (what an agent would do).
+fn mcp_call(url: &str, body: &Value) -> Value {
+    use std::io::{Read, Write};
+    let rest = url.strip_prefix("http://").unwrap();
+    let (host, path) = rest.split_once('/').unwrap();
+    let body = body.to_string();
+    let mut s = std::net::TcpStream::connect(host).unwrap();
+    write!(s, "POST /{path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).unwrap();
+    serde_json::from_str(out.split_once("\r\n\r\n").unwrap().1).unwrap()
+}
+
+#[test]
+fn orchestrator_runs_workers() {
+    let Some(mut h) = setup("orchestrator") else { return };
+    let site = h.dir.join("site");
+    std::fs::create_dir_all(&site).unwrap();
+    let site_s = site.to_string_lossy().to_string();
+    let made = h.ok("thread.create", json!({"agent": "claude", "model": "opus", "cwd": site_s, "role": "orchestrator"}));
+    assert_eq!(made["thread"]["role"], "orchestrator");
+    let boss = id_of(&made);
+
+    // The person's message: the lead starts 5 helpers (4 run at once), waits, sums up
+    let mark = h.events.len();
+    h.ok("turn.send", json!({"threadId": boss, "text": "Please orchestrate the work"}));
+    let done = h.finished(mark, &boss);
+    assert_eq!(done["status"], "done", "{done}");
+
+    let rpcs: Vec<Value> = h.log("claude").into_iter().filter(|l| l["kind"] == "rpc").map(|l| l["value"].clone()).collect();
+    let tools_list = rpcs.iter().find(|r| r["method"] == "tools/list").unwrap();
+    assert_eq!(tools_list["answer"]["result"]["tools"].as_array().unwrap().len(), 5);
+    let result_of = |name: &str| -> Value {
+        let r = rpcs.iter().find(|r| r["method"] == "tools/call" && r["params"]["name"] == name).unwrap_or_else(|| panic!("no {name}"));
+        assert_eq!(r["answer"]["result"]["isError"], false, "{r}");
+        serde_json::from_str(r["answer"]["result"]["content"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    let started = result_of("start_agents");
+    let ids: Vec<String> = started.as_array().unwrap().iter().map(|w| w["id"].as_str().unwrap().to_string()).collect();
+    assert_eq!(ids.len(), 5);
+    assert_eq!(started[0]["effort"], "low");
+    assert_eq!(started[0]["model"], "opus");
+    let listed = result_of("list_agents");
+    let statuses: Vec<&str> = listed.as_array().unwrap().iter().map(|w| w["status"].as_str().unwrap()).collect();
+    assert_eq!(statuses.iter().filter(|s| **s == "running").count(), 4, "{listed}");
+    assert_eq!(statuses.iter().filter(|s| **s == "queued").count(), 1, "{listed}");
+    let waited = result_of("wait_for_agents");
+    for (n, w) in waited.as_array().unwrap().iter().enumerate() {
+        assert_eq!(w["status"], "done", "{waited}");
+        assert_eq!(w["answer"], json!(format!("Finished slow task {}", n + 1)));
+        assert_eq!(w["title"], json!(format!("Slow {}", n + 1)));
+    }
+
+    // Workers: ordinary threads with role, parent and the lead's folder
+    let threads = h.ok("threads.list", json!({}))["threads"].as_array().unwrap().clone();
+    let workers: Vec<&Value> = threads.iter().filter(|t| t["parentId"] == json!(boss)).collect();
+    assert_eq!(workers.len(), 5);
+    assert!(workers.iter().all(|w| w["role"] == "worker" && w["cwd"] == json!(site_s) && w["status"] == "idle"), "{workers:?}");
+    // Never more than 4 running at once
+    let mut running = 0usize;
+    let mut most = 0usize;
+    for e in &h.events[mark..] {
+        let worker = ids.iter().any(|i| e["threadId"] == json!(i));
+        match e["type"].as_str() {
+            Some("turn.started") if worker => {
+                running += 1;
+                most = most.max(running);
+            }
+            Some("turn.finished") if worker => running -= 1,
+            _ => {}
+        }
+    }
+    assert_eq!(most, 4);
+    // The lead's tool rows name the workers
+    let items = h.items(&boss);
+    let start_row = items.iter().find(|i| i["tool"]["name"] == "mcp__billable__start_agents").unwrap();
+    assert_eq!(start_row["tool"]["title"], "Started 5 agents");
+    assert_eq!(start_row["tool"]["threads"], json!(ids));
+    assert_eq!(items.iter().find(|i| i["tool"]["name"] == "mcp__billable__wait_for_agents").unwrap()["tool"]["threads"], json!(ids));
+    assert!(items.last().unwrap()["text"].as_str().unwrap().starts_with("Summary: Slow 1 done"));
+    // Only the lead got the billable server; helpers ran in the folder
+    let launches: Vec<Vec<String>> = h.log("claude").into_iter().filter(|l| l["kind"] == "launch").map(|l| serde_json::from_value(l["value"].clone()).unwrap()).collect();
+    assert_eq!(launches.len(), 6);
+    let with_billable: Vec<&Vec<String>> = launches.iter().filter(|a| a.iter().any(|x| x.contains("/orchestrate/"))).collect();
+    assert_eq!(with_billable.len(), 1);
+    assert!(with_billable[0].windows(2).any(|w| w == ["--allowedTools", "mcp__billable"]));
+    let canon = std::fs::canonicalize(&site).unwrap().to_string_lossy().to_string();
+    assert!(h.log("claude").iter().filter(|l| l["kind"] == "cwd").all(|l| l["value"] == json!(canon)));
+
+    // Nothing starts outside a turn the person sent
+    let cfg: Value = serde_json::from_str(&with_billable[0][with_billable[0].iter().position(|x| x == "--mcp-config").unwrap() + 1]).unwrap();
+    let url = cfg["mcpServers"]["billable"]["url"].as_str().unwrap().to_string();
+    let r = mcp_call(&url, &json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"start_agents","arguments":{"agents":[{"title":"x","task":"y"}]}}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let r = mcp_call(&url, &json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_agents","arguments":{}}}));
+    assert_eq!(serde_json::from_str::<Value>(r["result"]["content"][0]["text"].as_str().unwrap()).unwrap().as_array().unwrap().len(), 5);
+    // A thread that isn't an orchestrator gets nothing
+    let other = url.rsplit_once('/').unwrap().0.to_string() + "/" + &ids[0];
+    assert_eq!(mcp_call(&other, &json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_agents","arguments":{}}}))["result"]["isError"], true);
+
+    // Stop on the lead stops its helpers and answers its wait
+    let lead2 = id_of(&h.ok("thread.create", json!({"agent": "claude", "model": "opus", "role": "orchestrator"})));
+    let mark = h.events.len();
+    h.ok("turn.send", json!({"threadId": lead2, "text": "orchestrate and hang"}));
+    // Both helpers are running before Stop
+    let helpers_started = |h: &Harness| h.events[mark..].iter().filter(|e| e["type"] == "turn.started" && e["threadId"] != json!(lead2)).count();
+    while helpers_started(&h) < 2 {
+        let at = h.events.len();
+        h.wait_event(at, |_| true);
+    }
+    h.ok("turn.stop", json!({"threadId": lead2}));
+    assert_eq!(h.finished(mark, &lead2)["status"], "stopped");
+    let hung: Vec<String> = h.ok("threads.list", json!({}))["threads"].as_array().unwrap().iter().filter(|t| t["parentId"] == json!(lead2)).map(|t| t["id"].as_str().unwrap().to_string()).collect();
+    assert_eq!(hung.len(), 2);
+    for w in &hung {
+        assert_eq!(h.finished(mark, w)["status"], "stopped");
+    }
+
+    // Deleting a lead deletes its helpers
+    let mark = h.events.len();
+    let r = h.ok("threads.delete", json!({"threadIds": [boss]}));
+    assert_eq!(r["deleted"].as_array().unwrap().len(), 6);
+    assert_eq!(h.events[mark..].iter().filter(|e| e["type"] == "thread.deleted").count(), 6);
+    h.ok("thread.delete", json!({"threadId": lead2}));
+    assert!(h.ok("threads.list", json!({}))["threads"].as_array().unwrap().is_empty());
+    h.engine.shutdown();
+    let _ = std::fs::remove_dir_all(&h.dir);
+}

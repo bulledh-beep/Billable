@@ -201,6 +201,39 @@ pub struct Thread {
     pub created_at: String,
     pub updated_at: String,
     pub preview: String,
+    /// The folder the agent works in (`None`: the engine's default).
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub role: Option<ThreadRole>,
+    /// A worker's orchestrator.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+}
+
+/// PROTOCOL.md, "Orchestrator".
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ThreadRole {
+    Orchestrator,
+    Worker,
+}
+
+impl ThreadRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ThreadRole::Orchestrator => "orchestrator",
+            ThreadRole::Worker => "worker",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<ThreadRole> {
+        match s {
+            "orchestrator" => Some(ThreadRole::Orchestrator),
+            "worker" => Some(ThreadRole::Worker),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -245,6 +278,9 @@ pub struct ToolInfo {
     pub status: ToolStatus,
     pub output: Option<String>,
     pub feedhq: bool,
+    /// Orchestrator tools: the worker threads this call started or read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub threads: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -389,6 +425,17 @@ pub struct ThreadCreateParams {
     pub model: String,
     #[serde(default)]
     pub effort: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Only "orchestrator" may be asked for; workers are made by orchestrators.
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadsDeleteParams {
+    pub thread_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -468,7 +515,7 @@ mod tests {
             text: None,
             agent: Some("claude".into()),
             model: None,
-            tool: Some(ToolInfo { name: "Bash".into(), title: "Ran ls".into(), detail: Some("ls".into()), status: ToolStatus::Running, output: None, feedhq: false }),
+            tool: Some(ToolInfo { name: "Bash".into(), title: "Ran ls".into(), detail: Some("ls".into()), status: ToolStatus::Running, output: None, feedhq: false, threads: vec![] }),
             divider: None,
         };
         assert_eq!(
@@ -478,6 +525,9 @@ mod tests {
         );
         let back: Item = serde_json::from_value(serde_json::to_value(&item).unwrap()).unwrap();
         assert_eq!(back, item);
+        let mut with_threads = item.clone();
+        with_threads.tool.as_mut().unwrap().threads = vec!["t_2".into()];
+        assert_eq!(serde_json::to_value(&with_threads).unwrap()["tool"]["threads"], json!(["t_2"]));
     }
 
     #[test]
