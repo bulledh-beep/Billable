@@ -64,7 +64,9 @@ pub fn models_from_initialize(response: &Value) -> Option<(Vec<Model>, String)> 
     let mut models = Vec::new();
     let mut default = None;
     for m in list {
-        let Some(id) = m.get("value").and_then(Value::as_str) else { continue };
+        let Some(id) = m.get("value").and_then(Value::as_str) else {
+            continue;
+        };
         // Aliases only ("opus", "sonnet"…): they follow the newest release.
         if id == "default" || id.starts_with("claude-") || id.contains('[') {
             continue;
@@ -113,6 +115,10 @@ pub fn signed_in(bin: &Path) -> Option<bool> {
 
 /// Tools a lookup never gets.
 pub const READ_ONLY_DENIED: &[&str] = &["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"];
+/// What a lookup may do without asking, beyond reading: look things up.
+pub const LOOKUP_ALLOWED: &[&str] = &["WebSearch", "WebFetch"];
+/// Claude Code's own helper tools, which a coordinator never gets.
+pub const COORDINATOR_DENIED: &[&str] = &["Task", "Agent"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Launch {
@@ -127,6 +133,8 @@ pub struct Launch {
     pub notes: String,
     /// A lookup: it may read but never change anything.
     pub read_only: bool,
+    /// A coordinator: its helpers are FeedHQ jobs, never Claude Code's own.
+    pub coordinator: bool,
 }
 
 /// The `--mcp-config` JSON: `feedhq` (the relay) and `billable`. `None`
@@ -180,9 +188,17 @@ pub fn launch_args(l: &Launch) -> Vec<String> {
         a.push(format!("mcp__{}", crate::orchestrator::SERVER_NAME));
     }
     if l.read_only {
-        // Anything else that would need an approval is turned down by the engine.
+        // A lookup may look things up on the web; anything else that would
+        // need an approval is turned down by the engine.
+        a.push("--allowedTools".into());
+        a.push(LOOKUP_ALLOWED.join(","));
         a.push("--disallowedTools".into());
         a.push(READ_ONLY_DENIED.join(","));
+    } else if l.coordinator {
+        // Hidden helpers die with the coordinator's turn and can't be seen
+        // or answered; its helpers are jobs (start_agents) instead.
+        a.push("--disallowedTools".into());
+        a.push(COORDINATOR_DENIED.join(","));
     }
     a
 }
@@ -236,7 +252,9 @@ impl Mapper {
 
     /// Events for one line, and lines to write back to the CLI.
     pub fn line(&mut self, line: &str) -> (Vec<DriverEvent>, Vec<String>) {
-        let Ok(v) = serde_json::from_str::<Value>(line) else { return (vec![], vec![]) };
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            return (vec![], vec![]);
+        };
         let mut out = Vec::new();
         let mut replies = Vec::new();
         let main = v.get("parent_tool_use_id").is_none_or(Value::is_null);
@@ -372,7 +390,9 @@ impl Mapper {
             }
             "content_block_delta" => {
                 let index = e.get("index").and_then(Value::as_u64).unwrap_or(0);
-                let Some((k, _)) = self.blocks.get(&index) else { return };
+                let Some((k, _)) = self.blocks.get(&index) else {
+                    return;
+                };
                 let d = e.get("delta").cloned().unwrap_or(Value::Null);
                 match d.get("type").and_then(Value::as_str) {
                     Some("text_delta") => {
@@ -396,7 +416,9 @@ impl Mapper {
 /// The control response for an approval.
 fn answer_line(request_id: &str, decision: Decision, pending: Option<&PendingTool>) -> String {
     let response = match decision {
-        Decision::Deny => json!({"behavior": "deny", "message": "The user declined this step in FeedHQ."}),
+        Decision::Deny => {
+            json!({"behavior": "deny", "message": "The user declined this step in FeedHQ."})
+        }
         Decision::Allow | Decision::AllowAlways => {
             let mut r = json!({"behavior": "allow", "updatedInput": pending.map(|p| p.input.clone()).unwrap_or(json!({}))});
             if decision == Decision::AllowAlways {
@@ -629,7 +651,8 @@ mod tests {
 
     #[test]
     fn launch_flags() {
-        let a = launch_args(&Launch { model: "opus".into(), effort: Some("high".into()), resume: Some("s-1".into()), mcp_url: Some("http://127.0.0.1:9/mcp/x".into()), orchestrate_url: None, notes: String::new(), read_only: false });
+        let a =
+            launch_args(&Launch { model: "opus".into(), effort: Some("high".into()), resume: Some("s-1".into()), mcp_url: Some("http://127.0.0.1:9/mcp/x".into()), orchestrate_url: None, notes: String::new(), read_only: false, coordinator: false });
         let joined = a.join(" ");
         for f in ["-p", "--input-format stream-json", "--output-format stream-json", "--verbose", "--include-partial-messages", "--permission-prompt-tool stdio", "--model opus", "--effort high", "--resume s-1"] {
             assert!(joined.contains(f), "{f} missing from {joined}");
@@ -638,12 +661,14 @@ mod tests {
         let cfg: Value = serde_json::from_str(&a[i + 1]).unwrap();
         assert_eq!(cfg, json!({"mcpServers":{"feedhq":{"type":"http","url":"http://127.0.0.1:9/mcp/x"}}}));
         assert!(!a.iter().any(|x| x == "--allowedTools"));
-        let a = launch_args(&Launch { model: "haiku".into(), effort: None, resume: None, mcp_url: None, orchestrate_url: None, notes: String::new(), read_only: true });
+        let a = launch_args(&Launch { model: "haiku".into(), effort: None, resume: None, mcp_url: None, orchestrate_url: None, notes: String::new(), read_only: true, coordinator: false });
         assert!(!a.iter().any(|x| x == "--effort" || x == "--resume" || x == "--mcp-config"));
         // A lookup can't write or run commands
         assert!(a.windows(2).any(|w| w == ["--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash"]));
+        // ...but it can search the web and read pages
+        assert!(a.windows(2).any(|w| w == ["--allowedTools", "WebSearch,WebFetch"]));
         // An orchestrator: both servers, the guidance, its own tools allowed
-        let a = launch_args(&Launch { model: "opus".into(), effort: None, resume: None, mcp_url: Some("http://h/mcp/x".into()), orchestrate_url: Some("http://h/mcp/x/orchestrate/t_1".into()), notes: crate::orchestrator::notes(Some(crate::orchestrator::Seat::Coordinator), None), read_only: false });
+        let a = launch_args(&Launch { model: "opus".into(), effort: None, resume: None, mcp_url: Some("http://h/mcp/x".into()), orchestrate_url: Some("http://h/mcp/x/orchestrate/t_1".into()), notes: crate::orchestrator::notes(Some(crate::orchestrator::Seat::Coordinator), None), read_only: false, coordinator: true });
         let i = a.iter().position(|x| x == "--mcp-config").unwrap();
         let cfg: Value = serde_json::from_str(&a[i + 1]).unwrap();
         assert_eq!(cfg["mcpServers"]["billable"], json!({"type":"http","url":"http://h/mcp/x/orchestrate/t_1"}));
@@ -651,6 +676,8 @@ mod tests {
         let i = a.iter().position(|x| x == "--append-system-prompt").unwrap();
         assert!(a[i + 1].contains("start_agents") && a[i + 1].starts_with(SYSTEM_NOTE));
         assert!(a.windows(2).any(|w| w == ["--allowedTools", "mcp__billable"]));
+        // Its helpers are jobs, not Claude Code's hidden ones
+        assert!(a.windows(2).any(|w| w == ["--disallowedTools", "Task,Agent"]));
     }
 
     #[test]

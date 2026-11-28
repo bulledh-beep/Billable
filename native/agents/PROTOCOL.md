@@ -93,6 +93,7 @@ Engine → screen, an **event** (any time, not tied to a request):
   projectId?: string | null;     // Mac only: the FeedHQ project it's filed in (its memory applies)
   workerKind?: "job" | "lookup" | null;  // workers only, see "Coordinator"
   reviewAt?: string | null;      // a job handed its work back for the person to check
+  mode?: "ask" | "edits" | "trusted" | "auto" | null;  // Mac only, see "Modes" (null = ask)
 }
 ```
 
@@ -156,16 +157,16 @@ Engine → screen, an **event** (any time, not tied to a request):
 
 | Method | Params | Result |
 | --- | --- | --- |
-| `hello` | `{ client: "billable" \| "web" \| "phone" }` | `{ engine: "mac" \| "cloud", engineVersion, protocol: 1, agents: Agent[], feedhq: { connected: boolean, account: string \| null }, device: string \| null, features?: string[] }` (`features` lists what this engine adds to v1: `"folders"` (cwd + system.pickFolder), `"orchestrator"`, `"bulk-delete"`, `"coordinator"`, `"decisions"`, `"memory"`, `"lookups"`, `"review"`, `"tools"`, `"computer"`, `"attachments"`; missing = none) |
+| `hello` | `{ client: "billable" \| "web" \| "phone" }` | `{ engine: "mac" \| "cloud", engineVersion, protocol: 1, agents: Agent[], feedhq: { connected: boolean, account: string \| null }, device: string \| null, features?: string[] }` (`features` lists what this engine adds to v1: `"folders"` (cwd + system.pickFolder), `"orchestrator"`, `"bulk-delete"`, `"coordinator"`, `"decisions"`, `"memory"`, `"lookups"`, `"review"`, `"tools"`, `"computer"`, `"attachments"`, `"modes"`; missing = none) |
 | `threads.list` | `{ includeArchived?: boolean }` | `{ threads: Thread[] }` (newest `updatedAt` first) |
 | `thread.get` | `{ threadId }` | `{ thread: Thread, items: Item[], approvals: Approval[] }` (items oldest first) |
-| `thread.create` | `{ agent, model, effort?: string \| null, cwd?: string \| null, role?: "orchestrator" \| null, projectId?: string \| null }` | `{ thread: Thread }` |
-| `thread.update` | `{ threadId, title?, pinned?, settled?: boolean, archived?: boolean, projectId?: string \| null }` | `{ thread: Thread }` (`settled: true` also clears `reviewAt`; a coordinator's `projectId` carries to its jobs) |
+| `thread.create` | `{ agent, model, effort?: string \| null, cwd?: string \| null, role?: "orchestrator" \| null, projectId?: string \| null, mode?: Mode }` | `{ thread: Thread }` (`mode` left out: `trusted` for a coordinator, `ask` otherwise) |
+| `thread.update` | `{ threadId, title?, pinned?, settled?: boolean, archived?: boolean, projectId?: string \| null, mode?: Mode }` | `{ thread: Thread }` (`settled: true` also clears `reviewAt`; a coordinator's `projectId` and `mode` carry to its jobs) |
 | `thread.delete` | `{ threadId }` | `{}` (also deletes its workers) |
 | `threads.delete` | `{ threadIds: string[] }` | `{ deleted: string[] }` (at most 200; unknown ids are skipped; one `thread.deleted` event each) |
 | `thread.retitle` | `{ threadId }` | always `bad_request` "Rename it instead." (titles never use a model; rename with `thread.update`) |
 | `turn.send` | `{ threadId, text, agent?, model?, effort?, attachments?: AttachmentIn[] }` | `{ turnId, userItem: Item }` (`text` may be "" when something is attached) |
-| `turn.stop` | `{ threadId }` | `{}` |
+| `turn.stop` | `{ threadId, jobs?: boolean }` | `{}` (on a coordinator, `jobs: false` stops only its own turn and lets its jobs and lookups finish; default true) |
 | `approval.answer` | `{ threadId, approvalId, decision: "allow" \| "allow_always" \| "deny" }` | `{}` |
 | `decision.answer` | `{ threadId, itemId, choice: number, text?: string, kept?: number[] }` | `{ item: Item }` (`not_found` once answered; a plan needs at least one kept job) |
 | `memory.get` | `{ projectId }` | `{ projectId, text, updatedAt: string \| null }` |
@@ -225,20 +226,27 @@ session a second MCP server, `billable` (same local relay, path
 
 | Tool | Input | Returns |
 | --- | --- | --- |
-| `start_agents` | `{ agents: [{ title, task, agent?: "claude" \| "codex", model?, effort? }] }` (1 to 8) | `[{ id, title, agent, model, effort }]` at once; the workers run in the background |
+| `start_agents` | `{ agents: [{ title, task, agent?: "claude" \| "codex", model?, effort? }] }` (1 to 6) | `[{ id, title, agent, model, effort }]` at once; the workers run in the background |
 | `wait_for_agents` | `{ ids?: string[], timeoutSeconds?: number }` (default all, 600 s, max 1,800) | `[{ id, title, status, answer }]`; `answer` = the worker's last assistant text, trimmed to 8,000 chars |
 | `message_agent` | `{ id, text }` | `{ ok }` (a follow-up turn in that worker; `busy` while it runs) |
 | `list_agents` | `{}` | `[{ id, title, agent, model, effort, status }]` |
 | `stop_agents` | `{ ids?: string[] }` | `{ ok }` |
 
-- The orchestrator is told (appended system prompt) to choose each worker's
-  model and effort for the job: low effort and the fastest model for lookups,
-  renames and mechanical edits; medium for everyday features and fixes; high
-  and the strongest model for hard debugging, design and anything risky. It
-  writes a one-line reason in each worker's `task`.
-- At most 4 workers run at once per orchestrator; the rest wait their turn
-  (status `idle` with preview "Waiting to start"). At most 24 workers per
-  orchestrator.
+- Every job spends the person's plan, so the orchestrator is told (appended
+  system prompt) to work alone first and start jobs only for pieces that truly
+  run in parallel, and to pick the smallest model that will do: haiku at low
+  effort for lookups, checks and mechanical edits; sonnet at medium for
+  everyday work (the usual choice); opus at high, rarely, for hard debugging,
+  design and anything risky. It writes a one-line reason in each `task`.
+- Jobs never run on Fable: `start_agents` and `propose_plan` refuse any model
+  id containing `fable`, and the model list they're shown leaves it out. A
+  model left out is `haiku` for a lookup (effort `low`) and `sonnet` for a job,
+  when the agent has them, else the agent's default.
+- At most 4 jobs run at once per orchestrator; the rest wait their turn
+  (status `idle` with preview "Waiting to start"). The coordinator itself
+  never gets Claude Code's built-in `Task`/`Agent` helpers
+  (`--disallowedTools`): those die with its turn, and the person can't see or
+  steer them.
 - Workers run in the orchestrator's `cwd`, with the FeedHQ connector, and ask
   for approval like any thread (their approvals show on the worker and as a
   badge on the orchestrator). A worker can't start workers.
@@ -261,8 +269,9 @@ for its seat:
 | any other chat | `ask_person`, and `remember` in a project |
 
 - `start_agents` items take `kind: "job" | "lookup"` (default job). Lookups
-  have their own 4 slots, so a quick read never waits behind jobs; 40 jobs
-  and lookups per coordinator in all. Results carry `kind`.
+  have their own 2 slots, so a quick read never waits behind jobs; 12 jobs
+  and lookups per coordinator in all. Results carry `kind`. Lookups may also
+  search and read the web (Claude Code: `WebSearch`, `WebFetch` allowed).
 - `propose_plan { summary?, agents: [... same items, plus reason?] }` shows a
   plan card (a `decision` item with `plan`) and holds the call up to 25
   minutes. `decision.answer` with choice 0 starts the kept jobs, whether or
@@ -283,6 +292,44 @@ for its seat:
   memory starts a fresh agent process on the next turn (the session resumes).
 - Worker statuses: queued, running, waiting (an approval or a card is open),
   review, done, stopped, failed, not_started, deleted.
+
+## Modes (Mac engine, `features` "modes")
+
+`Thread.mode` says what an agent may do without asking. Every approval still
+arrives as `approval.requested` unless the mode answers it first, in the
+engine, before anyone sees it:
+
+| Mode | Answered "allow" without asking |
+| --- | --- |
+| `ask` (default) | nothing |
+| `edits` | file edits inside the chat's folder (Claude Code `Edit`, `MultiEdit`, `Write`, `NotebookEdit`; Codex `fileChange`) |
+| `trusted` | `edits`, plus reading and searching (files and the web), and commands on the safe list below |
+| `auto` | everything except the hard stops below |
+
+- Anything not answered by the mode comes to the person as usual. The engine
+  only ever answers "allow"; a "no" is always the person's.
+- Outside `auto`, a command asks if it hides what runs (backticks, `$(`,
+  `<(`, `>(`, a newline), redirects outside the folder, or has any part
+  that isn't on the safe list. A path starting with `~` or using `$` is never
+  "inside the folder". MCP tools go ahead in `trusted` only when the name is a
+  read (`get`, `list`, `search`, `read`… with no `delete`, `send`, `post`,
+  `publish`, `create`, `update`, `run`…).
+- Hard stops, which ask even in `auto`: edits outside the folder; `sudo`,
+  `su`, `dd`, `mkfs`, `diskutil erase…`, `shutdown`, `launchctl`; force or
+  delete pushes; `git reset --hard`, `git clean -f`, `git filter-branch`;
+  `rm`, `chmod` or `chown` on anything outside the folder or on the folder
+  itself; piping into a shell or interpreter (`curl … | sh`); and MCP tools
+  whose names delete, remove, send, post, publish, pay, transfer or merge.
+- Safe commands (`trusted`): each part of a `;`, `|`, `&&`, `||` chain must be
+  one of: `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find` (no
+  `-delete`/`-exec`), `sed` (no `-i`), `pwd`, `echo`, `diff`; `git status`,
+  `diff`, `log`, `show`, `branch`, `add`, `commit`, `checkout -b`, `switch -c`,
+  `stash`; `npm`/`pnpm`/`yarn` test, run, install; `npx` tsc, eslint, vitest,
+  prettier, next; `cargo` build, test, check, fmt, clippy; `go` build, test;
+  `make`; `node`/`python` on a script inside the folder; `ffmpeg`/`ffprobe`
+  writing inside the folder.
+- A coordinator's `mode` carries to its jobs (new jobs copy it; changing it
+  changes theirs). Lookups never change anything, whatever the mode.
 
 ## Tools (Mac engine, `features` "tools")
 

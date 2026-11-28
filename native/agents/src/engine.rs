@@ -30,7 +30,7 @@ use crate::{
     attachments, claude, codex, commands, computer,
     discovery::{self, Binaries},
     driver::DriverEvent,
-    handoff,
+    guard, handoff,
     oauth::{self, FeedhqAuth},
     orchestrator::{self, Call, Seat},
     protocol::*,
@@ -66,7 +66,7 @@ pub enum PickKind {
 pub type FolderPicker = Arc<dyn Fn(PickKind, FolderAnswer) + Send + Sync>;
 
 /// The `features` this engine adds to protocol v1.
-pub const FEATURES: &[&str] = &["folders", "orchestrator", "bulk-delete", "coordinator", "decisions", "memory", "lookups", "review", "tools", "computer", "attachments"];
+pub const FEATURES: &[&str] = &["folders", "orchestrator", "bulk-delete", "coordinator", "decisions", "memory", "lookups", "review", "tools", "computer", "attachments", "modes"];
 /// At most this many chats per threads.delete.
 const MAX_BULK_DELETE: usize = 200;
 
@@ -679,8 +679,12 @@ impl State {
     }
 
     fn request(&mut self, src: Source, json: &str) {
-        let Ok(raw) = serde_json::from_str::<Value>(json) else { return };
-        let Some(id) = raw.get("id").and_then(Value::as_str).map(str::to_string) else { return };
+        let Ok(raw) = serde_json::from_str::<Value>(json) else {
+            return;
+        };
+        let Some(id) = raw.get("id").and_then(Value::as_str).map(str::to_string) else {
+            return;
+        };
         let to = (src, id);
         let req: Request = match serde_json::from_value(raw) {
             Ok(r) => r,
@@ -708,7 +712,7 @@ impl State {
                 Ok(()) => return,
                 Err(e) => Err(e),
             },
-            "turn.stop" => params::<ThreadIdParams>(p).and_then(|p| self.turn_stop(&p.thread_id)),
+            "turn.stop" => params::<TurnStopParams>(p).and_then(|p| self.turn_stop_with(&p.thread_id, p.jobs.unwrap_or(true))),
             "approval.answer" => params::<ApprovalAnswerParams>(p).and_then(|p| self.approval_answer(p)),
             "decision.answer" => params::<DecisionAnswerParams>(p).and_then(|p| self.decision_answer(p)),
             "memory.get" => params::<MemoryGetParams>(p).and_then(|p| self.memory_get(&p.project_id)),
@@ -746,7 +750,9 @@ impl State {
             },
             "files.search" => {
                 let root = p.get("cwd").and_then(Value::as_str).filter(|_| src == Source::Local).map(PathBuf::from).filter(|c| c.is_dir()).or_else(|| p.get("threadId").and_then(Value::as_str).and_then(|t| self.work_dir(t).ok()));
-                let Some(root) = root else { return self.reply(&to, Err(ProtoError::bad_request("This chat has no folder."))) };
+                let Some(root) = root else {
+                    return self.reply(&to, Err(ProtoError::bad_request("This chat has no folder.")));
+                };
                 let query = p.get("query").and_then(Value::as_str).unwrap_or("").to_string();
                 let tx = self.tx.clone();
                 std::thread::spawn(move || {
@@ -846,7 +852,9 @@ impl State {
     /// An agent's models, as its CLI listed them in a session the user
     /// started (never asked for in the background).
     fn models_reported(&mut self, id: &str, models: Vec<Model>, default: String) {
-        let Some(a) = self.agents.iter_mut().find(|a| a.id == id) else { return };
+        let Some(a) = self.agents.iter_mut().find(|a| a.id == id) else {
+            return;
+        };
         if a.models == models && a.default_model == default {
             return;
         }
@@ -862,7 +870,9 @@ impl State {
         if !looks_signed_out(error) {
             return;
         }
-        let Some(a) = self.agents.iter_mut().find(|a| a.id == id) else { return };
+        let Some(a) = self.agents.iter_mut().find(|a| a.id == id) else {
+            return;
+        };
         if !a.signed_in {
             return;
         }
@@ -967,6 +977,8 @@ impl State {
             project_id: clean_project(p.project_id.as_deref()),
             worker_kind: None,
             review_at: None,
+            // A coordinator starts trusted (the person's pick, 2026-11-28).
+            mode: Some(p.mode.unwrap_or(if role == Some(ThreadRole::Orchestrator) { Mode::Trusted } else { Mode::Ask })),
         };
         self.store.insert_thread(&t).map_err(store_err)?;
         self.emit(Event::ThreadUpdated { thread: t.clone() });
@@ -999,6 +1011,14 @@ impl State {
         }
         if let Some(archived) = p.archived {
             t.archived_at = if archived { t.archived_at.or(Some(now)) } else { None };
+        }
+        if let Some(mode) = p.mode {
+            t.mode = Some(mode);
+            // Its jobs follow it; what's waiting is looked at again.
+            for mut w in self.store.workers(&t.id).map_err(store_err)? {
+                w.mode = Some(mode);
+                self.save_thread(&w);
+            }
         }
         self.save_thread(&t);
         Ok(json!({ "thread": t }))
@@ -1260,14 +1280,18 @@ impl State {
     /// What a chat's agent is told after the usual note, and whether it may
     /// only read.
     fn notes_for(&self, thread: &str) -> (String, bool) {
-        let Some(t) = self.store.thread(thread).ok().flatten() else { return (String::new(), false) };
+        let Some(t) = self.store.thread(thread).ok().flatten() else {
+            return (String::new(), false);
+        };
         let memory = t.project_id.as_deref().and_then(|p| self.store.memory(p).ok().flatten()).map(|(text, _)| text);
         let seat = seat_of(&t);
         (orchestrator::notes(seat, memory.as_deref()), seat.is_none())
     }
 
     fn start_agent(&mut self, thread: &str, prompt: &str, session: Option<String>) {
-        let Some(turn) = self.turns.get(thread) else { return };
+        let Some(turn) = self.turns.get(thread) else {
+            return;
+        };
         let (agent, model, effort) = (turn.agent.clone(), turn.model.clone(), turn.effort.clone());
         let cwd = match self.work_dir(thread) {
             Ok(c) => c,
@@ -1285,11 +1309,13 @@ impl State {
             return self.finish_turn(thread, TurnStatus::Failed, Some("Claude Code isn't installed on this Mac.".into()), None);
         };
         let (notes, read_only) = self.notes_for(thread);
-        let launch = claude::Launch { model, effort, resume: session, mcp_url: self.mcp_url(), orchestrate_url: self.orchestrate_url(thread), notes, read_only };
+        let coordinator = self.store.thread(thread).ok().flatten().is_some_and(|t| t.role == Some(ThreadRole::Orchestrator));
+        let launch = claude::Launch { model, effort, resume: session, mcp_url: self.mcp_url(), orchestrate_url: self.orchestrate_url(thread), notes, read_only, coordinator };
         // A changed memory or seat starts a fresh process (the session resumes).
         let reuse = self.claude.get_mut(thread).is_some_and(|r| {
             let l = &r.session.launch;
-            let same = l.model == launch.model && l.effort == launch.effort && l.mcp_url == launch.mcp_url && l.orchestrate_url == launch.orchestrate_url && l.notes == launch.notes && l.read_only == launch.read_only;
+            let same =
+                l.model == launch.model && l.effort == launch.effort && l.mcp_url == launch.mcp_url && l.orchestrate_url == launch.orchestrate_url && l.notes == launch.notes && l.read_only == launch.read_only && l.coordinator == launch.coordinator;
             same && r.session.alive()
         });
         if !reuse {
@@ -1354,7 +1380,9 @@ impl State {
             return;
         }
         let Some(c) = self.codex.as_ref() else { return };
-        let Some(turn) = self.turns.get(thread) else { return };
+        let Some(turn) = self.turns.get(thread) else {
+            return;
+        };
         let peer = c.server.peer.clone();
         let gen = c.gen;
         let loaded = c.loaded.get(thread).cloned();
@@ -1415,7 +1443,9 @@ impl State {
         if self.codex.as_ref().map(|c| c.gen) != Some(gen) {
             return;
         }
-        let Some(t) = self.turns.get_mut(thread).filter(|t| t.id == turn) else { return };
+        let Some(t) = self.turns.get_mut(thread).filter(|t| t.id == turn) else {
+            return;
+        };
         match result {
             Ok(codex_turn) => {
                 t.codex_turn = Some(codex_turn.clone());
@@ -1454,7 +1484,9 @@ impl State {
                     }
                     return;
                 }
-                let Some((ct, ev)) = codex::map_notification(&method, &params) else { return };
+                let Some((ct, ev)) = codex::map_notification(&method, &params) else {
+                    return;
+                };
                 if let Some(thread) = self.codex.as_ref().and_then(|c| thread_of(&ct, c)) {
                     self.driver_event(&thread, ev);
                 }
@@ -1487,7 +1519,9 @@ impl State {
         if let Some(id) = self.turns.get(thread).and_then(|t| t.keys.get(key)).cloned() {
             return (id, false);
         }
-        let Some(turn) = self.turns.get(thread) else { return (String::new(), false) };
+        let Some(turn) = self.turns.get(thread) else {
+            return (String::new(), false);
+        };
         let (turn_id, agent, model) = (turn.id.clone(), turn.agent.clone(), turn.model.clone());
         let text = matches!(kind, ItemKind::Assistant | ItemKind::Reasoning).then(String::new);
         let item = self.add_item(thread, Some(&turn_id), kind, text, |i| {
@@ -1506,7 +1540,9 @@ impl State {
 
     fn text_delta(&mut self, thread: &str, key: &str, kind: ItemKind, text: String) {
         let (id, _) = self.item_for(thread, key, kind);
-        let Some(t) = self.turns.get_mut(thread) else { return };
+        let Some(t) = self.turns.get_mut(thread) else {
+            return;
+        };
         if let Some(item) = t.live.get_mut(&id) {
             item.text.get_or_insert_with(String::new).push_str(&text);
             self.emit(Event::ItemDelta { thread_id: thread.to_string(), item_id: id, delta: text });
@@ -1518,8 +1554,12 @@ impl State {
             return;
         }
         let (id, _) = self.item_for(thread, key, kind);
-        let Some(t) = self.turns.get_mut(thread) else { return };
-        let Some(mut item) = t.live.remove(&id).or_else(|| self.saved_item(thread, &id)) else { return };
+        let Some(t) = self.turns.get_mut(thread) else {
+            return;
+        };
+        let Some(mut item) = t.live.remove(&id).or_else(|| self.saved_item(thread, &id)) else {
+            return;
+        };
         let changed = item.text.as_deref() != Some(text.as_str());
         item.text = Some(text);
         if changed {
@@ -1582,9 +1622,13 @@ impl State {
                 self.update_item(&item);
             }
             DriverEvent::ToolFinished { key, output, failed, declined } => {
-                let Some(id) = self.turns.get(thread).and_then(|t| t.keys.get(&key)).cloned() else { return };
+                let Some(id) = self.turns.get(thread).and_then(|t| t.keys.get(&key)).cloned() else {
+                    return;
+                };
                 let denied = declined || self.turns.get(thread).is_some_and(|t| t.denied.contains(&id));
-                let Some(mut item) = self.saved_item(thread, &id) else { return };
+                let Some(mut item) = self.saved_item(thread, &id) else {
+                    return;
+                };
                 if let Some(tool) = item.tool.as_mut() {
                     tool.status = if denied {
                         ToolStatus::Denied
@@ -1636,7 +1680,9 @@ impl State {
     // ---------- Approvals ----------
 
     fn approval_requested(&mut self, thread: &str, native: String, tool_key: Option<String>, name: &str, input: &Value, options: Vec<Decision>) {
-        let Some(turn) = self.turns.get(thread) else { return };
+        let Some(turn) = self.turns.get(thread) else {
+            return;
+        };
         let agent = turn.agent.clone();
         // A lookup only reads: anything that would need the person is turned down.
         if turn.lookup {
@@ -1648,6 +1694,16 @@ impl State {
             return self.answer_agent(&a, Decision::Deny);
         }
         let item_id = tool_key.as_ref().and_then(|k| turn.keys.get(k)).cloned();
+        // The chat's mode may let it go ahead without the person.
+        let mode = self.store.thread(thread).ok().flatten().and_then(|t| t.mode).unwrap_or_default();
+        if mode != Mode::Ask {
+            if let Ok(cwd) = self.work_dir(thread) {
+                if guard::verdict(mode, name, input, &cwd) == guard::Verdict::Allow {
+                    let a = OpenApproval { thread: thread.to_string(), native, agent, item_id };
+                    return self.answer_agent(&a, Decision::Allow);
+                }
+            }
+        }
         let (title, mut detail) = tools::approval(name, input);
         if detail.trim().is_empty() || detail.trim() == "{}" {
             if let Some(d) = item_id.as_ref().and_then(|id| self.saved_item(thread, id)).and_then(|i| i.tool.and_then(|t| t.detail)) {
@@ -1670,7 +1726,9 @@ impl State {
     /// Running; waiting while an approval or a decision card is open (a
     /// card keeps a chat waiting after its turn, too); else as it was.
     fn set_status(&self, thread: &str) {
-        let Ok(Some(mut t)) = self.store.thread(thread) else { return };
+        let Ok(Some(mut t)) = self.store.thread(thread) else {
+            return;
+        };
         let busy = self.turns.contains_key(thread);
         let status = if self.needs_person(thread) {
             ThreadStatus::Waiting
@@ -1724,10 +1782,18 @@ impl State {
     // ---------- Stop and finish ----------
 
     fn turn_stop(&mut self, thread: &str) -> Result<Value, ProtoError> {
+        self.turn_stop_with(thread, true)
+    }
+
+    /// `jobs`: a coordinator's jobs and lookups stop with it.
+    fn turn_stop_with(&mut self, thread: &str, jobs: bool) -> Result<Value, ProtoError> {
         let t = self.thread(thread)?;
         if t.role == Some(ThreadRole::Orchestrator) {
-            // Its workers stop with it, and its waits are answered now.
-            self.stop_workers(thread, None);
+            // Its workers stop with it (unless the person kept them), and
+            // its waits are answered now.
+            if jobs {
+                self.stop_workers(thread, None);
+            }
             self.answer_waits_of(thread);
         }
         // A question it's waiting on lets go (its card stays open).
@@ -1736,7 +1802,9 @@ impl State {
         for a in gone {
             let _ = a.reply.send(Err("The person stopped this turn.".into()));
         }
-        let Some(turn) = self.turns.get_mut(thread) else { return Ok(json!({})) };
+        let Some(turn) = self.turns.get_mut(thread) else {
+            return Ok(json!({}));
+        };
         if turn.stop_at.is_some() {
             return Ok(json!({}));
         }
@@ -1765,7 +1833,9 @@ impl State {
     }
 
     fn finish_turn(&mut self, thread: &str, status: TurnStatus, error: Option<String>, usage: Option<Usage>) {
-        let Some(turn) = self.turns.get(thread) else { return };
+        let Some(turn) = self.turns.get(thread) else {
+            return;
+        };
         let stopped = turn.stop_at.is_some();
         // A resumed session that failed straight away (e.g. its transcript is
         // gone) is forgotten, so the person's next message starts fresh with a
@@ -1780,7 +1850,9 @@ impl State {
                 c.loaded.remove(thread);
             }
         }
-        let Some(mut turn) = self.turns.remove(thread) else { return };
+        let Some(mut turn) = self.turns.remove(thread) else {
+            return;
+        };
         if self.screen_holder.as_deref() == Some(thread) {
             self.screen_holder = None;
         }
@@ -1810,7 +1882,9 @@ impl State {
         if let Some(run) = self.claude.get_mut(thread) {
             run.idle_since = Some(Instant::now());
         }
-        let Ok(Some(mut t)) = self.store.thread(thread) else { return };
+        let Ok(Some(mut t)) = self.store.thread(thread) else {
+            return;
+        };
         let open_card = self.store.open_decisions(Some(thread)).is_ok_and(|d| !d.is_empty());
         t.status = if status == TurnStatus::Failed {
             ThreadStatus::Failed
@@ -1866,7 +1940,13 @@ impl State {
         if name.starts_with(computer::PREFIX) {
             return self.computer_call(&t, &name, args, reply);
         }
-        let coordinator = |r: Result<Value, String>| if seat == Seat::Coordinator { r } else { Err(format!("Only a coordinator can use {name}.")) };
+        let coordinator = |r: Result<Value, String>| {
+            if seat == Seat::Coordinator {
+                r
+            } else {
+                Err(format!("Only a coordinator can use {name}."))
+            }
+        };
         let result = match name.as_str() {
             "start_agents" => coordinator(Ok(Value::Null)).and_then(|_| {
                 self.person_asked(&t)?;
@@ -1916,9 +1996,10 @@ impl State {
             let models: Vec<String> = a
                 .models
                 .iter()
+                .filter(|m| !orchestrator::refused_for_jobs(&m.id))
                 .map(|m| if m.efforts.is_empty() { format!("{} ({})", m.id, m.name) } else { format!("{} ({}; effort {})", m.id, m.name, m.efforts.join(", ")) })
                 .collect();
-            out.push_str(&format!("\n- {} ({}), default model {}: {}", a.id, a.name, a.default_model, models.join("; ")));
+            out.push_str(&format!("\n- {} ({}): {}", a.id, a.name, models.join("; ")));
         }
         out
     }
@@ -1956,16 +2037,31 @@ impl State {
             let agent = text("agent").unwrap_or_else(|| o.agent.clone());
             self.check_agent(&agent).map_err(|e| e.message)?;
             let a = self.agent(&agent).cloned().ok_or("That agent isn't on this Mac.")?;
+            let allowed: Vec<&str> = a.models.iter().map(|x| x.id.as_str()).filter(|m| !orchestrator::refused_for_jobs(m)).collect();
             let model = match text("model") {
+                Some(m) if orchestrator::refused_for_jobs(&m) => {
+                    return Err(format!("Jobs never run on {m}: it uses too much of the person's plan. Choose one of: {}.", allowed.join(", ")));
+                }
                 Some(m) if !a.models.is_empty() && !a.models.iter().any(|x| x.id == m) => {
-                    let known: Vec<&str> = a.models.iter().map(|x| x.id.as_str()).collect();
-                    return Err(format!("{m} isn't one of {}'s models here. Choose one of: {}.", a.name, known.join(", ")));
+                    return Err(format!("{m} isn't one of {}'s models here. Choose one of: {}.", a.name, allowed.join(", ")));
                 }
                 Some(m) => m,
-                None => a.default_model.clone(),
+                // Left out: the cheapest that fits, then the agent's default
+                // (never a refused one).
+                None => {
+                    let cheap = orchestrator::default_job_model(kind == WorkerKind::Lookup);
+                    if a.models.iter().any(|x| x.id == cheap) {
+                        cheap.to_string()
+                    } else if !orchestrator::refused_for_jobs(&a.default_model) {
+                        a.default_model.clone()
+                    } else {
+                        allowed.first().map(|m| m.to_string()).ok_or("This agent has no model a job can use.")?
+                    }
+                }
             };
             // Left out (or not one the model takes): the model's default.
-            let effort = self.effort_for(&agent, &model, text("effort"));
+            // A lookup left to itself runs at low effort.
+            let effort = self.effort_for(&agent, &model, text("effort").or_else(|| (kind == WorkerKind::Lookup).then(|| "low".to_string())));
             let reason = text("reason").map(|r| one_line(&r, 140));
             plans.push(PlanJob { title, task, agent, model, effort, kind, reason });
         }
@@ -1997,6 +2093,8 @@ impl State {
                 project_id: o.project_id.clone(),
                 worker_kind: Some(job.kind),
                 review_at: None,
+                // A job may do what its coordinator may.
+                mode: o.mode,
             };
             self.store.insert_thread(&w).map_err(|e| format!("{e:#}"))?;
             self.emit(Event::ThreadUpdated { thread: w.clone() });
@@ -2126,7 +2224,9 @@ impl State {
         let granted = |s: &Self, g: &str| s.grants.get(&t.id).is_some_and(|set| set.contains(g));
         // Acting in an app means seeing it too.
         let grant = grant.filter(|g| !granted(self, g));
-        let Some(grant) = grant else { return self.computer_run(&t.id, name.to_string(), args, reply) };
+        let Some(grant) = grant else {
+            return self.computer_run(&t.id, name.to_string(), args, reply);
+        };
         let card = DecisionCard {
             question: format!("Let this chat {label}?"),
             detail: None,
@@ -2205,7 +2305,9 @@ impl State {
 
     fn decision_answer(&mut self, p: DecisionAnswerParams) -> Result<Value, ProtoError> {
         let mut item = self.saved_item(&p.thread_id, &p.item_id).filter(|i| i.kind == ItemKind::Decision).ok_or_else(|| ProtoError::new(ErrorCode::NotFound, "That card is gone."))?;
-        let Some(card) = item.decision.as_mut() else { return Err(ProtoError::not_found()) };
+        let Some(card) = item.decision.as_mut() else {
+            return Err(ProtoError::not_found());
+        };
         if card.answered_at.is_some() {
             return Err(ProtoError::new(ErrorCode::NotFound, "That was already answered."));
         }
@@ -2307,7 +2409,9 @@ impl State {
     /// The orchestrator's workers named in `ids` (all of them when absent).
     fn worker_ids(&self, orchestrator: &str, ids: Option<&Value>) -> Result<Vec<String>, String> {
         let all: Vec<String> = self.store.workers(orchestrator).map_err(|e| format!("{e:#}"))?.into_iter().map(|w| w.id).collect();
-        let Some(asked) = ids.and_then(Value::as_array) else { return Ok(all) };
+        let Some(asked) = ids.and_then(Value::as_array) else {
+            return Ok(all);
+        };
         let mut out = Vec::new();
         for id in asked {
             let id = id.as_str().unwrap_or("");
@@ -2380,7 +2484,9 @@ impl State {
                 pos += 1;
                 continue;
             }
-            let Some((_, worker, text)) = self.worker_queue.remove(pos) else { return };
+            let Some((_, worker, text)) = self.worker_queue.remove(pos) else {
+                return;
+            };
             self.worker_ends.remove(&worker);
             match self.begin_turn(TurnSendParams { thread_id: worker.clone(), text, agent: None, model: None, effort: None, attachments: Vec::new() }) {
                 Ok(begun) => self.launch(begun),
@@ -2488,7 +2594,9 @@ impl State {
     }
 
     fn oauth_redirect(&mut self, url: &str) {
-        let Some(r) = oauth::parse_redirect(url) else { return };
+        let Some(r) = oauth::parse_redirect(url) else {
+            return;
+        };
         let Some((verifier, _)) = r.state.as_ref().and_then(|s| self.sign_ins.remove(s)) else {
             eprintln!("[agents] a FeedHQ sign-in came back that Billable didn't start");
             return;

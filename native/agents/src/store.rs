@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::Context as _;
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::protocol::{Approval, Decision, Item, Thread, ThreadRole, ThreadStatus, WorkerKind};
+use crate::protocol::{Approval, Decision, Item, Mode, Thread, ThreadRole, ThreadStatus, WorkerKind};
 
 /// Each entry moves the schema one version up (`PRAGMA user_version`).
 const MIGRATIONS: &[&str] = &[
@@ -72,6 +72,8 @@ const MIGRATIONS: &[&str] = &[
         text TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );",
+    // 4: modes
+    "ALTER TABLE threads ADD COLUMN mode TEXT;",
 ];
 
 pub struct Store {
@@ -99,6 +101,7 @@ fn thread_from_row(r: &rusqlite::Row) -> rusqlite::Result<Thread> {
         project_id: r.get("project_id")?,
         worker_kind: r.get::<_, Option<String>>("worker_kind")?.as_deref().and_then(WorkerKind::parse),
         review_at: r.get("review_at")?,
+        mode: r.get::<_, Option<String>>("mode")?.as_deref().and_then(Mode::parse),
     })
 }
 
@@ -148,8 +151,8 @@ impl Store {
 
     pub fn insert_thread(&self, t: &Thread) -> anyhow::Result<()> {
         self.conn.execute(
-            "INSERT INTO threads (id, title, agent, model, effort, status, pinned, settled_at, archived_at, created_at, updated_at, preview, cwd, role, parent_id, project_id, worker_kind, review_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+            "INSERT INTO threads (id, title, agent, model, effort, status, pinned, settled_at, archived_at, created_at, updated_at, preview, cwd, role, parent_id, project_id, worker_kind, review_at, mode)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 t.id,
                 t.title,
@@ -168,7 +171,8 @@ impl Store {
                 t.parent_id,
                 t.project_id,
                 t.worker_kind.map(WorkerKind::as_str),
-                t.review_at
+                t.review_at,
+                t.mode.map(Mode::as_str)
             ],
         )?;
         Ok(())
@@ -177,8 +181,8 @@ impl Store {
     pub fn save_thread(&self, t: &Thread) -> anyhow::Result<()> {
         self.conn.execute(
             "UPDATE threads SET title = ?2, agent = ?3, model = ?4, effort = ?5, status = ?6, pinned = ?7, settled_at = ?8,
-             archived_at = ?9, updated_at = ?10, preview = ?11, project_id = ?12, review_at = ?13 WHERE id = ?1",
-            params![t.id, t.title, t.agent, t.model, t.effort, t.status.as_str(), t.pinned as i64, t.settled_at, t.archived_at, t.updated_at, t.preview, t.project_id, t.review_at],
+             archived_at = ?9, updated_at = ?10, preview = ?11, project_id = ?12, review_at = ?13, mode = ?14 WHERE id = ?1",
+            params![t.id, t.title, t.agent, t.model, t.effort, t.status.as_str(), t.pinned as i64, t.settled_at, t.archived_at, t.updated_at, t.preview, t.project_id, t.review_at, t.mode.map(Mode::as_str)],
         )?;
         Ok(())
     }
@@ -384,6 +388,7 @@ mod tests {
             project_id: None,
             worker_kind: None,
             review_at: None,
+            mode: None,
         }
     }
 
